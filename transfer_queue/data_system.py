@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 import multiprocessing
 from typing import List, Dict, Optional, Union, Any, Callable, TypedDict
@@ -18,8 +19,8 @@ from dataclasses import dataclass, field
 
 from .zmq_utils import ZMQRequestType, ZMQMessage, ZMQServerInfo, get_free_port, get_node_ip, create_zmq_socket, \
     TransferQueueRole
-from .load_balance_strategy import random_strategy, dp_token_load_balancing_strategy, similar_seqlen_strategy, \
-    storage_unit_load_balancing_strategy
+from .load_balance_strategy import random_strategy, dp_token_load_balancing_strategy, similar_seq_len_strategy, \
+    target_seq_len_strategy, storage_unit_load_balancing_strategy
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -196,10 +197,8 @@ class TransferQueueController:
             if customized_policy_name is not None and customized_policy_func is not None:
                 self._register_customized_policy(customized_policy_name, customized_policy_func)
 
-        self.wait_connection_thread = Thread(target=self._wait_connection,
-                                             name="TransferQueueControllerWaitConnectionThread",
-                                             daemon=True)
-        self.wait_connection_thread.start()
+        self._start_process_handshake()
+        self._start_process_update_data_status()
         self._start_process_request()
 
     def _get_consumer_status(self, task_name: str) -> torch.Tensor:
@@ -347,6 +346,7 @@ class TransferQueueController:
         logger.info(f"ready for consume idx: {ready_for_consume_idx}")
         # 执行负载均衡，采样一批数据
         batch_global_indexes = self._run_schedule_policy(schedule_policy, ready_for_consume_idx, experience_count,
+                                                         get_n_samples = get_n_samples,
                                                          *args, **kwargs)
         # 标记这批数据状态为已消费
         consumer_status = self._get_consumer_status(task_name)
@@ -415,13 +415,15 @@ class TransferQueueController:
             node-irrelevant policies:
             1. random_strategy: get random index from global usable indexes
             2. dp_token_load_balancing_strategy: get index using karmarkar_karp strategy across DP
-            3. similar_seqlen_strategy: get index around certain specified seqlen
+            3. target_seq_len_strategy: get index around certain specified target_seq_len
+            4. similar_seq_len_strategy: cluster seq groups and batch those with similar length together
             node-relevant policies:
-            4. storage_unit_load_balancing_strategy: get index from different storage nodes using the round-robin strategy
+            1. storage_unit_load_balancing_strategy: get index from different storage nodes using the round-robin strategy
         """
         self.schedule_policies = {"random_strategy": random_strategy,
                                   "dp_token_load_balancing_strategy": dp_token_load_balancing_strategy,
-                                  "similar_seqlen_strategy": similar_seqlen_strategy,
+                                  "target_seq_len_strategy": target_seq_len_strategy,
+                                  "similar_seq_len_strategy": similar_seq_len_strategy,
                                   "storage_unit_load_balancing_strategy": storage_unit_load_balancing_strategy,
                                   }
 
@@ -440,21 +442,29 @@ class TransferQueueController:
 
         self.schedule_policies[policy_name] = policy_func
 
-    def _run_schedule_policy(self, policy_name: str, ready_for_consume_idx: List[int], experience_count: int, *args,
-                             **kwargs) -> Optional[List[int]]:
+    def _run_schedule_policy(self, policy_name: str, ready_for_consume_idx: List[int], experience_count: int,
+                             get_n_samples: bool=False, *args, **kwargs) -> Optional[List[int]]:
         """
         run the scheduler policy based on policy_name, ready_for_consume_idx, required experience_count
         now the schedule process is called by trainer and sample indexes for all DPs are decided altogether
         policy should not be bothered by get_n_samples requirement
+        example:
+            if get_n_samples:
+                ready_for_consume_idx could look like: [0, 1, 2, 3,   8, 9, 10, 11,   16, 17, 18, 19]
+            else:
+                ready_for_consume_idx could look like: [2, 5, 6]
         """
         if len(ready_for_consume_idx) < experience_count:
             # logger.info('Error: not enough data to consume yet.')
             return None
 
-        assert len(ready_for_consume_idx) % experience_count == 0
+        assert len(ready_for_consume_idx) % self.num_n_samples == 0
 
-        return self.schedule_policies[policy_name](ready_for_consume_idx=ready_for_consume_idx,
-                                                   experience_count=experience_count, *args, **kwargs)
+        return self.schedule_policies[policy_name](ready_for_consume_idx,
+                                                   experience_count,
+                                                   get_n_samples,
+                                                   self.num_n_samples,
+                                                   *args, **kwargs)
 
     def _generate_experience_meta(self, global_indexes: List[int], data_columns: List[str]) -> ExperienceMeta:
         # 根据给定的global index，查找self.global_index_local_index_mapping和self.global_index_storage_mapping，确定对应
@@ -553,14 +563,22 @@ class TransferQueueController:
                 self.handshake_socket.send_multipart([identity, ack_msg])
                 logger.info(f"Controller send handshake ack successful!")
         self.storage_units = connected_storage_units
+        self.handshake_done.set()
 
-    def _start_process_request(self):
-        # 拉起处理任务
+    def _start_process_handshake(self):
+        self.handshake_done = threading.Event()
+        self.wait_connection_thread = Thread(target=self._wait_connection,
+                                             name="TransferQueueControllerWaitConnectionThread",
+                                             daemon=True)
+        self.wait_connection_thread.start()
+
+    def _start_process_update_data_status(self):
         self.process_update_data_status_thread = Thread(target=self._update_data_status,
                                                         name="TransferQueueControllerProcessUpdateDataStatusThread",
                                                         daemon=True)
         self.process_update_data_status_thread.start()
 
+    def _start_process_request(self):
         self.process_request_thread = Thread(target=self._process_request,
                                              name="TransferQueueControllerProcessRequestThread",
                                              daemon=True)
@@ -568,6 +586,7 @@ class TransferQueueController:
 
     def _process_request(self):
         # 包含_get_meta、查询当前iteration是否消费完毕等
+        self.handshake_done.wait()
         while True:
             # ROUTER套接字接收多部分消息
             identity, request_bytes = self.request_handle_socket.recv_multipart()
