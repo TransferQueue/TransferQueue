@@ -2,6 +2,7 @@
 import copy
 import heapq
 from typing import List, Tuple, Optional
+import numpy
 import torch
 import torch.distributed as dist
 from torch import Tensor
@@ -10,68 +11,153 @@ from torch import Tensor
 # can be directly used by TransferQueue data system. == ##
 
 def random_strategy(
-        ready_for_consume_idx: List[int], experience_count: int
+        ready_for_consume_idx: List[int], experience_count: int, get_n_samples: bool, n_samples_per_prompt: int,
 ) -> Optional[List[int]]:
     """
-    random sampling from global indexes
+    random sampling experience_count samples from global indexes ready_for_consume_idx
+    input example:
+        if get_n_samples: (group_num=3, group_size=4)
+            ready_for_consume_idx could look like: [0, 1, 2, 3,   8, 9, 10, 11,   16, 17, 18, 19]
+        else:
+            ready_for_consume_idx could look like: [2, 5, 6]
     """
-    weights = torch.ones(len(ready_for_consume_idx))
-    sampled_indexes_idx = torch.multinomial(weights, experience_count, replacement=False).tolist()
-    sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
+    if get_n_samples:
+        assert len(ready_for_consume_idx) % n_samples_per_prompt == 0
+        assert experience_count % n_samples_per_prompt == 0
+        experience_count_n_samples = experience_count // n_samples_per_prompt
+
+        group_ready_for_consume_idx = torch.tensor(ready_for_consume_idx, dtype=torch.int).view(-1,
+                                                                                                n_samples_per_prompt)
+
+        weights = torch.ones(group_ready_for_consume_idx.size(0))
+        sampled_indexes_idx = torch.multinomial(weights, experience_count_n_samples, replacement=False).tolist()
+        sampled_indexes = group_ready_for_consume_idx[sampled_indexes_idx].flatten().tolist()
+    else:
+        weights = torch.ones(len(ready_for_consume_idx))
+        sampled_indexes_idx = torch.multinomial(weights, experience_count, replacement=False).tolist()
+        sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
     return sampled_indexes
 
 
-def similar_seqlen_strategy(
-        ready_for_consume_idx: List[int], experience_count: int, seq_len: Tensor, target_seq_len=int
+def target_seq_len_strategy(
+        ready_for_consume_idx: List[int], experience_count: int, get_n_samples: bool,
+        n_samples_per_prompt: int, seq_len: Tensor, target_seq_len: int, method: Optional[str]='combined',
 ) -> Optional[List[int]]:
     """
     get index whose seq_len is around certain specified target_seq_len
     need to pass seq_len, which is the corresponding Tensor of seq len for ready_for_consume_idx
+        Caution: when get_n_samples is True, we need to sample a group of experiences.
+                however, the variance of seq len within each group could be large.
+                it may not be appropriate to use closeness between one sample's seq_len in a group and target_len
+                to measure the weights and process sampling.
+        Currently, we allow three strategies "mean" "median" "combined"(consider variance) to calculate the weights
     """
+    assert len(ready_for_consume_idx) == len(seq_len)
     if target_seq_len is None:
         raise ValueError("ERROR: target_seq_len cannot be None when using similar_seqlen_strategy.")
     elif not isinstance(seq_len, Tensor):
         raise ValueError("ERROR: seq_len must be a tensor of int.")
     else:
-        weights = torch.sigmoid(1 / (torch.abs(seq_len - target_seq_len) + 0.001), dim=0)
+        pass
 
-    sampled_indexes_idx = torch.multinomial(weights, experience_count, replacement=False).tolist()
-    sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
+    if get_n_samples:
+        assert len(ready_for_consume_idx) % n_samples_per_prompt == 0
+        assert experience_count % n_samples_per_prompt == 0
+        experience_count_n_samples = experience_count // n_samples_per_prompt
+        group_ready_for_consume_idx = torch.tensor(ready_for_consume_idx,
+                                                   dtype=torch.int).view(-1, n_samples_per_prompt)
+        group_seq_len = seq_len.view(-1, n_samples_per_prompt).float()
+        if method=='mean':
+            group_seq_len_deviation = torch.abs(group_seq_len.mean(dim=1) - target_seq_len)
+            # print(group_seq_len_deviation)
+        elif method=='median':
+            group_seq_len_deviation = torch.abs(group_seq_len.quantile(q=0.5, dim=1) - target_seq_len)
+            # print(group_seq_len_deviation)
+        else: # method=='combined':
+            group_seq_len_mean_deviation = torch.abs(group_seq_len.mean(dim=1) - target_seq_len)
+            # the smaller, the closer
+            norm_group_seq_len_mean_deviation = group_seq_len_mean_deviation/(torch.max(group_seq_len_mean_deviation)+1e-5)
+            group_seq_len_std_deviation = group_seq_len.std(dim=1)
+            # the smaller, the seq len in the group is more even
+            norm_group_seq_len_std_deviation = group_seq_len_std_deviation/(torch.max(group_seq_len_std_deviation)+1e-5)
+            # simply used weighted values to generate sampling weights
+            group_seq_len_deviation = 0.7 * norm_group_seq_len_mean_deviation + 0.3 * norm_group_seq_len_std_deviation
+            # print(norm_group_seq_len_mean_deviation, * norm_group_seq_len_std_deviation, group_seq_len_deviation)
+
+        # weights = torch.sigmoid(1 / (group_seq_len_deviation + 1e-3))
+        weights = 1 - torch.exp(- (1 / group_seq_len_deviation + 1e-3))
+        # print(weights)
+        sampled_indexes_idx = torch.multinomial(weights, experience_count_n_samples, replacement=False).tolist()
+        # print(sampled_indexes_idx)
+        sampled_indexes = group_ready_for_consume_idx[sampled_indexes_idx].flatten().tolist()
+    else:
+        # weights = torch.sigmoid(1 / (torch.abs(seq_len - target_seq_len) + 1e-3))
+        weights = 1 - torch.exp(-( 1 / torch.abs(seq_len - target_seq_len) + 1e-3))
+        # print(weights)
+        sampled_indexes_idx = torch.multinomial(weights, experience_count, replacement=False).tolist()
+        # print(sampled_indexes_idx)
+        sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
 
     return sampled_indexes
 
 
 def dp_token_load_balancing_strategy(
-        ready_for_consume_idx: List[int], experience_count: int, seq_len_list: List[int],
-) -> Optional[List[int]]:
+        ready_for_consume_idx: List[int], experience_count: int, get_n_samples: bool, n_samples_per_prompt: int,
+        seq_len: Tensor) -> Optional[List[int]]:
     """
     get index using karmarkar_karp strategy across DP to make sure:
         1. each DP gets the same number of seqs and close total seq_len
         2. the standard deviation of total seq len across all DPs is small
     need to pass seq_len_list, which is the corresponding List of seq len for ready_for_consume_idx
+    这个装箱算法只能保证DP token数一样
     """
-    assert len(ready_for_consume_idx) == len(seq_len_list)
+    assert len(ready_for_consume_idx) == len(seq_len)
 
     if len(ready_for_consume_idx) == experience_count:
         sampled_indexes = [int(ready_for_consume_idx[i]) for i in range(experience_count)]
         return sampled_indexes
 
-    k_partitions = len(seq_len_list) // experience_count
-    sampled_indexes_idx = get_seqlen_balanced_partitions(seq_len_list, k_partitions, equal_size=True)
-    if len(sampled_indexes_idx) > 0:
-        sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx[0]]
+    assert len(ready_for_consume_idx) % experience_count == 0
+
+    if get_n_samples:
+        assert len(ready_for_consume_idx) % n_samples_per_prompt == 0
+        assert experience_count % n_samples_per_prompt == 0
+        experience_count_n_samples = experience_count // n_samples_per_prompt
+        group_ready_for_consume_idx = torch.tensor(ready_for_consume_idx,
+                                                   dtype=torch.int).view(-1, n_samples_per_prompt)
+        group_seq_len_sum = seq_len.view(-1, n_samples_per_prompt).sum(dim=1)
+        k_partitions = len(group_seq_len_sum) // experience_count_n_samples
+        sampled_indexes_idx = get_seqlen_balanced_partitions(group_seq_len_sum.tolist(), k_partitions, equal_size=True)
+        if len(sampled_indexes_idx) > 0:
+            sampled_indexes = sum([group_ready_for_consume_idx[i].flatten().tolist() for i in sampled_indexes_idx[0]], [])
+        else:
+            sampled_indexes = None
     else:
-        sampled_indexes = None
+        k_partitions = len(seq_len) // experience_count
+        sampled_indexes_idx = get_seqlen_balanced_partitions(seq_len.tolist(), k_partitions, equal_size=True)
+        # print(f'{sampled_indexes_idx=}')
+        if len(sampled_indexes_idx) > 0:
+            sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx[0]]
+        else:
+            sampled_indexes = None
     return sampled_indexes
 
+def similar_seq_len_strategy(
+        ready_for_consume_idx: List[int], experience_count: int, get_n_samples: bool, n_samples_per_prompt: int,
+        seq_len: Tensor) -> Optional[List[int]]:
+    """
+    cluster by seq_len and batch the groups/seqs with similar length together
+    """
+    pass
 
 def storage_unit_load_balancing_strategy(
-        ready_for_consume_idx: List[int], experience_count: int, storage_node_num, *args, **kwargs
+        ready_for_consume_idx: List[int], experience_count: int, get_n_samples: bool, storage_node_num: int, *args, **kwargs
 ) -> Optional[List[int]]:
     """
     sampling using round robin strategy across all storage nodes
     """
     pass
+    # raise NotImplementedError
 
 
 ## ============ utils for samplers ============ ##
