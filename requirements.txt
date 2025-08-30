@@ -1,5 +1,5 @@
-numpy
 ray[default]
-tensordict
+tensordict>=0.8.0,<=0.9.1,!=0.9.0
 pyzmq
-omegaconf
+hydra-core
+numpy<2.0.0
