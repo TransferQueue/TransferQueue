@@ -8,7 +8,7 @@ import torch
 from omegaconf import OmegaConf
 from tensordict import TensorDict
 
-parent_dir = Path(__file__).resolve().parent.parent
+parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 from transfer_queue.data_system import TransferQueueController, TransferQueueStorageSimpleUnit, process_zmq_server_info
 
@@ -93,14 +93,14 @@ def main(config):
     data_system_controllers, data_system_storage_units, data_system_client = initialize_data_system(config)
 
     import time
-    time.sleep(3)
+    time.sleep(5)
 
     input_ids = torch.tensor([1, 2, 3, 4])
     prompt_batch = TensorDict({"input_ids": input_ids}, batch_size=input_ids.size())
 
     data_system_client.put_prompts(data=prompt_batch, data_columns=["input_ids"], global_step=0, n_samples_per_prompt=1)
     logger.info("demo put prompts ok! ")
-    time.sleep(3)
+    time.sleep(5)
 
     prompt_meta = data_system_client.get_meta(
         data_columns=['input_ids'],
