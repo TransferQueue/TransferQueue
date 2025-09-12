@@ -1,35 +1,18 @@
 import time
 import socket
-import warnings
 from typing import Any, Optional, Dict, List, Union
 from typing_extensions import Self
-from enum import Enum
 import psutil
 import uuid
 import zmq
 import pickle
-from datetime import datetime
 from dataclasses import dataclass
-# TODO:（lxm）循环依赖，讨论TransferQueueRole放到zmq_utils中是否合适
-# from .data_system import TransferQueueRole
 
+from transfer_queue.utils.utils import (
+    ExplicitEnum,
+    TransferQueueRole,
+)
 
-class ExplicitEnum(str, Enum):
-    """
-    Enum with more explicit error message for missing values.
-    """
-
-    @classmethod
-    def _missing_(cls, value):
-        raise ValueError(
-            f"{value} is not a valid {cls.__name__}, please select one of {list(cls._value2member_map_.keys())}"
-        )
-
-
-class TransferQueueRole(ExplicitEnum):
-    CONTROLLER = "TransferQueueController"
-    STORAGE = "TransferQueueStorage"
-    CLIENT = "TransferQueueClient"
 
 
 class ZMQRequestType(ExplicitEnum):
@@ -44,17 +27,22 @@ class ZMQRequestType(ExplicitEnum):
     PUT_DATA = "PUT"
     GET_DATA_RESPONSE = "GET_DATA_RESPONSE"
     PUT_DATA_RESPONSE = "PUT_DATA_RESPONSE"
+    CLEAR_DATA = "CLEAR_DATA"
+    CLEAR_DATA_RESPONSE = "CLEAR_DATA_RESPONSE"
 
     PUT_GET_OPERATION_ERROR = "PUT_GET_OPERATION_ERROR"
     PUT_GET_ERROR = "PUT_GET_ERROR"
     PUT_ERROR = "PUT_ERROR"
     GET_ERROR = "GET_ERROR"
+    CLEAR_DATA_ERROR = "CLEAR_DATA_ERROR"
 
     # 元数据相关
     GET_META = "GET_META"
     GET_META_RESPONSE = "GET_META_RESPONSE"
-    GET_PROMPT_META = "GET_PROMPT_META"
-    GET_PROMPT_META_RESPONSE = "GET_PROMPT_META_RESPONSE"
+    GET_CLEAR_META = "GET_CLEAR_META"
+    GET_CLEAR_META_RESPONSE = "GET_CLEAR_META_RESPONSE"
+    CLEAR_META = "CLEAR_META"
+    CLEAR_META_RESPONSE = "CLEAR_META_RESPONSE"
 
     # 消费状态相关
     CHECK_CONSUMPTION = "CHECK_CONSUMPTION"
@@ -135,37 +123,11 @@ class ZMQMessage:
             # 单个字节流的情况
             return pickle.loads(data)
 
+
 def get_free_port() -> str:
     with socket.socket() as sock:
         sock.bind(("", 0))
         return sock.getsockname()[1]
-
-
-# TODO: 更好的IP获取方式；通过linux系统工具查找最快网卡？或利用第三方工具如
-# FIXME: IP设置为8.8.8.8只能获取公网出站IP，实际训练时不会用到，考虑如何获取三个角色都快速可达的IP
-def get_node_ip() -> str:
-    # try ipv4
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))  # Doesn't need to be reachable
-        return s.getsockname()[0]
-    except Exception:
-        pass
-
-    # try ipv6
-    try:
-        s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
-        # Google's public DNS server, see
-        # https://developers.google.com/speed/public-dns/docs/using#addresses
-        s.connect(("2001:4860:4860::8888", 80))  # Doesn't need to be reachable
-        return s.getsockname()[0]
-    except Exception:
-        pass
-
-    warnings.warn(
-        "Failed to get the IP address, using 0.0.0.0 by default.",
-        stacklevel=2)
-    return "0.0.0.0"
 
 
 def create_zmq_socket(
