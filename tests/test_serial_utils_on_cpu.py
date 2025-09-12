@@ -1,8 +1,14 @@
+import sys
+from pathlib import Path
 import pytest
 import torch
 import tensordict
 import numpy as np
 from tensordict import NonTensorData, NonTensorStack, TensorDict
+
+# Import your classes here
+parent_dir = Path(__file__).resolve().parent.parent
+sys.path.append(str(parent_dir))
 from transfer_queue.utils.serial_utils import MsgpackEncoder, MsgpackDecoder
 
 
