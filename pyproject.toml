@@ -79,8 +79,10 @@ ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [
-"transfer_queue.data_system.*",
-"transfer_queue.zmq_utils.*",
+    "transfer_queue.data_system.*",
+    "transfer_queue.utils.utils.*",
+    "transfer_queue.utils.zmq_utils.*",
+    "transfer_queue.utils.serial_utils.*",
 ]
 ignore_errors = false
 

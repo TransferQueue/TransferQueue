@@ -1,0 +1,60 @@
+from enum import Enum
+from typing import List, Optional, TypedDict
+import torch
+
+class ExplicitEnum(str, Enum):
+    """
+    Enum with more explicit error message for missing values.
+    """
+
+    @classmethod
+    def _missing_(cls, value):
+        raise ValueError(
+            f"{value} is not a valid {cls.__name__}, please select one of {list(cls._value2member_map_.keys())}"
+        )
+
+
+class TransferQueueRole(ExplicitEnum):
+    CONTROLLER = "TransferQueueController"
+    STORAGE = "TransferQueueStorage"
+    CLIENT = "TransferQueueClient"
+
+
+# production_status enum: 0: not produced, 1: ready for consume, 2: consumed
+class ProductionStatus(ExplicitEnum):
+    NOT_PRODUCED = 0
+    READY_FOR_CONSUME = 1
+    CONSUMED = 2
+
+
+def random_sampler(
+    ready_for_consume_idx: list[int],
+    batch_size: int,
+    get_n_samples: bool,
+    n_samples_per_prompt: int,
+) -> Optional[list[int]]:
+    """
+    random sampling batch_size samples from global indexes ready_for_consume_idx
+    input example:
+        if get_n_samples: (group_num=3, group_size=4)
+            ready_for_consume_idx could look like: [0, 1, 2, 3,   8, 9, 10, 11,   16, 17, 18, 19]
+        else:
+            ready_for_consume_idx could look like: [2, 5, 6]
+    """
+    if get_n_samples:
+        assert len(ready_for_consume_idx) % n_samples_per_prompt == 0
+        assert batch_size % n_samples_per_prompt == 0
+        batch_size_n_samples = batch_size // n_samples_per_prompt
+
+        group_ready_for_consume_idx = torch.tensor(ready_for_consume_idx, dtype=torch.int).view(
+            -1, n_samples_per_prompt
+        )
+
+        weights = torch.ones(group_ready_for_consume_idx.size(0))
+        sampled_indexes_idx = torch.multinomial(weights, batch_size_n_samples, replacement=False).tolist()
+        sampled_indexes = group_ready_for_consume_idx[sampled_indexes_idx].flatten().tolist()
+    else:
+        weights = torch.ones(len(ready_for_consume_idx))
+        sampled_indexes_idx = torch.multinomial(weights, batch_size, replacement=False).tolist()
+        sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
+    return sampled_indexes
