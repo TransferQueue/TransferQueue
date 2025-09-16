@@ -1025,8 +1025,7 @@ class TransferQueueController:
             logger.debug(f"[{self.controller_id}]: Controller recv update_data_status request_msg: {request_msg}")
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
-                params = request_msg.body
-                message_data = params.get("message", {})
+                message_data = request_msg.body
 
                 fields = message_data.get("fields", [])
                 global_indexes = message_data.get("global_indexes", [])
@@ -1417,12 +1416,10 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                     request_type=ZMQRequestType.NOTIFY_DATA_UPDATE,
                     sender_id=self.zmq_server_info.id,
                     body={
-                        "message": {
-                            "fields": fields,
-                            "global_indexes": global_indexes,
-                            "dtypes": dtypes,
-                            "shapes": shapes,
-                        }
+                        "fields": fields,
+                        "global_indexes": global_indexes,
+                        "dtypes": dtypes,
+                        "shapes": shapes,
                     }
                 ).serialize()
 
@@ -1484,9 +1481,7 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                 request_type=ZMQRequestType.GET_DATA_RESPONSE,
                 sender_id=self.zmq_server_info.id,
                 body={
-                    "message": {
-                        "data": result_data,
-                    }
+                    "data": result_data,
                 }
             )
         except Exception as e:
@@ -1818,7 +1813,7 @@ class AsyncTransferQueueClient:
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:
                 # 返回该存储单元的数据和索引信息
-                su_data = response_msg.body["message"]["data"]
+                su_data = response_msg.body["data"]
                 return global_indexes, fields, su_data
             else:
                 raise RuntimeError(
