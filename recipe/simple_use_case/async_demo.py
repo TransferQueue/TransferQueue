@@ -22,11 +22,21 @@ logger = logging.getLogger(__name__)
 
 ray.init(runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}})
 
-"""
-同步的fit函数
-
-"""
-
+def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
+    """Create a placement group for Ray actors.
+    Args:
+        num_ray_actors (int): Number of Ray actors to create.
+        num_cpus_per_actor (int): Number of CPUs to allocate per actor.
+    Returns:
+        placement_group: The created placement group.
+    """
+    bundle = {"CPU": num_cpus_per_actor}
+    placement_group = ray.util.placement_group(
+        [bundle for _ in range(num_ray_actors)],
+        strategy="SPREAD"
+    )
+    ray.get(placement_group.ready())
+    return placement_group
 
 def compute_old_log_prob(data1, data2):
     time.sleep(3)
@@ -151,9 +161,13 @@ class Trainer:
         # 1. 初始化TransferQueueStorage
         total_storage_size = (self.config.global_batch_size * self.config.num_global_batch)
         self.data_system_storage_units = {}
+        storage_placement_group = get_placement_group(self.config.num_data_storage_units, num_cpus_per_actor=1)
         for storage_unit_rank in range(self.config.num_data_storage_units):
             # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
-            storage_node = TransferQueueStorageSimpleUnit.remote(
+            storage_node = TransferQueueStorageSimpleUnit.options(
+                placement_group=storage_placement_group,
+                placement_group_bundle_index=storage_unit_rank
+            ).remote(
                 storage_size=math.ceil(total_storage_size / self.config.num_data_storage_units)
             )
             self.data_system_storage_units[storage_unit_rank] = storage_node
@@ -162,8 +176,12 @@ class Trainer:
         # 2. 初始化TransferQueueController
         # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务
         self.data_system_controllers = {}
+        controller_placement_group = get_placement_group(self.config.num_data_controllers, num_cpus_per_actor=1)
         for controller_rank in range(self.config.num_data_controllers):
-            self.data_system_controllers[controller_rank] = TransferQueueController.remote(
+            self.data_system_controllers[controller_rank] = TransferQueueController.options(
+                placement_group=controller_placement_group,
+                placement_group_bundle_index=controller_rank
+            ).remote(
                 num_storage_units=self.config.num_data_storage_units,
                 global_batch_size=self.config.global_batch_size,
                 num_global_batch=self.config.num_global_batch,
