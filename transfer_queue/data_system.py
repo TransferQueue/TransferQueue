@@ -681,14 +681,14 @@ class TransferQueueController:
         获取元数据，支持两种模式：
         - mode="insert": 插入新行的元数据（不检查数据状态）
         - mode="fetch": 获取已就绪的元数据（检查数据状态并采样）
-        - TODO(hz): 新增一种mode支持不检查数据采样，直接返回元数据
+        - mode="force_fetch": 直接返回元数据（不检查数据状态）
         """
         if mode == "insert":
             # TODO 当前仅支持put整个gbs的数据，后续待扩展支持多次put到同一step
             assert batch_size == self.global_batch_size
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             batch_global_indexes = list(range(start_idx, end_idx))
-            return self._generate_batch_meta(global_step, batch_global_indexes, data_fields, True)
+            return self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
         elif mode == "fetch":
             # 向TransferQueue读数据时，查找当前batch内可被消费的样本，并打包返回BatchMeta
 
@@ -714,12 +714,17 @@ class TransferQueueController:
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
             batch_global_indexes = random_sampler(ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples)
+        elif mode == "force_fetch":
+            start_idx, end_idx = self._step_to_global_index_range(global_step)
+            consumer_status = self._get_consumer_status(task_name)
+            not_consumed_idx = [i for i in range(start_idx, end_idx) if consumer_status[i] == 0]
+            batch_global_indexes = random_sampler(not_consumed_idx, batch_size, get_n_samples, self.num_n_samples)
 
         # 标记这批数据状态为已消费
         consumer_status = self._get_consumer_status(task_name)
         consumer_status[batch_global_indexes] = 1
         # 打包为metadata
-        metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields)
+        metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
         # 6. 如果是方式2，则将metadata进行缓存
         # if dp_rank and dp_size and rank_id:
         #     pass
@@ -766,9 +771,9 @@ class TransferQueueController:
             logger.debug(f"ready_for_consume_idx: {ready_for_consume_idx}")
 
             return ready_for_consume_idx
-
+    
     def _generate_batch_meta(self, global_step: int, global_indexes: List[int], data_fields: List[str],
-                             prompt: bool = False) -> BatchMeta:
+                             mode: str) -> BatchMeta:
         # 根据给定的global index，查找self.global_index_local_index_mapping和self._global_index_storage_id_mapping，确定对应
         # 存储节点的地址，并构建BatchMeta
         global_arr = np.array(global_indexes)
@@ -786,15 +791,25 @@ class TransferQueueController:
             # Create FieldMeta objects for each field
             fields = []
             for field_name in data_fields:
-                if not prompt:
+                if mode == "fetch":
                     production_status = ProductionStatus.READY_FOR_CONSUME  # Since we filtered by ready status
                     # Get per-tensor dtype and shape for this specific global_index and field
                     dtype = self._get_per_tensor_dtype(global_index, field_name)
                     shape = self._get_per_tensor_shape(global_index, field_name)
-                else:
+                elif mode == "insert":
                     production_status = ProductionStatus.NOT_PRODUCED  # FIXME: not real-time
                     dtype = None
                     shape = None
+                elif mode == "force_fetch":
+                    col_index = self.field_name_mapping.get(field_name)
+                    if col_index is not None and self.data_production_status[global_index, col_index] == 1:
+                        production_status = ProductionStatus.READY_FOR_CONSUME
+                        dtype = self._get_per_tensor_dtype(global_index, field_name)
+                        shape = self._get_per_tensor_shape(global_index, field_name)
+                    else:
+                        production_status = ProductionStatus.NOT_PRODUCED
+                        dtype = None
+                        shape = None
                 field_meta = FieldMeta(
                     name=field_name,
                     dtype=dtype,
@@ -815,6 +830,7 @@ class TransferQueueController:
         return BatchMeta(samples=samples)
 
     def _update_production_status(self, indexes: List[int], fields: List[str]) -> None:
+        # TODO replace the self.data_production_status == 0 or ==1 operation by using ProductionStatus
         # 更新数据生产状态矩阵
         new_fields = [field for field in fields if field not in self.field_name_mapping]
         if new_fields:
