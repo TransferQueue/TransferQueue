@@ -1138,7 +1138,8 @@ class StorageUnitData:
                 # The unsqueeze op make the shape from n to (1, n)
                 result[field] = torch.tensor(list(self.field_data[field][local_indexes[0]])).unsqueeze(0)
             else:
-                result[field] = torch.stack(list(itemgetter(*local_indexes)(self.field_data[field])))
+                gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
+                result[field] = torch.nested.as_nested_tensor(gathered_items)
 
         return TensorDict(result)
 
