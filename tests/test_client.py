@@ -194,7 +194,7 @@ class MockStorage:
             field: torch.zeros(len(local_indexes)) for field in fields
         })
         
-        return {"message": {"data": result_data}}
+        return {"data": result_data}
 
     def stop(self):
         self.running = False
@@ -254,7 +254,6 @@ def test_put_and_get_data(client_setup):
     # Test put operation
     client.put(
         data=test_data,
-        data_fields=['tokens', 'labels'],
         global_step=0
     )
     
@@ -333,7 +332,6 @@ def test_multiple_servers():
         # Test put operation
         client.put(
             data=test_data,
-            data_fields=['tokens'],
             global_step=0
         )
         
@@ -357,18 +355,3 @@ def test_put_without_required_params(client_setup):
     # Test put without data_fields and global_step (should fail)
     with pytest.raises(AssertionError):
         client.put(data=test_data)
-
-# Test tensor input
-def test_put_tensor_input(client_setup):
-    """Test put operation with tensor input (not TensorDict)"""
-    client, _, _ = client_setup
-    
-    # Create test data as tensor
-    test_data = torch.randint(0, 100, (5, 128))
-    
-    # Test put operation with tensor input
-    client.put(
-        data=test_data,
-        data_fields=['tokens'],
-        global_step=0
-    )

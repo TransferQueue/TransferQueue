@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import List, Optional, TypedDict
 import torch
+import ray
 
 class ExplicitEnum(str, Enum):
     """
@@ -26,6 +27,21 @@ class ProductionStatus(ExplicitEnum):
     READY_FOR_CONSUME = 1
     CONSUMED = 2
 
+def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
+    """Create a placement group for Ray actors.
+    Args:
+        num_ray_actors (int): Number of Ray actors to create.
+        num_cpus_per_actor (int): Number of CPUs to allocate per actor.
+    Returns:
+        placement_group: The created placement group.
+    """
+    bundle = {"CPU": num_cpus_per_actor}
+    placement_group = ray.util.placement_group(
+        [bundle for _ in range(num_ray_actors)],
+        strategy="SPREAD"
+    )
+    ray.get(placement_group.ready())
+    return placement_group
 
 def random_sampler(
     ready_for_consume_idx: list[int],
