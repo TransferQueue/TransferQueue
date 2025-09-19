@@ -850,8 +850,7 @@ class TransferQueueController:
         for field in fields:
             if field not in self.field_name_mapping.keys():
                 self.field_name_mapping[field] = len(self.field_name_mapping)
-
-        self.data_production_status[indexes, [self.field_name_mapping.get(field) for field in fields]] = 1
+        self.data_production_status[torch.tensor(indexes)[:, None], torch.tensor([self.field_name_mapping.get(field) for field in fields])] = 1
 
     def _update_field_info(self, fields: List[str], per_tensor_dtypes: Dict[int, Dict[str, Any]],
                            per_tensor_shapes: Dict[int, Dict[str, Any]], global_indexes: List[int]) -> None:

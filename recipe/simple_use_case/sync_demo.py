@@ -124,15 +124,15 @@ def fit(config, data_system_client):
     for epoch in range(2):
         train_dataloader = 2
         for step in range(train_dataloader):
-            input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]])) * (step + 1)
-            prompt_batch = TensorDict({"input_ids": input_ids}, batch_size=input_ids.size(0))
+            input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111]])) * (step + 1)
+            prompt_batch = TensorDict({"input_ids": input_ids, "attention_mask": input_ids}, batch_size=input_ids.size(0))
 
             data_system_client.put(data=prompt_batch, global_step=step)
             logger.info("demo put prompts ok! ")
             time.sleep(5)
 
             prompt_meta = data_system_client.get_meta(
-                data_fields=['input_ids'],
+                data_fields=['input_ids', 'attention_mask'],
                 batch_size=config.global_batch_size,
                 global_step=step,
                 get_n_samples=False,
@@ -145,7 +145,7 @@ def fit(config, data_system_client):
             actor_rollout_wg_generate_sequences(prompt_meta, data_system_client)
 
             log_prob_meta = data_system_client.get_meta(
-                data_fields=['input_ids', 'generate_sequences_ids'],
+                data_fields=['input_ids', 'attention_mask', 'generate_sequences_ids'],
                 batch_size=config.global_batch_size,
                 global_step=0,
                 get_n_samples=False,
@@ -175,7 +175,7 @@ def main(config):
 
 if __name__ == "__main__":
     config_str = """
-      global_batch_size: 4
+      global_batch_size: 6
       num_global_batch: 1 
       num_data_storage_units: 2
       num_data_controllers: 1
