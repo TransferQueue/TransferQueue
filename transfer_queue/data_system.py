@@ -19,6 +19,7 @@ import zmq
 import zmq.asyncio
 from ray.util import get_node_ip_address
 from tensordict import TensorDict
+from tensordict import NonTensorStack
 from torch import Tensor
 
 from transfer_queue.utils.utils import (
@@ -1139,7 +1140,11 @@ class StorageUnitData:
                 result[field] = torch.tensor(list(self.field_data[field][local_indexes[0]])).unsqueeze(0)
             else:
                 gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
-                result[field] = torch.nested.as_nested_tensor(gathered_items)
+
+                if gathered_items and not isinstance(gathered_items[0], torch.Tensor):
+                    result[field] = NonTensorStack(*gathered_items)
+                else:
+                    result[field] = torch.nested.as_nested_tensor(gathered_items)
 
         return TensorDict(result)
 
