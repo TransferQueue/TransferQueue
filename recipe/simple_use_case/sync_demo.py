@@ -155,7 +155,7 @@ def fit(config, data_system_client):
             # Simulate calling the compute old log prob task of the worker group
             old_log_prob_meta = actor_rollout_wg_compute_old_log_prob(log_prob_meta, data_system_client)
 
-            batch_meta.union(old_log_prob_meta)
+            batch_meta = batch_meta.union(old_log_prob_meta)
 
             # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；client再根据metadata通知所有storage unit清空
             # client选择一个主controller拿到metadata，其他的controller直接清空不用返回metadata即可

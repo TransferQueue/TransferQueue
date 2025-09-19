@@ -141,8 +141,7 @@ class SampleMeta:
         """
         if validate:
             if self.global_index != other.global_index:
-                logger.error("Error: Global indexes do not match for union.")
-                return None
+                raise ValueError(f"Error: Global indexes ({self.global_index} and {other.global_index}) do not match for union.")
 
         # Merge fields
         merged_fields = {**self.fields, **other.fields}
@@ -450,8 +449,7 @@ class BatchMeta:
 
             for chunk in chunks:
                 if chunk.fields != base_fields:
-                    logger.error("Error: Field names do not match for concatenation.")
-                    return None
+                    raise ValueError("Error: Field names do not match for concatenation.")
 
         # Combine all samples
         all_samples = []
@@ -477,14 +475,12 @@ class BatchMeta:
         """
         if validate:
             if self.size != other.size:
-                logger.error("Error: Batch sizes do not match for union.")
-                return None
+                raise ValueError("Error: Batch sizes do not match for union.")
 
             self_global_indexes = sorted(self.global_indexes)
             other_global_indexes = sorted(other.global_indexes)
             if self_global_indexes != other_global_indexes:
-                logger.error("Error: Global indexes do not match for union.")
-                return None
+                raise ValueError("Error: Global indexes do not match for union.")
 
         # Create a mapping from global_index to SampleMeta in the other batch
         other_sample_map = {sample.global_index: sample for sample in other.samples}
