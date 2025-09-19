@@ -107,7 +107,7 @@ class MockController:
                 global_index=i,
                 storage_id='storage_0',
                 local_index=i,
-                input_fields={field.name: field for field in fields}
+                fields={field.name: field for field in fields}
             )
             samples.append(sample)
         metadata = BatchMeta(samples=samples)

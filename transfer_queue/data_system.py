@@ -86,21 +86,20 @@ class SampleMeta:
     local_index: int  # local row index in the storage unit
 
     # data fields info
-    input_fields: Dict[str, FieldMeta]  # dict mapping field names to FieldMeta objects
-    output_fields: List[str] = field(default_factory=list)  # Fields that will be used as output (e.g., for RL training)
+    fields: Dict[str, FieldMeta]  # dict mapping field names to FieldMeta objects
 
     def __post_init__(self):
         """Initialize is_ready property based on field readiness"""
         # Check if all fields are ready and update is_ready property
-        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.input_fields.values()))
+        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.fields.values()))
 
     def __str__(self) -> str:
-        return f"SampleMeta(global_step={self.global_step}, global_index={self.global_index}, storage_id='{self.storage_id}', local_index={self.local_index}, input_fields={self.input_fields}, output_fields={self.output_fields})"
+        return f"SampleMeta(global_step={self.global_step}, global_index={self.global_index}, storage_id='{self.storage_id}', local_index={self.local_index}, fields={self.fields})"
 
     @property
     def field_names(self) -> List[str]:
         """Get list of field names for this sample"""
-        return list(self.input_fields.keys())
+        return list(self.fields.keys())
 
     @property
     def batch_index(self) -> int:
@@ -109,33 +108,62 @@ class SampleMeta:
 
     def get_field_by_name(self, name: str) -> Optional[FieldMeta]:
         """Get FieldMeta by field name"""
-        return self.input_fields.get(name)
+        return self.fields.get(name)
 
     def has_field(self, name: str) -> bool:
         """Check if this sample has a specific field"""
-        return name in self.input_fields
+        return name in self.fields
 
     def is_field_ready(self, field_name: str) -> bool:
         """Check if a specific field is ready for consumption"""
-        field = self.input_fields.get(field_name)
+        field = self.fields.get(field_name)
         return field.is_ready if field else False
+    
+    
+    def add_fields(self, field_names: List[str]) -> None:
+        """
+        Add new fields to this sample. New fields will be initialized with default FieldMeta.
+        This modifies the sample in-place to include the new fields.
+        """
+        for field_name in field_names:
+            if field_name not in self.fields:
+                self.fields[field_name] = FieldMeta(name=field_name, dtype=None, shape=None)
+    
+    def union(self, other: 'SampleMeta', validate: bool = True) -> Optional['SampleMeta']:
+        """
+        Create a union of this sample's fields with another sample's fields.
+        Assume both samples have the same global index.
+        Args:
+            other: Another SampleMeta to union with
+            validate: Whether to validate union conditions
+        Returns:
+            New SampleMeta with unioned fields (None if validation fails)
+        """
+        if validate:
+            if self.global_index != other.global_index:
+                logger.error("Error: Global indexes do not match for union.")
+                return None
+
+        # Merge fields
+        merged_fields = {**self.fields, **other.fields}
+
+        return SampleMeta(
+            global_step=self.global_step,
+            global_index=self.global_index,
+            storage_id=self.storage_id,
+            local_index=self.local_index,
+            fields=merged_fields,
+        )
 
     @property
     def is_ready(self) -> bool:
         """Check if all fields in this sample are ready for consumption"""
         return getattr(self, '_is_ready', False)
 
-    def set_output_fields(self, field_names: List[str]) -> None:
-        """
-        Set the output fields for this sample. These fields will be used for RL training output.
-        This modifies the sample in-place to mark which fields should be considered as outputs.
-        """
-        self.output_fields = field_names.copy()
-
     @property
     def production_status(self) -> Dict[str, ProductionStatus]:
         """Get production status for all fields (backward compatibility)"""
-        return {name: field.production_status for name, field in self.input_fields.items()}
+        return {name: field.production_status for name, field in self.fields.items()}
 
 
 @dataclass
@@ -170,24 +198,17 @@ class StorageMetaGroup:
         """Get all local indexes from stored SampleMeta objects"""
         return [meta.local_index for meta in self.sample_metas]
 
-    def get_input_field_names(self) -> List[str]:
+    def get_field_names(self) -> List[str]:
         """Get all unique field names from stored SampleMeta objects"""
         all_fields = set()
         for meta in self.sample_metas:
-            all_fields.update(meta.input_fields.keys())
+            all_fields.update(meta.fields.keys())
         return list(all_fields)
 
-    def get_output_field_names(self) -> List[str]:
-        """Get output fields from the first SampleMeta"""
-        all_fields = set()
-        for meta in self.sample_metas:
-            all_fields.update(meta.output_fields)
-        return list(all_fields)
-
-    def get_transfer_info(self, use_output_fields: bool = False) -> Dict[str, List]:
+    def get_transfer_info(self, field_names: List[str] = None) -> Dict[str, List]:
         """Convert to dictionary format for backward compatibility"""
-        # TODO: 去掉use_output_fields参数，统一使用output_fields（需修改controller，为put prompt行为拿到的BatchMeta直接指定output_fields）
-        field_names = self.get_output_field_names() if use_output_fields else self.get_input_field_names()
+        if field_names is None:
+            field_names = self.get_field_names()
         return {
             'batch_indexes': self.get_batch_indexes(),
             'global_indexes': self.get_global_indexes(),
@@ -249,7 +270,7 @@ class BatchMeta:
             # Compute all unique field names across samples
             all_fields = set()
             for sample in self.samples:
-                all_fields.update(field.name for field in sample.input_fields.values())
+                all_fields.update(field.name for field in sample.fields.values())
             object.__setattr__(self, '_fields', list(all_fields))
 
             # Initialize storage groups for efficient client operations
@@ -290,6 +311,7 @@ class BatchMeta:
     @property
     def is_ready(self) -> bool:
         """Check if all samples in this batch are ready for consumption"""
+        # TODO: get ready status from controller realtime
         return getattr(self, '_is_ready', False)
 
     def _build_storage_meta_groups(self) -> Dict[str, StorageMetaGroup]:
@@ -348,23 +370,19 @@ class BatchMeta:
     def get_all_extra_info(self) -> Dict[str, Any]:
         """Get all extra info as a dictionary"""
         return self.extra_info.copy()
-
-    def set_output_fields(self, field_names: List[str]) -> None:
+    
+    def add_fields(self, field_names: List[str]) -> None:
         """
-        Set the output fields for all samples in this batch. These fields will be used for RL training output.
-        This modifies each sample in-place to mark which fields should be considered as outputs.
+        Add new fields to all samples in this batch. New fields will be initialized with default FieldMeta.
+        This modifies each sample in-place to include the new fields.
         """
-        # Set output fields on all samples
         for sample in self.samples:
-            sample.output_fields = field_names.copy()
+            sample.add_fields(field_names)
 
-        # Cache output fields at batch level for easy access
-        object.__setattr__(self, '_output_fields', field_names.copy())
-
-    @property
-    def output_fields(self) -> List[str]:
-        """Get the output fields for this batch"""
-        return getattr(self, '_output_fields', self.samples[0].output_fields if self.samples else [])
+        # Update batch-level fields cache
+        updated_fields = set(self.fields)
+        updated_fields.update(field_names)
+        object.__setattr__(self, '_fields', list(updated_fields))
 
     def __iter__(self) -> Iterator[SampleMeta]:
         """Iterate over samples in this batch."""
@@ -439,8 +457,52 @@ class BatchMeta:
         all_samples = []
         for chunk in chunks:
             all_samples.extend(chunk.samples)
+        
+        # Combine extra info (later chunks overwrite earlier ones on key conflicts)
+        all_extra_info = {}
+        for chunk in chunks:
+            all_extra_info.update(chunk.extra_info)
 
-        return BatchMeta(samples=all_samples)
+        return BatchMeta(samples=all_samples, extra_info=all_extra_info)
+
+    def union(self, other: 'BatchMeta', validate: bool = True) -> Optional['BatchMeta']:
+        """
+        Create a union of this batch's fields with another batch's fields.
+        Assume both batches have the same global indices.
+        Args:
+            other: Another BatchMeta to union with
+            validate: Whether to validate union conditions
+        Returns:
+            New BatchMeta with unioned fields (None if validation fails)
+        """
+        if validate:
+            if self.size != other.size:
+                logger.error("Error: Batch sizes do not match for union.")
+                return None
+
+            self_global_indexes = sorted(self.global_indexes)
+            other_global_indexes = sorted(other.global_indexes)
+            if self_global_indexes != other_global_indexes:
+                logger.error("Error: Global indexes do not match for union.")
+                return None
+
+        # Create a mapping from global_index to SampleMeta in the other batch
+        other_sample_map = {sample.global_index: sample for sample in other.samples}
+
+        # Merge samples
+        merged_samples = []
+        for sample in self.samples:
+            if sample.global_index in other_sample_map:
+                other_sample = other_sample_map[sample.global_index]
+                merged_sample = sample.union(other_sample, validate=validate)
+                merged_samples.append(merged_sample)
+            else:
+                merged_samples.append(sample)
+
+        # Merge extra info dictionaries
+        merged_extra_info = {**self.extra_info, **other.extra_info}
+
+        return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
 
     @classmethod
     def from_samples(cls, samples: Union[SampleMeta, List[SampleMeta]],
@@ -823,7 +885,7 @@ class TransferQueueController:
                 global_index=global_index,
                 storage_id=storage_id,
                 local_index=local_index,
-                input_fields={field.name: field for field in fields}
+                fields={field.name: field for field in fields}
             )
             samples.append(sample)
 
@@ -1046,13 +1108,8 @@ class TransferQueueController:
                 global_indexes = message_data.get("global_indexes", [])
                 per_tensor_dtypes = message_data.get("dtypes", {})  # Now a dict of lists
                 per_tensor_shapes = message_data.get("shapes", {})  # Now a dict of lists
-                output_fields = message_data.get("output_fields",
-                                                 [])  # Fields that will be used as output for RL training
-
                 # 更新数据生产状态
                 logger.debug(f"global_indexes, fields: {global_indexes, fields}")
-                if output_fields:
-                    logger.info(f"Output fields for RL training: {output_fields}")
                 self._update_production_status(global_indexes, fields)
                 self._update_field_info(fields, per_tensor_dtypes, per_tensor_shapes, global_indexes)
                 logger.info("Controller update production status successful!")
@@ -1392,7 +1449,7 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                     per_tensor_dtypes[global_idx][field] = data_item.dtype if hasattr(data_item, 'dtype') else None
                     per_tensor_shapes[global_idx][field] = data_item.shape if hasattr(data_item, 'shape') else None
 
-            # Broadcast data update message to all controllers with per-tensor dtype/shape and output_fields
+            # Broadcast data update message to all controllers with per-tensor dtype/shape information
             self._notify_data_update(list(field_data.keys()), global_indexes, per_tensor_dtypes, per_tensor_shapes)
             return response_msg
         except Exception as e:
@@ -1410,8 +1467,9 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
 
         param:
             fields: data update related fields.
-            global_indexes:data update related global_indexes.
-            output_fields: fields that will be used as output for RL training.
+            global_indexes: data update related global_indexes.
+            dtypes: per-tensor dtypes for each field, in {global_index: {field: dtype}} format.
+            shapes: per-tensor shapes for each field, in {global_index: {field: shape}} format.
         """
         # Create zmq poller for notifying data update information
         poller = zmq.Poller()
@@ -1739,8 +1797,7 @@ class AsyncTransferQueueClient:
             global_step (int, optional): Current step (required if no metadata is provided)
 
         """
-        is_provide_metadata = metadata is not None
-        if not is_provide_metadata:
+        if metadata is None:
             assert global_step is not None, (
                 "global_steps must be provided if metadata is not given"
             )
@@ -1756,7 +1813,7 @@ class AsyncTransferQueueClient:
             raise ValueError("metadata cannot be none or empty")
         logger.debug(f"[{self.client_id}]: Put data with data: {data}")
         tasks = [
-            self._put_to_storage(get_transfer_info(meta_group, data, is_provide_metadata), target_storage=storage_id)
+            self._put_to_storage(get_transfer_info(meta_group, data), target_storage=storage_id)
             for storage_id, meta_group in metadata.storage_meta_groups.items()
         ]
         await asyncio.gather(*tasks)
@@ -2119,14 +2176,11 @@ def _add_field_data(
     return transfer_dict
 
 
-# TODO: 应该只有put prompt时涉及相关逻辑。这块可以通过在controller get_meta的时候特殊处理，让put prompt下发的metadata自带output_fields来完成
 def get_transfer_info(
         storage_meta_group: StorageMetaGroup,
-        data: TensorDict = None,
-        use_output_fields: bool = True
+        data: TensorDict,
 ) -> Dict[str, any]:
     """Convert to dictionary format with field data for put operations"""
-    result = storage_meta_group.get_transfer_info(use_output_fields)
-    if data is not None:
-        result = _add_field_data(result, storage_meta_group, data)
+    result = storage_meta_group.get_transfer_info(field_names=data.keys())
+    result = _add_field_data(result, storage_meta_group, data)
     return result
