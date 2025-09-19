@@ -1725,9 +1725,8 @@ class AsyncTransferQueueClient:
 
     async def async_put(
             self,
-            data: Union[torch.Tensor, TensorDict],
+            data: TensorDict,
             metadata: Optional[BatchMeta] = None,
-            data_fields: Optional[list[str]] = None,
             global_step: Optional[int] = None,
     ):
         """Asynchronously writes data to appropriate Storage Units based on metadata.
@@ -1738,26 +1737,17 @@ class AsyncTransferQueueClient:
         Args:
             data (torch.Tensor | tensordict.TensorDict): Data to write, either a Tensor or TensorDict
             metadata (BatchMeta, optional): Optional metadata containing index and storage unit information
-            data_fields (list[str], optional): List of field names (required if no metadata is provided)
             global_step (int, optional): Current step (required if no metadata is provided)
 
         """
         is_provide_metadata = metadata is not None
         if not is_provide_metadata:
-            assert data_fields is not None and global_step is not None, (
-                "data_fields and global_steps must be provided if metadata is not given"
+            assert global_step is not None, (
+                "global_steps must be provided if metadata is not given"
             )
 
-            if isinstance(data, torch.Tensor):
-                if len(data_fields) != 1:
-                    raise ValueError(
-                        "For Tensor input, data_fields must contain exactly one field name. "
-                        f"Got {len(data_fields)} fields: {data_fields}"
-                    )
-                data = TensorDict({data_fields[0]: data}, batch_size=data.shape[0])
-
             metadata = await self.async_get_meta(
-                data_fields=data_fields,
+                data_fields=list(data.keys()),
                 batch_size=data.batch_size[0],
                 global_step=global_step,
                 mode="insert",
@@ -2056,9 +2046,8 @@ class TransferQueueClient(AsyncTransferQueueClient):
     #     # 构造迭代器将get过程进行抽象
     #     pass
 
-    def put(self, data: Union[TensorDict, Tensor], metadata: BatchMeta = None, data_fields: Optional[list[str]] = None,
-            global_step: Optional[int] = None):
-        return asyncio.run(self.async_put(data, metadata, data_fields, global_step))
+    def put(self, data: TensorDict, metadata: BatchMeta = None, global_step: Optional[int] = None):
+        return asyncio.run(self.async_put(data, metadata, global_step))
 
     def get_meta(
             self,

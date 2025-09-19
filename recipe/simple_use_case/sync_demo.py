@@ -127,7 +127,7 @@ def fit(config, data_system_client):
             input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]])) * (step + 1)
             prompt_batch = TensorDict({"input_ids": input_ids}, batch_size=input_ids.size(0))
 
-            data_system_client.put(data=prompt_batch, data_fields=["input_ids"], global_step=step)
+            data_system_client.put(data=prompt_batch, global_step=step)
             logger.info("demo put prompts ok! ")
             time.sleep(5)
 
