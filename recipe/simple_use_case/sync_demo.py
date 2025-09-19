@@ -13,6 +13,7 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 from transfer_queue.data_system import TransferQueueController, TransferQueueStorageSimpleUnit, process_zmq_server_info
+from transfer_queue.utils.utils import get_placement_group
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,9 +26,13 @@ def initialize_data_system(config):
     # 1. 初始化TransferQueueStorage
     total_storage_size = (config.global_batch_size * config.num_global_batch)
     data_system_storage_units = {}
+    storage_placement_group = get_placement_group(config.num_data_storage_units, num_cpus_per_actor=1)
     for storage_unit_rank in range(config.num_data_storage_units):
         # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
-        storage_node = TransferQueueStorageSimpleUnit.remote(
+        storage_node = TransferQueueStorageSimpleUnit.options(
+            placement_group=storage_placement_group,
+            placement_group_bundle_index=storage_unit_rank
+        ).remote(
             storage_size=math.ceil(total_storage_size / config.num_data_storage_units)
         )
         data_system_storage_units[storage_unit_rank] = storage_node
@@ -35,9 +40,13 @@ def initialize_data_system(config):
 
     # 2. 初始化TransferQueueController
     # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务
+    controller_placement_group = get_placement_group(config.num_data_controllers, num_cpus_per_actor=1)
     data_system_controllers = {}
     for controller_rank in range(config.num_data_controllers):
-        data_system_controllers[controller_rank] = TransferQueueController.remote(
+        data_system_controllers[controller_rank] = TransferQueueController.options(
+            placement_group=controller_placement_group,
+            placement_group_bundle_index=controller_rank
+        ).remote(
             num_storage_units=config.num_data_storage_units,
             global_batch_size=config.global_batch_size,
             num_global_batch=config.num_global_batch,
