@@ -194,7 +194,7 @@ class MockStorage:
             field: torch.zeros(len(local_indexes)) for field in fields
         })
         
-        return {"message": {"data": result_data}}
+        return {"data": result_data}
 
     def stop(self):
         self.running = False
