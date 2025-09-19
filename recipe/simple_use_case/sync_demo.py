@@ -13,29 +13,13 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 from transfer_queue.data_system import TransferQueueController, TransferQueueStorageSimpleUnit, process_zmq_server_info
+from transfer_queue.utils.utils import get_placement_group
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 ray.init(runtime_env={"env_vars":{"RAY_DEBUG": "1", "RAY_DEDUP_LOGS":"0"}})
-
-
-def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
-    """Create a placement group for Ray actors.
-    Args:
-        num_ray_actors (int): Number of Ray actors to create.
-        num_cpus_per_actor (int): Number of CPUs to allocate per actor.
-    Returns:
-        placement_group: The created placement group.
-    """
-    bundle = {"CPU": num_cpus_per_actor}
-    placement_group = ray.util.placement_group(
-        [bundle for _ in range(num_ray_actors)],
-        strategy="SPREAD"
-    )
-    ray.get(placement_group.ready())
-    return placement_group
 
 
 def initialize_data_system(config):
