@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import math
 import sys
@@ -15,26 +14,22 @@ sys.path.append(str(parent_dir))
 from transfer_queue.data_system import TransferQueueController, TransferQueueStorageSimpleUnit, process_zmq_server_info
 from transfer_queue.utils.utils import get_placement_group, extract_field_info
 
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-ray.init(runtime_env={"env_vars":{"RAY_DEBUG": "1", "RAY_DEDUP_LOGS":"0"}})
+ray.init(runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}})
 
 
 def initialize_data_system(config):
     # 1. 初始化TransferQueueStorage
-    total_storage_size = (config.global_batch_size * config.num_global_batch)
+    total_storage_size = config.global_batch_size * config.num_global_batch
     data_system_storage_units = {}
     storage_placement_group = get_placement_group(config.num_data_storage_units, num_cpus_per_actor=1)
     for storage_unit_rank in range(config.num_data_storage_units):
         # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
         storage_node = TransferQueueStorageSimpleUnit.options(
-            placement_group=storage_placement_group,
-            placement_group_bundle_index=storage_unit_rank
-        ).remote(
-            storage_size=math.ceil(total_storage_size / config.num_data_storage_units)
-        )
+            placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
+        ).remote(storage_size=math.ceil(total_storage_size / config.num_data_storage_units))
         data_system_storage_units[storage_unit_rank] = storage_node
         logger.info(f"TransferQueueStorageSimpleUnit #{storage_unit_rank} has been created.")
 
@@ -44,8 +39,7 @@ def initialize_data_system(config):
     data_system_controllers = {}
     for controller_rank in range(config.num_data_controllers):
         data_system_controllers[controller_rank] = TransferQueueController.options(
-            placement_group=controller_placement_group,
-            placement_group_bundle_index=controller_rank
+            placement_group=controller_placement_group, placement_group_bundle_index=controller_rank
         ).remote(
             num_storage_units=config.num_data_storage_units,
             global_batch_size=config.global_batch_size,
@@ -59,15 +53,22 @@ def initialize_data_system(config):
     data_system_controller_infos = process_zmq_server_info(data_system_controllers)
     data_system_storage_unit_infos = process_zmq_server_info(data_system_storage_units)
 
-    ray.get([storage_unit.register_controller_info.remote(data_system_controller_infos) for storage_unit in
-             data_system_storage_units.values()])
+    ray.get(
+        [
+            storage_unit.register_controller_info.remote(data_system_controller_infos)
+            for storage_unit in data_system_storage_units.values()
+        ]
+    )
 
     # 4. 创建Client
     from transfer_queue.data_system import TransferQueueClient
+
     data_system_client = TransferQueueClient(
-        client_id='Trainer',
-        controller_infos=data_system_controller_infos[0],  # TODO: 主控Client感知所有controller，WorkerGroup和Worker的Client感知一个controller
-        storage_infos=data_system_storage_unit_infos
+        client_id="Trainer",
+        controller_infos=data_system_controller_infos[
+            0
+        ],  # TODO: 主控Client感知所有controller，WorkerGroup和Worker的Client感知一个controller
+        storage_infos=data_system_storage_unit_infos,
     )
 
     return data_system_controllers, data_system_storage_units, data_system_client
@@ -123,7 +124,9 @@ def fit(config, data_system_client):
         train_dataloader = 2
         for step in range(train_dataloader):
             input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111]])) * (step + 1)
-            prompt_batch = TensorDict({"input_ids": input_ids, "attention_mask": input_ids}, batch_size=input_ids.size(0))
+            prompt_batch = TensorDict(
+                {"input_ids": input_ids, "attention_mask": input_ids}, batch_size=input_ids.size(0)
+            )
 
             data_system_client.put(data=prompt_batch, global_step=step)
             logger.info("demo put prompts ok! ")
@@ -134,7 +137,7 @@ def fit(config, data_system_client):
                 batch_size=config.global_batch_size,
                 global_step=step,
                 get_n_samples=False,
-                task_name='generate_sequences',
+                task_name="generate_sequences",
             )
             # Set output fields for RL training - in this case, we want to generate sequences from input_ids
             logger.info(f"demo get meta {batch_meta}")
@@ -143,11 +146,11 @@ def fit(config, data_system_client):
             batch_meta = actor_rollout_wg_generate_sequences(batch_meta, data_system_client)
 
             log_prob_meta = data_system_client.get_meta(
-                data_fields=['input_ids', 'attention_mask', 'generate_sequences_ids'],
+                data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                 batch_size=config.global_batch_size,
                 global_step=0,
                 get_n_samples=False,
-                task_name='compute_old_log_prob',
+                task_name="compute_old_log_prob",
             )
             # Set output fields for RL training - we want to compute log probs for the generated sequences
             logger.info(f"demo get log prob meta: {log_prob_meta}")
@@ -168,6 +171,7 @@ def main(config):
     # Initialize Data System：基于Ray拉起Controller以及Storage
     data_system_controllers, data_system_storage_units, data_system_client = initialize_data_system(config)
     import time
+
     time.sleep(5)
 
     fit(config, data_system_client)
@@ -184,4 +188,3 @@ if __name__ == "__main__":
     dict_conf = OmegaConf.create(config_str)
 
     main(dict_conf)
-
