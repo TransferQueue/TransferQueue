@@ -218,7 +218,7 @@ def test_put_get_single_client(storage_setup):
     response = client.send_get(0, [0, 1], ["log_probs", "rewards"])
     assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
 
-    retrieved_data = response.body["message"]["data"]
+    retrieved_data = response.body["data"]
     assert "log_probs" in retrieved_data
     assert "rewards" in retrieved_data
     assert len(retrieved_data["log_probs"]) == 2
@@ -273,7 +273,7 @@ def test_put_get_multiple_clients(storage_setup):
         response = client.send_get(i, [i * 10 + 0, i * 10 + 1], ["log_probs", "rewards"])
         assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
 
-        retrieved_data = response.body["message"]["data"]
+        retrieved_data = response.body["data"]
         assert len(retrieved_data["log_probs"]) == 2
         assert len(retrieved_data["rewards"]) == 2
 

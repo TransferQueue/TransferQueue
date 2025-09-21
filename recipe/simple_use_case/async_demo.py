@@ -16,16 +16,12 @@ parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 from transfer_queue.data_system import AsyncTransferQueueClient, TransferQueueController, \
     TransferQueueStorageSimpleUnit, process_zmq_server_info
+from transfer_queue.utils.utils import get_placement_group
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 ray.init(runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}})
-
-"""
-同步的fit函数
-
-"""
 
 
 def compute_old_log_prob(data1, data2):
@@ -151,9 +147,13 @@ class Trainer:
         # 1. 初始化TransferQueueStorage
         total_storage_size = (self.config.global_batch_size * self.config.num_global_batch)
         self.data_system_storage_units = {}
+        storage_placement_group = get_placement_group(self.config.num_data_storage_units, num_cpus_per_actor=1)
         for storage_unit_rank in range(self.config.num_data_storage_units):
             # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
-            storage_node = TransferQueueStorageSimpleUnit.remote(
+            storage_node = TransferQueueStorageSimpleUnit.options(
+                placement_group=storage_placement_group,
+                placement_group_bundle_index=storage_unit_rank
+            ).remote(
                 storage_size=math.ceil(total_storage_size / self.config.num_data_storage_units)
             )
             self.data_system_storage_units[storage_unit_rank] = storage_node
@@ -162,8 +162,12 @@ class Trainer:
         # 2. 初始化TransferQueueController
         # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务
         self.data_system_controllers = {}
+        controller_placement_group = get_placement_group(self.config.num_data_controllers, num_cpus_per_actor=1)
         for controller_rank in range(self.config.num_data_controllers):
-            self.data_system_controllers[controller_rank] = TransferQueueController.remote(
+            self.data_system_controllers[controller_rank] = TransferQueueController.options(
+                placement_group=controller_placement_group,
+                placement_group_bundle_index=controller_rank
+            ).remote(
                 num_storage_units=self.config.num_data_storage_units,
                 global_batch_size=self.config.global_batch_size,
                 num_global_batch=self.config.num_global_batch,
@@ -193,17 +197,16 @@ class Trainer:
         for epoch in range(1):
             train_dataloader = 1
             for step in range(train_dataloader):
-                input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8]])) * (step + 1)
-                prompt_batch = TensorDict({"input_ids": input_ids}, batch_size=input_ids.size(0))
+                input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111]])) * (step + 1)
+                prompt_batch = TensorDict({"input_ids": input_ids, "attention_mask": input_ids}, batch_size=input_ids.size(0))
 
-                asyncio.run(self.data_system_client.async_put(data=prompt_batch, data_fields=["input_ids"],
-                                                              global_step=step))
+                asyncio.run(self.data_system_client.async_put(data=prompt_batch, global_step=step))
 
                 logger.info("demo put prompts ok! ")
                 time.sleep(5)
 
                 prompt_meta = asyncio.run(self.data_system_client.async_get_meta(
-                    data_fields=['input_ids'],
+                    data_fields=['input_ids', 'attention_mask'],
                     batch_size=self.config.global_batch_size,
                     global_step=step,
                     get_n_samples=False,
@@ -218,7 +221,7 @@ class Trainer:
                     self.async_rollout_manager.generate_sequences(prompt_meta)
 
                 log_prob_meta = asyncio.run(self.data_system_client.async_get_meta(
-                    data_fields=['input_ids', 'generate_sequences_ids'],
+                    data_fields=['input_ids', 'attention_mask', 'generate_sequences_ids'],
                     batch_size=self.config.global_batch_size,
                     global_step=step,
                     get_n_samples=False,
@@ -238,7 +241,7 @@ class Trainer:
 
 if __name__ == "__main__":
     config_str = """
-      global_batch_size: 4
+      global_batch_size: 6
       num_global_batch: 1 
       num_data_storage_units: 2
       num_data_controllers: 1

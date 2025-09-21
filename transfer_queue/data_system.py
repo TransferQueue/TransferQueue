@@ -681,14 +681,14 @@ class TransferQueueController:
         获取元数据，支持两种模式：
         - mode="insert": 插入新行的元数据（不检查数据状态）
         - mode="fetch": 获取已就绪的元数据（检查数据状态并采样）
-        - TODO(hz): 新增一种mode支持不检查数据采样，直接返回元数据
+        - mode="force_fetch": 直接返回元数据（不检查数据状态）
         """
         if mode == "insert":
             # TODO 当前仅支持put整个gbs的数据，后续待扩展支持多次put到同一step
             assert batch_size == self.global_batch_size
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             batch_global_indexes = list(range(start_idx, end_idx))
-            return self._generate_batch_meta(global_step, batch_global_indexes, data_fields, True)
+            return self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
         elif mode == "fetch":
             # 向TransferQueue读数据时，查找当前batch内可被消费的样本，并打包返回BatchMeta
 
@@ -714,12 +714,17 @@ class TransferQueueController:
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
             batch_global_indexes = random_sampler(ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples)
+        elif mode == "force_fetch":
+            start_idx, end_idx = self._step_to_global_index_range(global_step)
+            consumer_status = self._get_consumer_status(task_name)
+            not_consumed_idx = [i for i in range(start_idx, end_idx) if consumer_status[i] == 0]
+            batch_global_indexes = random_sampler(not_consumed_idx, batch_size, get_n_samples, self.num_n_samples)
 
         # 标记这批数据状态为已消费
         consumer_status = self._get_consumer_status(task_name)
         consumer_status[batch_global_indexes] = 1
         # 打包为metadata
-        metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields)
+        metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
         # 6. 如果是方式2，则将metadata进行缓存
         # if dp_rank and dp_size and rank_id:
         #     pass
@@ -766,9 +771,9 @@ class TransferQueueController:
             logger.debug(f"ready_for_consume_idx: {ready_for_consume_idx}")
 
             return ready_for_consume_idx
-
+    
     def _generate_batch_meta(self, global_step: int, global_indexes: List[int], data_fields: List[str],
-                             prompt: bool = False) -> BatchMeta:
+                             mode: str) -> BatchMeta:
         # 根据给定的global index，查找self.global_index_local_index_mapping和self._global_index_storage_id_mapping，确定对应
         # 存储节点的地址，并构建BatchMeta
         global_arr = np.array(global_indexes)
@@ -786,15 +791,25 @@ class TransferQueueController:
             # Create FieldMeta objects for each field
             fields = []
             for field_name in data_fields:
-                if not prompt:
+                if mode == "fetch":
                     production_status = ProductionStatus.READY_FOR_CONSUME  # Since we filtered by ready status
                     # Get per-tensor dtype and shape for this specific global_index and field
                     dtype = self._get_per_tensor_dtype(global_index, field_name)
                     shape = self._get_per_tensor_shape(global_index, field_name)
-                else:
+                elif mode == "insert":
                     production_status = ProductionStatus.NOT_PRODUCED  # FIXME: not real-time
                     dtype = None
                     shape = None
+                elif mode == "force_fetch":
+                    col_index = self.field_name_mapping.get(field_name)
+                    if col_index is not None and self.data_production_status[global_index, col_index] == 1:
+                        production_status = ProductionStatus.READY_FOR_CONSUME
+                        dtype = self._get_per_tensor_dtype(global_index, field_name)
+                        shape = self._get_per_tensor_shape(global_index, field_name)
+                    else:
+                        production_status = ProductionStatus.NOT_PRODUCED
+                        dtype = None
+                        shape = None
                 field_meta = FieldMeta(
                     name=field_name,
                     dtype=dtype,
@@ -815,6 +830,7 @@ class TransferQueueController:
         return BatchMeta(samples=samples)
 
     def _update_production_status(self, indexes: List[int], fields: List[str]) -> None:
+        # TODO replace the self.data_production_status == 0 or ==1 operation by using ProductionStatus
         # 更新数据生产状态矩阵
         new_fields = [field for field in fields if field not in self.field_name_mapping]
         if new_fields:
@@ -834,8 +850,7 @@ class TransferQueueController:
         for field in fields:
             if field not in self.field_name_mapping.keys():
                 self.field_name_mapping[field] = len(self.field_name_mapping)
-
-        self.data_production_status[indexes, [self.field_name_mapping.get(field) for field in fields]] = 1
+        self.data_production_status[torch.tensor(indexes)[:, None], torch.tensor([self.field_name_mapping.get(field) for field in fields])] = 1
 
     def _update_field_info(self, fields: List[str], per_tensor_dtypes: Dict[int, Dict[str, Any]],
                            per_tensor_shapes: Dict[int, Dict[str, Any]], global_indexes: List[int]) -> None:
@@ -1025,8 +1040,7 @@ class TransferQueueController:
             logger.debug(f"[{self.controller_id}]: Controller recv update_data_status request_msg: {request_msg}")
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
-                params = request_msg.body
-                message_data = params.get("message", {})
+                message_data = request_msg.body
 
                 fields = message_data.get("fields", [])
                 global_indexes = message_data.get("global_indexes", [])
@@ -1417,12 +1431,10 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                     request_type=ZMQRequestType.NOTIFY_DATA_UPDATE,
                     sender_id=self.zmq_server_info.id,
                     body={
-                        "message": {
-                            "fields": fields,
-                            "global_indexes": global_indexes,
-                            "dtypes": dtypes,
-                            "shapes": shapes,
-                        }
+                        "fields": fields,
+                        "global_indexes": global_indexes,
+                        "dtypes": dtypes,
+                        "shapes": shapes,
                     }
                 ).serialize()
 
@@ -1484,9 +1496,7 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                 request_type=ZMQRequestType.GET_DATA_RESPONSE,
                 sender_id=self.zmq_server_info.id,
                 body={
-                    "message": {
-                        "data": result_data,
-                    }
+                    "data": result_data,
                 }
             )
         except Exception as e:
@@ -1714,9 +1724,8 @@ class AsyncTransferQueueClient:
 
     async def async_put(
             self,
-            data: Union[torch.Tensor, TensorDict],
+            data: TensorDict,
             metadata: Optional[BatchMeta] = None,
-            data_fields: Optional[list[str]] = None,
             global_step: Optional[int] = None,
     ):
         """Asynchronously writes data to appropriate Storage Units based on metadata.
@@ -1727,26 +1736,17 @@ class AsyncTransferQueueClient:
         Args:
             data (torch.Tensor | tensordict.TensorDict): Data to write, either a Tensor or TensorDict
             metadata (BatchMeta, optional): Optional metadata containing index and storage unit information
-            data_fields (list[str], optional): List of field names (required if no metadata is provided)
             global_step (int, optional): Current step (required if no metadata is provided)
 
         """
         is_provide_metadata = metadata is not None
         if not is_provide_metadata:
-            assert data_fields is not None and global_step is not None, (
-                "data_fields and global_steps must be provided if metadata is not given"
+            assert global_step is not None, (
+                "global_steps must be provided if metadata is not given"
             )
 
-            if isinstance(data, torch.Tensor):
-                if len(data_fields) != 1:
-                    raise ValueError(
-                        "For Tensor input, data_fields must contain exactly one field name. "
-                        f"Got {len(data_fields)} fields: {data_fields}"
-                    )
-                data = TensorDict({data_fields[0]: data}, batch_size=data.shape[0])
-
             metadata = await self.async_get_meta(
-                data_fields=data_fields,
+                data_fields=list(data.keys()),
                 batch_size=data.batch_size[0],
                 global_step=global_step,
                 mode="insert",
@@ -1818,7 +1818,7 @@ class AsyncTransferQueueClient:
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:
                 # 返回该存储单元的数据和索引信息
-                su_data = response_msg.body["message"]["data"]
+                su_data = response_msg.body["data"]
                 return global_indexes, fields, su_data
             else:
                 raise RuntimeError(
@@ -2045,9 +2045,8 @@ class TransferQueueClient(AsyncTransferQueueClient):
     #     # 构造迭代器将get过程进行抽象
     #     pass
 
-    def put(self, data: Union[TensorDict, Tensor], metadata: BatchMeta = None, data_fields: Optional[list[str]] = None,
-            global_step: Optional[int] = None):
-        return asyncio.run(self.async_put(data, metadata, data_fields, global_step))
+    def put(self, data: TensorDict, metadata: BatchMeta = None, global_step: Optional[int] = None):
+        return asyncio.run(self.async_put(data, metadata, global_step))
 
     def get_meta(
             self,
