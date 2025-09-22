@@ -13,7 +13,7 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 from transfer_queue.data_system import TransferQueueController, TransferQueueStorageSimpleUnit, process_zmq_server_info
-from transfer_queue.utils.utils import get_placement_group
+from transfer_queue.utils.utils import get_placement_group, extract_field_info
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -90,11 +90,11 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
 
     output = generate_sequences(data["input_ids"])
 
-    # 2. 修改data_meta，用于存放当前任务返回结果的元数据
     output = TensorDict({"generate_sequences_ids": output}, batch_size=output.size(0))
 
-    # 3. 根据data_meta将结果写回storage unit
+    # 2. 根据data_meta将结果写回storage unit
     data_system_client.put(data=output, metadata=data_meta)
+    data_meta.add_fields(**extract_field_info(output))
     logger.info("demo put data to storages done")
 
     return data_meta
@@ -107,11 +107,11 @@ def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
 
     output = compute_old_log_prob(data["input_ids"], data["generate_sequences_ids"])
 
-    # 2. 修改data_meta，用于存放当前任务返回结果的元数据
     output = TensorDict({"old_log_prob": output}, batch_size=output.size(0))
 
-    # 3. 根据data_meta将结果写回storage unit
+    # 2. 根据data_meta将结果写回storage unit
     data_system_client.put(data=output, metadata=data_meta)
+    data_meta.add_fields(**extract_field_info(output))
     logger.info("demo put data to storages done")
 
     return data_meta
@@ -140,7 +140,7 @@ def fit(config, data_system_client):
             logger.info(f"demo get meta {batch_meta}")
 
             # Simulate calling the generate sequences task of the worker group
-            actor_rollout_wg_generate_sequences(batch_meta, data_system_client)
+            batch_meta = actor_rollout_wg_generate_sequences(batch_meta, data_system_client)
 
             log_prob_meta = data_system_client.get_meta(
                 data_fields=['input_ids', 'attention_mask', 'generate_sequences_ids'],
