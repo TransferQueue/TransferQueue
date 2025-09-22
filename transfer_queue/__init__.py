@@ -5,7 +5,7 @@ version_folder = os.path.dirname(os.path.join(os.path.abspath(__file__)))
 with open(os.path.join(version_folder, "version/version")) as f:
     __version__ = f.read().strip()
 
-from .data_system import (
+from .data_system import (  # noqa: E402
     AsyncTransferQueueClient,
     TransferQueueClient,
     TransferQueueController,

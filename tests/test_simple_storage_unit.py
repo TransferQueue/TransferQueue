@@ -75,7 +75,7 @@ class MockController:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.handshake_socket in socks:
                     identity, msg_bytes = self.handshake_socket.recv_multipart()
-                    msg = ZMQMessage.deserialize(msg_bytes)
+                    ZMQMessage.deserialize(msg_bytes)
 
                     # Send handshake ack
                     ack_msg = ZMQMessage.create(
@@ -99,7 +99,7 @@ class MockController:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.data_update_socket in socks:
                     identity, msg_bytes = self.data_update_socket.recv_multipart()
-                    msg = ZMQMessage.deserialize(msg_bytes)
+                    ZMQMessage.deserialize(msg_bytes)
 
                     # Send data update ack
                     ack_msg = ZMQMessage.create(

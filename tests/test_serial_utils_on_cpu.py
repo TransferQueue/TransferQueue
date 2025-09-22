@@ -10,7 +10,8 @@ from tensordict import NonTensorData, NonTensorStack, TensorDict
 # Import your classes here
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
-from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder
+
+from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder  # noqa: E402
 
 
 def get_tensordict(tensor_dict: dict[str, torch.Tensor | list], non_tensor_dict: dict = None) -> TensorDict:
