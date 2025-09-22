@@ -12,11 +12,13 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue.data_system import (  # noqa: E402
+from transfer_queue import TransferQueueClient  # noqa: E402
+from transfer_queue.metadata import (  # noqa: E402
     BatchMeta,
     FieldMeta,
     SampleMeta,
-    TransferQueueClient,
+)
+from transfer_queue.utils.zmq_utils import (  # noqa: E402
     ZMQMessage,
     ZMQRequestType,
     ZMQServerInfo,

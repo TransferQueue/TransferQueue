@@ -17,7 +17,7 @@ parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
 try:
-    from transfer_queue.data_system import TransferQueueStorageSimpleUnit
+    from transfer_queue import TransferQueueStorageSimpleUnit
     from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo
 except ImportError:
     # For testing purposes if imports are not available
