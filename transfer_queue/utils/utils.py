@@ -1,8 +1,9 @@
 from enum import Enum
-from typing import List, Optional, TypedDict
-import torch
+
 import ray
+import torch
 from tensordict import TensorDict
+
 
 class ExplicitEnum(str, Enum):
     """
@@ -28,6 +29,7 @@ class ProductionStatus(ExplicitEnum):
     READY_FOR_CONSUME = 1
     CONSUMED = 2
 
+
 def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
     """Create a placement group for Ray actors.
     Args:
@@ -37,19 +39,17 @@ def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
         placement_group: The created placement group.
     """
     bundle = {"CPU": num_cpus_per_actor}
-    placement_group = ray.util.placement_group(
-        [bundle for _ in range(num_ray_actors)],
-        strategy="SPREAD"
-    )
+    placement_group = ray.util.placement_group([bundle for _ in range(num_ray_actors)], strategy="SPREAD")
     ray.get(placement_group.ready())
     return placement_group
+
 
 def random_sampler(
     ready_for_consume_idx: list[int],
     batch_size: int,
     get_n_samples: bool,
     n_samples_per_prompt: int,
-) -> Optional[list[int]]:
+) -> list[int]:
     """
     random sampling batch_size samples from global indexes ready_for_consume_idx
     input example:
@@ -76,13 +76,14 @@ def random_sampler(
         sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
     return sampled_indexes
 
+
 def extract_field_info(tensor_dict: TensorDict) -> dict:
     """
     Extract field names, dtypes, and shapes from a TensorDict.
     Assumes all tensors in the same field have the same dtype and shape (excluding batch dimension).
     Returns a dictionary with keys: 'names', 'dtypes', 'shapes'.
     """
-    field_info = {"names": [], "dtypes": [], "shapes": []}
+    field_info: dict[str, list] = {"names": [], "dtypes": [], "shapes": []}
     for key, value in tensor_dict.items():
         field_info["names"].append(key)
         field_info["dtypes"].append(value.dtype)

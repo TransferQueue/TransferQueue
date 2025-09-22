@@ -1,15 +1,15 @@
 import asyncio
+import dataclasses
 import logging
 import math
 import os
 import threading
 import time
-from abc import ABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import wraps
 from operator import itemgetter
 from threading import Thread
-from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, Callable, Iterator, Optional, Union
 from uuid import uuid4
 
 import numpy as np
@@ -22,11 +22,10 @@ from tensordict import TensorDict
 from torch import Tensor
 
 from transfer_queue.utils.utils import (
-    TransferQueueRole,
     ProductionStatus,
+    TransferQueueRole,
     random_sampler,
 )
-
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -35,15 +34,15 @@ from transfer_queue.utils.zmq_utils import (
     get_free_port,
 )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.INFO))
 
-CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT = os.environ.get("CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT", 30)
-CONTROLLER_DATA_UPDATE_RESPONSE_TIMEOUT = os.environ.get("CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT", 600)
+CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT = int(os.environ.get("CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT", 30))
+CONTROLLER_DATA_UPDATE_RESPONSE_TIMEOUT = int(os.environ.get("CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT", 600))
 POLLER_TIMEOUT_MS = os.environ.get("POLLER_TIMEOUT_MS", 1000)
-CONTROLLER_GET_METADATA_TIMEOUT = os.environ.get("CONTROLLER_GET_METADATA_TIMEOUT", 300)
-CONTROLLER_GET_METADATA_CHECK_INTERVAL = os.environ.get("CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1)
+CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("CONTROLLER_GET_METADATA_TIMEOUT", 300))
+CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))
 INIT_FIELD_NUM = os.environ.get("INIT_FIELD_NUM", 10)
 
 
@@ -52,6 +51,7 @@ class FieldMeta:
     """
     Records the metadata of a single data field. (name, dtype, shape, etc.)
     """
+
     # field name (e.g., 'prompt', 'response', etc.)
     name: str
 
@@ -63,18 +63,20 @@ class FieldMeta:
     production_status: ProductionStatus = ProductionStatus.NOT_PRODUCED  # production status for this field
 
     def __str__(self) -> str:
-        return f"FieldMeta(name='{self.name}', dtype={self.dtype}, shape={self.shape}, production_status={self.production_status})"
+        return (
+            f"FieldMeta(name='{self.name}', dtype={self.dtype}, "
+            f"shape={self.shape}, production_status={self.production_status})"
+        )
 
     @property
     def is_ready(self) -> bool:
         """Check if this field is ready for consumption"""
         return self.production_status == ProductionStatus.READY_FOR_CONSUME
 
-    def equals(self, other: 'FieldMeta') -> bool:
+    def equals(self, other: "FieldMeta") -> bool:
         """Check if two FieldMeta are equal (based on name, dtype, shape)"""
-        return (self.name == other.name and
-                self.dtype == other.dtype and
-                self.shape == other.shape)
+        return self.name == other.name and self.dtype == other.dtype and self.shape == other.shape
+
 
 @dataclass
 class SampleMeta:
@@ -92,25 +94,29 @@ class SampleMeta:
 
     # data fields info
     # this fields may not contain all the fields of the sample, but only fields-of-interest
-    fields: Dict[str, FieldMeta]
+    fields: dict[str, FieldMeta]
 
     def __post_init__(self):
         """Initialize is_ready property based on field readiness"""
         # Check if all fields are ready and update is_ready property
-        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.fields.values()))
+        object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
 
     def __str__(self) -> str:
-        return f"SampleMeta(global_step={self.global_step}, global_index={self.global_index}, storage_id='{self.storage_id}', local_index={self.local_index}, fields={self.fields})"
+        return (
+            f"SampleMeta(global_step={self.global_step}, "
+            f"global_index={self.global_index}, storage_id='{self.storage_id}', "
+            f"local_index={self.local_index}, fields={self.fields})"
+        )
 
     @property
-    def field_names(self) -> List[str]:
+    def field_names(self) -> list[str]:
         """Get list of field names for this sample"""
         return list(self.fields.keys())
 
     @property
     def batch_index(self) -> int:
         """Get the batch index of this sample (to be set by BatchMeta)"""
-        return getattr(self, '_batch_index', -1)
+        return getattr(self, "_batch_index", -1)
 
     def get_field_by_name(self, name: str) -> Optional[FieldMeta]:
         """Get FieldMeta by field name"""
@@ -124,19 +130,19 @@ class SampleMeta:
         """Check if a specific field is ready for consumption"""
         field = self.fields.get(field_name)
         return field.is_ready if field else False
-    
-    def add_fields(self, names: List[str], dtypes: List[torch.dtype], shapes: List[torch.Size]) -> None:
+
+    def add_fields(self, names: list[str], dtypes: list[torch.dtype], shapes: list[torch.Size]) -> None:
         """
         Add new fields to this sample. New fields will be initialized with default FieldMeta.
         This modifies the sample in-place to include the new fields.
         """
-        for field_name, dtype, shape in zip(names, dtypes, shapes):
+        for field_name, dtype, shape in zip(names, dtypes, shapes, strict=False):
             assert field_name not in self.fields, f"Field '{field_name}' already exists in SampleMeta."
             self.fields[field_name] = FieldMeta(name=field_name, dtype=dtype, shape=shape)
         # Update is_ready property
-        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.fields.values()))
-    
-    def union(self, other: 'SampleMeta', validate: bool = True) -> 'SampleMeta':
+        object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
+
+    def union(self, other: "SampleMeta", validate: bool = True) -> "SampleMeta":
         """
         Create a union of this sample's fields with another sample's fields.
         Assume both samples have the same global index, and if fields overlap, they must be identical.
@@ -148,23 +154,25 @@ class SampleMeta:
         """
         if validate:
             if self.global_index != other.global_index:
-                raise ValueError(f"Error: Global indexes ({self.global_index} and {other.global_index}) do not match for union.")
+                raise ValueError(
+                    f"Error: Global indexes ({self.global_index} and {other.global_index}) do not match for union."
+                )
 
         # Merge fields
         merged_fields = _union_fields(self.fields, other.fields)
         self.fields = merged_fields
 
         # Update is_ready property
-        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.fields.values()))
+        object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
         return self
 
     @property
     def is_ready(self) -> bool:
         """Check if all fields in this sample are ready for consumption"""
-        return getattr(self, '_is_ready', False)
+        return getattr(self, "_is_ready", False)
 
     @property
-    def production_status(self) -> Dict[str, ProductionStatus]:
+    def production_status(self) -> dict[str, ProductionStatus]:
         """Get production status for all fields (backward compatibility)"""
         return {name: field.production_status for name, field in self.fields.items()}
 
@@ -182,42 +190,43 @@ class StorageMetaGroup:
     duplication while providing all necessary functionality for AsyncTransferQueueClient
     operations.
     """
+
     storage_id: str
-    sample_metas: List[SampleMeta] = field(default_factory=list)
+    sample_metas: list[SampleMeta] = dataclasses.field(default_factory=list)
 
     def add_sample_meta(self, sample_meta: SampleMeta) -> None:
         """Add a SampleMeta object to this storage group"""
         self.sample_metas.append(sample_meta)
 
-    def get_batch_indexes(self) -> List[int]:
+    def get_batch_indexes(self) -> list[int]:
         """Get all internal indexes from stored SampleMeta objects"""
         return [meta.batch_index for meta in self.sample_metas]
 
-    def get_global_indexes(self) -> List[int]:
+    def get_global_indexes(self) -> list[int]:
         """Get all global indexes from stored SampleMeta objects"""
         return [meta.global_index for meta in self.sample_metas]
 
-    def get_local_indexes(self) -> List[int]:
+    def get_local_indexes(self) -> list[int]:
         """Get all local indexes from stored SampleMeta objects"""
         return [meta.local_index for meta in self.sample_metas]
 
-    def get_field_names(self) -> List[str]:
+    def get_field_names(self) -> list[str]:
         """Get all unique field names from stored SampleMeta objects"""
-        all_fields = set()
+        all_fields: set[str] = set()
         for meta in self.sample_metas:
             all_fields.update(meta.fields.keys())
         return list(all_fields)
 
-    def get_transfer_info(self, field_names: List[str] = None) -> Dict[str, List]:
+    def get_transfer_info(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
         """Convert to dictionary format for backward compatibility"""
         if field_names is None:
             field_names = self.get_field_names()
         return {
-            'batch_indexes': self.get_batch_indexes(),
-            'global_indexes': self.get_global_indexes(),
-            'local_indexes': self.get_local_indexes(),
-            'fields': field_names,
-            'field_data': {},  # Placeholder for field data to be filled later
+            "batch_indexes": self.get_batch_indexes(),
+            "global_indexes": self.get_global_indexes(),
+            "local_indexes": self.get_local_indexes(),
+            "fields": field_names,
+            "field_data": {},  # Placeholder for field data to be filled later
         }
 
     @property
@@ -252,71 +261,72 @@ class BatchMeta:
     - Length: count = len(batch)
     - Indexing: first_sample = batch[0]
     """
-    samples: List[SampleMeta]
-    extra_info: Dict[str, Any] = field(default_factory=dict)
+
+    samples: list[SampleMeta]
+    extra_info: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self):
         """Initialize all computed properties during initialization"""
         # Basic properties
-        object.__setattr__(self, '_size', len(self.samples))
-        object.__setattr__(self, '_is_ready', all(sample.is_ready for sample in self.samples))
+        object.__setattr__(self, "_size", len(self.samples))
+        object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
 
         # Pre-compute all list properties for better performance
         if self.samples:
             for idx, sample in enumerate(self.samples):
-                object.__setattr__(sample, '_batch_index', idx)  # Ensure batch_index is set correctly
+                object.__setattr__(sample, "_batch_index", idx)  # Ensure batch_index is set correctly
 
-            object.__setattr__(self, '_global_indexes', [sample.global_index for sample in self.samples])
-            object.__setattr__(self, '_local_indexes', [sample.local_index for sample in self.samples])
-            object.__setattr__(self, '_storage_ids', [sample.storage_id for sample in self.samples])
+            object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
+            object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
+            object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
             # assume all samples have the same fields.
-            object.__setattr__(self, '_fields', self.samples[0].field_names)
+            object.__setattr__(self, "_fields", self.samples[0].field_names)
 
             # Initialize storage groups for efficient client operations
             storage_meta_groups = self._build_storage_meta_groups()
-            object.__setattr__(self, '_storage_meta_groups', storage_meta_groups)
+            object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
         else:
-            object.__setattr__(self, '_global_indexes', [])
-            object.__setattr__(self, '_local_indexes', [])
-            object.__setattr__(self, '_storage_ids', [])
-            object.__setattr__(self, '_fields', [])
-            object.__setattr__(self, '_storage_meta_groups', {})
+            object.__setattr__(self, "_global_indexes", [])
+            object.__setattr__(self, "_local_indexes", [])
+            object.__setattr__(self, "_storage_ids", [])
+            object.__setattr__(self, "_fields", [])
+            object.__setattr__(self, "_storage_meta_groups", {})
 
     @property
     def size(self) -> int:
         """Return the number of samples in this batch"""
-        return getattr(self, '_size', 0)
+        return getattr(self, "_size", 0)
 
     @property
-    def global_indexes(self) -> List[int]:
+    def global_indexes(self) -> list[int]:
         """Get all global indexes in this batch"""
-        return getattr(self, '_global_indexes', [])
+        return getattr(self, "_global_indexes", [])
 
     @property
-    def fields(self) -> List[str]:
+    def fields(self) -> list[str]:
         """Get all unique field names in this batch"""
-        return getattr(self, '_fields', [])
+        return getattr(self, "_fields", [])
 
     @property
-    def local_indexes(self) -> List[int]:
+    def local_indexes(self) -> list[int]:
         """Get all local indexes in this batch"""
-        return getattr(self, '_local_indexes', [])
+        return getattr(self, "_local_indexes", [])
 
     @property
-    def storage_ids(self) -> List[str]:
+    def storage_ids(self) -> list[str]:
         """Get all storage unit IDs in this batch"""
-        return getattr(self, '_storage_ids', [])
+        return getattr(self, "_storage_ids", [])
 
     @property
     def is_ready(self) -> bool:
         """Check if all samples in this batch are ready for consumption"""
         # TODO: get ready status from controller realtime
-        return getattr(self, '_is_ready', False)
+        return getattr(self, "_is_ready", False)
 
-    def _build_storage_meta_groups(self) -> Dict[str, StorageMetaGroup]:
+    def _build_storage_meta_groups(self) -> dict[str, StorageMetaGroup]:
         """Build storage groups from samples during initialization"""
-        storage_meta_groups: Dict[str, StorageMetaGroup] = {}
+        storage_meta_groups: dict[str, StorageMetaGroup] = {}
 
         for sample in self.samples:
             storage_id = sample.storage_id
@@ -329,12 +339,12 @@ class BatchMeta:
         return storage_meta_groups
 
     @property
-    def storage_meta_groups(self) -> Dict[str, StorageMetaGroup]:
+    def storage_meta_groups(self) -> dict[str, StorageMetaGroup]:
         """Get storage groups organized by storage_id"""
-        return getattr(self, '_storage_meta_groups', {})
+        return getattr(self, "_storage_meta_groups", {})
 
     @property
-    def storage_unit_ids(self) -> List[str]:
+    def storage_unit_ids(self) -> list[str]:
         """Get list of all storage unit IDs"""
         return list(self.storage_meta_groups.keys())
 
@@ -351,7 +361,7 @@ class BatchMeta:
         """Set extra info by key"""
         self.extra_info[key] = value
 
-    def update_extra_info(self, info_dict: Dict[str, Any]) -> None:
+    def update_extra_info(self, info_dict: dict[str, Any]) -> None:
         """Update extra info with multiple key-value pairs"""
         self.extra_info.update(info_dict)
 
@@ -367,11 +377,11 @@ class BatchMeta:
         """Check if extra info contains a specific key"""
         return key in self.extra_info
 
-    def get_all_extra_info(self) -> Dict[str, Any]:
+    def get_all_extra_info(self) -> dict[str, Any]:
         """Get all extra info as a dictionary"""
         return self.extra_info.copy()
-    
-    def add_fields(self, names: List[str], **kwargs) -> None:
+
+    def add_fields(self, names: list[str], **kwargs) -> None:
         """
         Add new fields to all samples in this batch. New fields will be initialized with default FieldMeta.
         This modifies each sample in-place to include the new fields.
@@ -382,7 +392,7 @@ class BatchMeta:
         # Update batch-level fields cache
         updated_fields = set(self.fields)
         updated_fields.update(names)
-        object.__setattr__(self, '_fields', list(updated_fields))
+        object.__setattr__(self, "_fields", list(updated_fields))
 
     def __iter__(self) -> Iterator[SampleMeta]:
         """Iterate over samples in this batch."""
@@ -396,12 +406,11 @@ class BatchMeta:
     def __getitem__(self, item):
         if isinstance(item, int | np.integer):
             sample_meta = self.samples[item] if self.samples else []
-            return BatchMeta(samples=[sample_meta],
-                             extra_info=self.extra_info)
+            return BatchMeta(samples=[sample_meta], extra_info=self.extra_info)
         else:
             raise TypeError(f"Indexing with {type(item)} is not supported now!")
 
-    def chunk(self, num_chunks: int) -> List['BatchMeta']:
+    def chunk(self, num_chunks: int) -> list["BatchMeta"]:
         """
         Split this batch into smaller chunks.
 
@@ -431,7 +440,7 @@ class BatchMeta:
         return chunks
 
     @classmethod
-    def concat(cls, chunks: List['BatchMeta'], validate: bool = True) -> Optional['BatchMeta']:
+    def concat(cls, chunks: list["BatchMeta"], validate: bool = True) -> Optional["BatchMeta"]:
         """
         Concatenate multiple BatchMeta chunks into one large batch.
 
@@ -456,7 +465,7 @@ class BatchMeta:
         all_samples = []
         for chunk in chunks:
             all_samples.extend(chunk.samples)
-        
+
         # Combine extra info (later chunks overwrite earlier ones on key conflicts)
         all_extra_info = {}
         for chunk in chunks:
@@ -464,7 +473,7 @@ class BatchMeta:
 
         return BatchMeta(samples=all_samples, extra_info=all_extra_info)
 
-    def union(self, other: 'BatchMeta', validate: bool = True) -> Optional['BatchMeta']:
+    def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
         """
         Create a union of this batch's fields with another batch's fields.
         Assume both batches have the same global indices.
@@ -502,8 +511,9 @@ class BatchMeta:
         return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
 
     @classmethod
-    def from_samples(cls, samples: Union[SampleMeta, List[SampleMeta]],
-                     extra_info: Optional[Dict[str, Any]] = None) -> 'BatchMeta':
+    def from_samples(
+        cls, samples: SampleMeta | list[SampleMeta], extra_info: Optional[dict[str, Any]] = None
+    ) -> "BatchMeta":
         """
         Create a BatchMeta from a single SampleMeta or a list of SampleMeta objects.
 
@@ -530,7 +540,7 @@ class BatchMeta:
         return cls(samples=samples, extra_info=extra_info)
 
     @classmethod
-    def empty(cls, extra_info: Optional[Dict[str, Any]] = None) -> 'BatchMeta':
+    def empty(cls, extra_info: Optional[dict[str, Any]] = None) -> "BatchMeta":
         """
         Create an empty BatchMeta with no samples.
 
@@ -550,10 +560,13 @@ class BatchMeta:
 
 @ray.remote(num_cpus=1)
 class TransferQueueController:
-    def __init__(self, num_storage_units: int, global_batch_size: int, num_global_batch: int = 1,
-                 num_n_samples: int = 1,
-                 ) -> None:
-
+    def __init__(
+        self,
+        num_storage_units: int,
+        global_batch_size: int,
+        num_global_batch: int = 1,
+        num_n_samples: int = 1,
+    ) -> None:
         self.controller_id = f"TQ_CONTROLLER_{uuid4()}"
 
         self._init_zmq_socket()  # 通过ZMQ实现数据通信
@@ -564,13 +577,15 @@ class TransferQueueController:
         self.num_n_samples = num_n_samples
         self.total_storage_size = self.global_batch_size * self.num_global_batch * self.num_n_samples
 
-        self.data_production_status = torch.zeros(self.total_storage_size, INIT_FIELD_NUM,
-                                                  dtype=torch.int8)  # 默认初始化20个字段，可动态扩展
-        self.data_consumption_status = {}  # Dict[bytes, torch.Tensor] (task_name -> 消费状态张量)
-        self.field_name_mapping = {}  # 一个data_field和data_status列index的映射表
+        self.data_production_status = torch.zeros(
+            self.total_storage_size, INIT_FIELD_NUM, dtype=torch.int8
+        )  # 默认初始化20个字段，可动态扩展
+        # task_name -> consumption_status
+        self.data_consumption_status: dict[str, torch.Tensor] = {}
+        self.field_name_mapping: dict[str, int] = {}  # 一个data_field和data_status列index的映射表
         # Per-sample dtype and shape storage: {global_index: {field_name: {'dtype': dtype, 'shape': shape}}}
-        self.per_tensor_dtype_mapping = {}
-        self.per_tensor_shape_mapping = {}
+        self.per_tensor_dtype_mapping: dict[int, dict[str, torch.dtype]] = {}
+        self.per_tensor_shape_mapping: dict[int, dict[str, torch.Size]] = {}
         # 例如：{'Prompt':0, 'Response':1, ...}
 
         # 用于支持每个rank自行获取数据的场景
@@ -587,10 +602,7 @@ class TransferQueueController:
         # 获取或创建指定消费者的消费状态张量
         if task_name not in self.data_consumption_status:
             # 为新消费者初始化状态
-            self.data_consumption_status[task_name] = torch.zeros(
-                self.total_storage_size,
-                dtype=torch.int8
-            )
+            self.data_consumption_status[task_name] = torch.zeros(self.total_storage_size, dtype=torch.int8)
         return self.data_consumption_status[task_name]
 
     def _get_per_tensor_dtype(self, global_index: int, field_name: str) -> Optional[torch.dtype]:
@@ -607,12 +619,14 @@ class TransferQueueController:
 
         return start_idx, end_idx
 
-    def generate_data_status_mask(self, data_fields: List[str], global_step: int, task_name: str) -> tuple[
-        Tensor, Tensor]:
+    def generate_data_status_mask(
+        self, data_fields: list[str], global_step: int, task_name: str
+    ) -> tuple[Tensor, Tensor]:
         # 该函数在_get_meta中被调用，根据用户指定的字段和当前的step，生成一个mask矩阵
         # 其中用户指定的字段为入参，当前step对应的行（即global index范围）按照顺序映射即可
-        # 该mask矩阵将self.data_production_status中，用户需要的行列选中，同时将self.data_consumption_status反选，
-        # 从而生成一个子矩阵，以便在_get_meta的过程中支持自动向量化操作加速状态查询（直接按行sum判断是否等于shape[1]即可）
+        # 该mask矩阵将self.data_production_status中，用户需要的行列选中，
+        # 同时将self.data_consumption_status反选，从而生成一个子矩阵，
+        # 以便在_get_meta的过程中支持自动向量化操作加速状态查询（直接按行sum判断是否等于shape[1]即可）
 
         # 检查所有请求的字段是否已注册
         for col in data_fields:
@@ -629,7 +643,7 @@ class TransferQueueController:
 
         # 按消费状态反选
         consumer_status = self._get_consumer_status(task_name)
-        unconsumed_mask = (consumer_status == 0)
+        unconsumed_mask = consumer_status == 0
         row_mask &= unconsumed_mask
 
         # 选中指定的字段
@@ -641,15 +655,18 @@ class TransferQueueController:
         return row_mask, col_mask
 
     def _build_index_storage_mapping(self):
-        # 根据数据系统总空间与StorageUnit数量，划分每个Sample应该存储的位置，并维护global index和每个存储内local index的映射
+        # 根据数据系统总空间与StorageUnit数量，划分每个Sample应该存储的位置，
+        # 并维护global index和每个存储内local index的映射
 
-        # 为每条样本分配存储节点；注意我们应该将每个GBS数据打散在不同存储节点上。这里和generate_data_status_mask一样，默认按照顺序排列样本
+        # 为每条样本分配存储节点；注意我们应该将每个GBS数据打散在不同存储节点上。
+        # 这里和generate_data_status_mask一样，默认按照顺序排列样本
         real_global_batch_size = self.global_batch_size * self.num_n_samples
         global_batch_per_storage_unit = math.ceil(real_global_batch_size / self.num_storage_units)
 
         # 构建global index与storage unit之间的映射，用于查找每条数据对应的存储节点位置
-        batch_storage_indices = np.repeat(np.arange(self.num_storage_units),
-                                          global_batch_per_storage_unit)[:real_global_batch_size]
+        batch_storage_indices = np.repeat(np.arange(self.num_storage_units), global_batch_per_storage_unit)[
+            :real_global_batch_size
+        ]
         self._global_index_storage_rank_mapping = np.tile(batch_storage_indices, self.num_global_batch)
 
         # 构建global index与每个storage unit之间local index之间的映射
@@ -662,10 +679,10 @@ class TransferQueueController:
     def get_data_production_status(self) -> torch.Tensor:
         return self.data_production_status
 
-    def get_field_name_mapping(self) -> Dict[str, Any]:
+    def get_field_name_mapping(self) -> dict[str, Any]:
         return self.field_name_mapping
 
-    def get_data_consumption_status(self) -> Dict[str, torch.Tensor]:
+    def get_data_consumption_status(self) -> dict[str, torch.Tensor]:
         return self.data_consumption_status
 
     def get_global_index_mapping(self):
@@ -677,65 +694,72 @@ class TransferQueueController:
     # dp_size: int = None,
     # rank_id: int = None,
     # 无需设计
-    # def _get_metadata(self,
-    #                   data_fields:List[str],
-    #                   experience_count:int,
-    #                   current_step: int,
-    #                   dp_world_size:int,
-    #                   num_dp_groups:int=None,
-    #                   dp_rank:int=None,
-    #                   rank_id:int=None,
-    #                   get_n_samples=False,
-    #                   schedule_policy:str='DP_balance',
-    #                   *args,
-    #                   **kwargs) -> BatchMeta:
+    # def _get_metadata(
+    #     self,
+    #     data_fields: List[str],
+    #     experience_count: int,
+    #     current_step: int,
+    #     dp_world_size: int,
+    #     num_dp_groups: int = None,
+    #     dp_rank: int = None,
+    #     rank_id: int = None,
+    #     get_n_samples=False,
+    #     schedule_policy: str = "DP_balance",
+    #     *args,
+    #     **kwargs,
+    # ) -> BatchMeta:
     #     # 向TransferQueue读数据时，查找当前batch内可被消费的样本，并打包返回BatchMeta
-    #
+
     #     # 为保证兼容性，当前考虑支持两种使用方式：
     #     # 方式1：主控读取所有DP的metadata，通过dispatch进行分发。此时无需指定dp_rank与dp_size
-    #     # 方式2：每个Rank自行请求数据，这时需要指定dp_rank与dp_size，在TransferQueue系统内保证相同DP拿到相同数据、不同DP拿到不同数据
-    #
+    #     # 方式2：每个Rank自行请求数据，这时需要指定dp_rank与dp_size，在TransferQueue系统内
+    #     # 保证相同DP拿到相同数据、不同DP拿到不同数据
+
     #     # 1. 根据是否指定dp_rank、dp_size、rank_id，判断是否需要记录请求队列
     #     if dp_rank and dp_size and rank_id:
     #         if dp_rank in self.dp_metadata_buffer.keys():
     #             # 说明该dp_rank中其他的某张卡已经发送过数据读取请求
-    #             if rank_id not in self.dp_rank_consumption['DP'+str(dp_rank)]:
+    #             if rank_id not in self.dp_rank_consumption["DP" + str(dp_rank)]:
     #                 # 说明当前rank没有消费过这个batch的数据，直接从buffer中读取metadata
-    #                 metadata = self.dp_metadata_buffer['DP'+str(dp_rank)]
-    #                 self.dp_rank_consumption['DP'+str(dp_rank)].add(rank_id)
-    #                 if len(self.dp_rank_consumption['DP'+str(dp_rank)]) == dp_size:
+    #                 metadata = self.dp_metadata_buffer["DP" + str(dp_rank)]
+    #                 self.dp_rank_consumption["DP" + str(dp_rank)].add(rank_id)
+    #                 if len(self.dp_rank_consumption["DP" + str(dp_rank)]) == dp_size:
     #                     # 这批数据已经被DP域内所有rank消费过，逐出
-    #                     del(self.dp_rank_consumption['DP'+str(dp_rank)])
-    #                     del(self.dp_metadata_buffer['DP'+str(dp_rank)])
+    #                     del self.dp_rank_consumption["DP" + str(dp_rank)]
+    #                     del self.dp_metadata_buffer["DP" + str(dp_rank)]
     #                 return metadata
     #             else:
     #                 # 异常处理，DP域内某个rank在其他rank没有计算完的时候又发了一个请求，抛出异常
     #                 pass
-    #
+
     #     # 执行至此，说明需要重新采样一批数据
     #     # 2. 扫描数据状态，找到所有可消费数据
     #     ready_for_consume_idx = self._scan_data_status(data_columns, current_step, get_n_samples)
     #     # 3. 执行负载均衡，采样一批数据
-    #     batch_global_indexes = self._run_schedule_policy(schedule_policy, experience_count, ready_for_consume_idx, *args, **kwargs)
+    #     batch_global_indexes = self._run_schedule_policy(
+    #         schedule_policy, experience_count, ready_for_consume_idx, *args, **kwargs
+    #     )
     #     # 4. 标记这批数据状态为已消费
     #     self.data_consumption_status[batch_global_indexes] = 1
     #     # 5. 打包为metadata
-    #     metadata = self._generate_experience_meta(batch_global_indexes,data_columns)
+    #     metadata = self._generate_experience_meta(batch_global_indexes, data_columns)
     #     # 6. 如果是方式2，则将metadata进行缓存
     #     if dp_rank and dp_size and rank_id:
     #         pass
-    #
+
     #     return metadata
 
-    def _get_metadata(self,
-                      data_fields: List[str],
-                      batch_size: int,
-                      mode: str = "fetch",
-                      global_step=0,
-                      task_name: str | None = None,
-                      get_n_samples=False,
-                      *args,
-                      **kwargs) -> BatchMeta:
+    def _get_metadata(
+        self,
+        data_fields: list[str],
+        batch_size: int,
+        mode: str = "fetch",
+        global_step=0,
+        task_name: str | None = None,
+        get_n_samples=False,
+        *args,
+        **kwargs,
+    ) -> BatchMeta:
         """
         获取元数据，支持两种模式：
         - mode="insert": 插入新行的元数据（不检查数据状态）
@@ -748,7 +772,9 @@ class TransferQueueController:
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             batch_global_indexes = list(range(start_idx, end_idx))
             return self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
-        elif mode == "fetch":
+
+        assert task_name is not None
+        if mode == "fetch":
             # 向TransferQueue读数据时，查找当前batch内可被消费的样本，并打包返回BatchMeta
 
             # 循环检查可被消费的数据
@@ -791,8 +817,9 @@ class TransferQueueController:
 
         return metadata
 
-    def _scan_data_status(self, data_fields: List[str], global_step: int, task_name: str, get_n_samples: bool) -> List[
-        int]:
+    def _scan_data_status(
+        self, data_fields: list[str], global_step: int, task_name: str, get_n_samples: bool
+    ) -> list[int]:
         # 获取行和列掩码
         row_mask, col_mask = self.generate_data_status_mask(data_fields, global_step, task_name)
         logger.debug(f"row_mask, col_mask: {row_mask, col_mask}")
@@ -819,10 +846,10 @@ class TransferQueueController:
             ready_group_indices = group_all_ready.nonzero(as_tuple=False).flatten()
 
             # 计算所有样本索引
-            sample_offset = torch.arange(self.num_n_samples, device=self.device)
+            sample_offset = torch.arange(self.num_n_samples)
             ready_for_consume_idx = (
-                    ready_group_indices.unsqueeze(1) * self.num_n_samples + sample_offset
-            ).flatten().tolist()
+                (ready_group_indices.unsqueeze(1) * self.num_n_samples + sample_offset).flatten().tolist()
+            )
 
             return ready_for_consume_idx
         else:
@@ -830,11 +857,12 @@ class TransferQueueController:
             logger.debug(f"ready_for_consume_idx: {ready_for_consume_idx}")
 
             return ready_for_consume_idx
-    
-    def _generate_batch_meta(self, global_step: int, global_indexes: List[int], data_fields: List[str],
-                             mode: str) -> BatchMeta:
-        # 根据给定的global index，查找self.global_index_local_index_mapping和self._global_index_storage_id_mapping，确定对应
-        # 存储节点的地址，并构建BatchMeta
+
+    def _generate_batch_meta(
+        self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
+    ) -> BatchMeta:
+        # 根据给定的global index，查找self.global_index_local_index_mapping
+        # 和self._global_index_storage_id_mapping，确定对应存储节点的地址，并构建BatchMeta
         global_arr = np.array(global_indexes)
         storage_ids = self.global_index_storage_id_mapping[global_arr]
         local_indexes = self.global_index_local_index_mapping[global_arr]
@@ -882,13 +910,13 @@ class TransferQueueController:
                 global_index=global_index,
                 storage_id=storage_id,
                 local_index=local_index,
-                fields={field.name: field for field in fields}
+                fields={field.name: field for field in fields},
             )
             samples.append(sample)
 
         return BatchMeta(samples=samples)
 
-    def _update_production_status(self, indexes: List[int], fields: List[str]) -> None:
+    def _update_production_status(self, indexes: list[int], fields: list[str]) -> None:
         # TODO replace the self.data_production_status == 0 or ==1 operation by using ProductionStatus
         # 更新数据生产状态矩阵
         new_fields = [field for field in fields if field not in self.field_name_mapping]
@@ -898,21 +926,23 @@ class TransferQueueController:
             # 扩容数据状态矩阵
             if len(self.field_name_mapping) + needed_fields > current_fields:
                 add_fields = max(INIT_FIELD_NUM, needed_fields + 1)
-                new_matrix = torch.zeros(
-                    (self.storage_size, add_fields),
-                    dtype=torch.int8
-                )
-                self.data_production_status = torch.cat(
-                    [self.data_production_status, new_matrix], dim=1
-                )
+                new_matrix = torch.zeros((self.total_storage_size, add_fields), dtype=torch.int8)
+                self.data_production_status = torch.cat([self.data_production_status, new_matrix], dim=1)
 
         for field in fields:
             if field not in self.field_name_mapping.keys():
                 self.field_name_mapping[field] = len(self.field_name_mapping)
-        self.data_production_status[torch.tensor(indexes)[:, None], torch.tensor([self.field_name_mapping.get(field) for field in fields])] = 1
+        self.data_production_status[
+            torch.tensor(indexes)[:, None], torch.tensor([self.field_name_mapping.get(field) for field in fields])
+        ] = 1
 
-    def _update_field_info(self, fields: List[str], per_tensor_dtypes: Dict[int, Dict[str, Any]],
-                           per_tensor_shapes: Dict[int, Dict[str, Any]], global_indexes: List[int]) -> None:
+    def _update_field_info(
+        self,
+        fields: list[str],
+        per_tensor_dtypes: dict[int, dict[str, Any]],
+        per_tensor_shapes: dict[int, dict[str, Any]],
+        global_indexes: list[int],
+    ) -> None:
         """
         Store per-tensor dtype and shape information.
 
@@ -969,7 +999,7 @@ class TransferQueueController:
                 "handshake_socket": self._handshake_socket_port,
                 "request_handle_socket": self._request_handle_socket_port,
                 "data_status_update_socket": self._data_status_update_socket_port,
-            }
+            },
         )
 
     def _wait_connection(self):
@@ -990,26 +1020,27 @@ class TransferQueueController:
                 self.handshake_socket.send_multipart([identity, response_msg])
                 logger.info("Controller send handshake ack successful!")
         self.global_index_storage_id_mapping = np.array(list(connected_storage_units))[
-            self._global_index_storage_rank_mapping]
+            self._global_index_storage_rank_mapping
+        ]
         self.handshake_done.set()
 
     def _start_process_handshake(self):
         self.handshake_done = threading.Event()
-        self.wait_connection_thread = Thread(target=self._wait_connection,
-                                             name="TransferQueueControllerWaitConnectionThread",
-                                             daemon=True)
+        self.wait_connection_thread = Thread(
+            target=self._wait_connection, name="TransferQueueControllerWaitConnectionThread", daemon=True
+        )
         self.wait_connection_thread.start()
 
     def _start_process_update_data_status(self):
-        self.process_update_data_status_thread = Thread(target=self._update_data_status,
-                                                        name="TransferQueueControllerProcessUpdateDataStatusThread",
-                                                        daemon=True)
+        self.process_update_data_status_thread = Thread(
+            target=self._update_data_status, name="TransferQueueControllerProcessUpdateDataStatusThread", daemon=True
+        )
         self.process_update_data_status_thread.start()
 
     def _start_process_request(self):
-        self.process_request_thread = Thread(target=self._process_request,
-                                             name="TransferQueueControllerProcessRequestThread",
-                                             daemon=True)
+        self.process_request_thread = Thread(
+            target=self._process_request, name="TransferQueueControllerProcessRequestThread", daemon=True
+        )
         self.process_request_thread.start()
 
     def _process_request(self):
@@ -1024,54 +1055,48 @@ class TransferQueueController:
                 params = request_msg.body
                 logger.info("Controller prepare get metadata...")
                 metadata = self._get_metadata(
-                    data_fields=params['data_fields'],
-                    batch_size=params['batch_size'],
-                    global_step=params['global_step'],
-                    mode=params.get('mode', 'fetch'),
-                    task_name=params.get('task_name', None),
-                    get_n_samples=params.get('get_n_samples', False),
+                    data_fields=params["data_fields"],
+                    batch_size=params["batch_size"],
+                    global_step=params["global_step"],
+                    mode=params.get("mode", "fetch"),
+                    task_name=params.get("task_name", None),
+                    get_n_samples=params.get("get_n_samples", False),
                 )
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.GET_META_RESPONSE,
                     sender_id=self.controller_id,
                     receiver_id=request_msg.sender_id,
-                    body={
-                        'metadata': metadata
-                    }
+                    body={"metadata": metadata},
                 )
             elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
                 params = request_msg.body
                 metadata = self._get_metadata(
                     data_fields=[],
                     batch_size=self.global_batch_size,
-                    global_step=params['global_step'],
+                    global_step=params["global_step"],
                     mode="insert",
                 )
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.GET_CLEAR_META_RESPONSE,
                     sender_id=self.controller_id,
                     receiver_id=request_msg.sender_id,
-                    body={
-                        'metadata': metadata
-                    }
+                    body={"metadata": metadata},
                 )
             elif request_msg.request_type == ZMQRequestType.CLEAR_META:
                 params = request_msg.body
-                self.clear(global_step=params['global_step'])
+                self.clear(global_step=params["global_step"])
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.CLEAR_META_RESPONSE,
                     sender_id=self.controller_id,
                     receiver_id=request_msg.sender_id,
-                    body={
-                        'message': f"Clear operation completed by controller {self.controller_id}"
-                    }
+                    body={"message": f"Clear operation completed by controller {self.controller_id}"},
                 )
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
                 # 消费状态检查
                 params = request_msg.body
-                global_step = params['global_step']
+                global_step = params["global_step"]
 
-                consumer_status = self._get_consumer_status(params['task_name'])
+                consumer_status = self._get_consumer_status(params["task_name"])
                 start_idx, end_idx = self._step_to_global_index_range(global_step)
                 batch_status = consumer_status[start_idx:end_idx]
                 consumed = torch.all(batch_status == 1).item()
@@ -1082,9 +1107,9 @@ class TransferQueueController:
                     sender_id=self.controller_id,
                     receiver_id=request_msg.sender_id,
                     body={
-                        'global_step': global_step,
-                        'consumed': consumed,
-                    }
+                        "global_step": global_step,
+                        "consumed": consumed,
+                    },
                 )
             self.request_handle_socket.send_multipart([identity, response_msg.serialize()])
             logger.debug("Controller request_handle_socket send_multipart successful!")
@@ -1117,8 +1142,8 @@ class TransferQueueController:
                     sender_id=self.controller_id,
                     body={
                         "controller_id": self.controller_id,
-                        "message": f"Data update acknowledged from controller {self.controller_id}"
-                    }
+                        "message": f"Data update acknowledged from controller {self.controller_id}",
+                    },
                 )
                 self.data_status_update_socket.send_multipart([identity, response_msg.serialize()])
                 logger.info("Controller send DATA_UPDATE_ACK successful!")
@@ -1133,8 +1158,8 @@ class TransferQueueController:
                     sender_id=self.controller_id,
                     body={
                         "controller_id": self.controller_id,
-                        "message": f"Error notification acknowledged from controller {self.controller_id}"
-                    }
+                        "message": f"Error notification acknowledged from controller {self.controller_id}",
+                    },
                 )
                 self.data_status_update_socket.send_multipart([identity, response_msg.serialize()])
 
@@ -1164,12 +1189,12 @@ class StorageUnitData:
 
     def __init__(self, storage_size: int):
         # Dict containing field names and corresponding data in the field, e.g. {"field_name1": [data1, data2, ...]}
-        self.field_data: Dict[str: List] = {}
+        self.field_data: dict[str, list] = {}
 
         # Maximum number of elements stored in storage unit
         self.storage_size = storage_size
 
-    def get_data(self, fields: List[str], local_indexes: List[int]) -> TensorDict[str, List]:
+    def get_data(self, fields: list[str], local_indexes: list[int]) -> TensorDict[str, list]:
         """
         Get data from storage unit according to given fields and local_indexes.
 
@@ -1179,13 +1204,14 @@ class StorageUnitData:
         return:
             TensorDict with field names as keys, corresponding data list as values.
         """
-        result: Dict[str, List] = {}
+        result: dict[str, list] = {}
 
         for field in fields:
             # Validate field name
             if field not in self.field_data:
-                raise ValueError(f"StorageUnitData get_data operation receive invalid field: {field} beyond "
-                                 f"{self.field_data.keys()}")
+                raise ValueError(
+                    f"StorageUnitData get_data operation receive invalid field: {field} beyond {self.field_data.keys()}"
+                )
 
             if len(local_indexes) == 1:
                 # The unsqueeze op make the shape from n to (1, n)
@@ -1195,7 +1221,7 @@ class StorageUnitData:
 
         return TensorDict(result)
 
-    def put_data(self, field_data: TensorDict[str, List], local_indexes: List[int]) -> None:
+    def put_data(self, field_data: TensorDict[str, list], local_indexes: list[int]) -> None:
         """
         Put or update data into storage unit according to given field_data and local_indexes.
 
@@ -1203,20 +1229,22 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        for field in field_data.keys():
+        for f in field_data.keys():
             for i, idx in enumerate(local_indexes):
                 # Validate local_indexes
                 if idx < 0 or idx >= self.storage_size:
-                    raise ValueError(f"StorageUnitData put_data operation receive invalid local_index: {idx} beyond "
-                                     f"storage_size: {self.storage_size}")
+                    raise ValueError(
+                        f"StorageUnitData put_data operation receive invalid local_index: {idx} beyond "
+                        f"storage_size: {self.storage_size}"
+                    )
 
-                if field not in self.field_data:
+                if f not in self.field_data:
                     # Initialize new field value list with None
-                    self.field_data[field] = [None] * self.storage_size
+                    self.field_data[f] = [None] * self.storage_size
 
-                self.field_data[field][idx] = field_data[field][i]
+                self.field_data[f][idx] = field_data[f][i]
 
-    def clear(self, local_indexes: List[int]) -> None:
+    def clear(self, local_indexes: list[int]) -> None:
         """
         Clear data at specified local_indexes by setting all related fields to None.
 
@@ -1226,34 +1254,25 @@ class StorageUnitData:
         # Validate local_indexes
         for idx in local_indexes:
             if idx < 0 or idx >= self.storage_size:
-                raise ValueError(f"StorageUnitData clear operation receive invalid local_index: {idx} beyond "
-                                 f"storage_size: {self.storage_size}")
+                raise ValueError(
+                    f"StorageUnitData clear operation receive invalid local_index: {idx} beyond "
+                    f"storage_size: {self.storage_size}"
+                )
 
         # Clear data at specified local_indexes
-        for field in self.field_data:
+        for f in self.field_data:
             for idx in local_indexes:
-                self.field_data[field][idx] = None
+                self.field_data[f][idx] = None
 
 
-class TransferQueueStorage(ABC):
-    # TODO Provide a general abstract storage interface, which can be implemented with various distributed storage backend.
-    def __init__(self):
-        pass
-
-    def put(self):
-        pass
-
-    def get(self):
-        pass
-
-
+# TODO(hz): Abstract TransferStorage base class to facilitate support for backends such as redis
 @ray.remote(num_cpus=1)
-class TransferQueueStorageSimpleUnit(TransferQueueStorage):
+class TransferQueueStorageSimpleUnit:
     def __init__(self, storage_size: int):
         super().__init__()
         self.storage_unit_id = f"TQ_STORAGE_UNIT_{uuid4()}"
         self.storage_size = storage_size
-        self.controller_infos = None
+        self.controller_infos: dict[str, ZMQServerInfo] = {}
 
         self.experience_data = StorageUnitData(self.storage_size)
 
@@ -1261,27 +1280,29 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
             role=TransferQueueRole.STORAGE,
             id=str(self.storage_unit_id),
             ip=get_node_ip_address(),
-            ports={"put_get_socket": get_free_port()}
+            ports={"put_get_socket": get_free_port()},
         )
         self._init_zmq_socket()
 
     def _init_zmq_socket(self) -> None:
         """
-        Initialize ZMQ socket connections between storage unit and controllers/clients.
-
-        controller_handshake_sockets:   Handshake between storage unit and controllers.
-        data_status_update_sockets:     Broadcast data update status from storage unit to controllers when handling put operation.
-        put_get_socket:                 Handle put/get requests from clients.
+        Initialize ZMQ socket connections between storage unit and controllers/clients:
+        - controller_handshake_sockets:
+            Handshake between storage unit and controllers.
+        - data_status_update_sockets:
+            Broadcast data update status from storage unit to controllers when handling put operation.
+        - put_get_socket:
+            Handle put/get requests from clients.
         """
         self.zmq_context = zmq.Context()
 
-        self.controller_handshake_sockets: Dict[str, zmq.Socket] = {}
-        self.data_status_update_sockets: Dict[str, zmq.Socket] = {}
+        self.controller_handshake_sockets: dict[str, zmq.Socket] = {}
+        self.data_status_update_sockets: dict[str, zmq.Socket] = {}
 
         self.put_get_socket = create_zmq_socket(self.zmq_context, zmq.ROUTER)
         self.put_get_socket.bind(self.zmq_server_info.to_addr("put_get_socket"))
 
-    def register_controller_info(self, controller_infos: Dict[str, ZMQServerInfo]) -> None:
+    def register_controller_info(self, controller_infos: dict[str, ZMQServerInfo]) -> None:
         """
         Build connections between storage unit and controllers, start put/get process.
 
@@ -1298,17 +1319,19 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
         """Initialize ZMQ sockets between storage unit and controllers for handshake."""
         for controller_id in self.controller_infos.keys():
             self.controller_handshake_sockets[controller_id] = create_zmq_socket(
-                self.zmq_context, zmq.DEALER,
-                identity=f"{self.storage_unit_id}-controller_handshake_sockets-{uuid4()}".encode()
+                self.zmq_context,
+                zmq.DEALER,
+                identity=f"{self.storage_unit_id}-controller_handshake_sockets-{uuid4()}".encode(),
             )
             self.data_status_update_sockets[controller_id] = create_zmq_socket(
-                self.zmq_context, zmq.DEALER,
-                identity=f"{self.storage_unit_id}-data_status_update_sockets-{uuid4()}".encode()
+                self.zmq_context,
+                zmq.DEALER,
+                identity=f"{self.storage_unit_id}-data_status_update_sockets-{uuid4()}".encode(),
             )
 
     def _connect_to_controller(self) -> None:
         """Connect storage unit to all controllers."""
-        connected_controllers = set()
+        connected_controllers: set[str] = set()
 
         # Create zmq poller for handshake confirmation between controller and storage unit
         poller = zmq.Poller()
@@ -1317,7 +1340,8 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
             self.controller_handshake_sockets[controller_id].connect(controller_info.to_addr("handshake_socket"))
             logger.debug(
                 f"[{self.zmq_server_info.id}]: Handshake connection from storage unit id #{self.zmq_server_info.id} "
-                f"to controller id #{controller_id} establish successfully.")
+                f"to controller id #{controller_id} establish successfully."
+            )
 
             # Send handshake request to controllers
             request_msg = ZMQMessage.create(
@@ -1326,19 +1350,22 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                 body={
                     "storage_unit_id": self.storage_unit_id,
                     "storage_size": self.storage_size,
-                }
+                },
             ).serialize()
 
             self.controller_handshake_sockets[controller_id].send(request_msg)
             logger.debug(
                 f"[{self.zmq_server_info.id}]: Send handshake request from storage unit id #{self.zmq_server_info.id} "
-                f"to controller id #{controller_id} successfully.")
+                f"to controller id #{controller_id} successfully."
+            )
 
             poller.register(self.controller_handshake_sockets[controller_id], zmq.POLLIN)
 
         start_time = time.time()
-        while len(connected_controllers) < len(
-                self.controller_infos) and time.time() - start_time < CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT:
+        while (
+            len(connected_controllers) < len(self.controller_infos)
+            and time.time() - start_time < CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT
+        ):
             socks = dict(poller.poll(POLLER_TIMEOUT_MS))
 
             for controller_handshake_socket in self.controller_handshake_sockets.values():
@@ -1347,20 +1374,22 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
 
                     if response_msg.request_type == ZMQRequestType.HANDSHAKE_ACK:
                         connected_controllers.add(response_msg.sender_id)
-                        logger.debug(f"[{self.zmq_server_info.id}]: Get handshake ACK response from controller id "
-                                     f"#{str(response_msg.sender_id)} to storage unit id #{self.zmq_server_info.id} successfully.")
+                        logger.debug(
+                            f"[{self.zmq_server_info.id}]: Get handshake ACK response from "
+                            f"controller id #{str(response_msg.sender_id)} to storage unit id "
+                            f"#{self.zmq_server_info.id} successfully."
+                        )
 
         if len(connected_controllers) < len(self.controller_infos):
             logger.warning(
                 f"[{self.zmq_server_info.id}]: Only get {len(connected_controllers)} / {len(self.controller_infos)} "
-                f"successful handshake connections to controllers from storage unit id #{self.zmq_server_info.id}")
+                f"successful handshake connections to controllers from storage unit id #{self.zmq_server_info.id}"
+            )
 
     def _start_process_put_get(self) -> None:
         """Create a daemon thread and start put/get process."""
         self.process_put_get_thread = Thread(
-            target=self._process_put_get,
-            name=f"StorageUnitProcessPutGetThread-{self.zmq_server_info.id}",
-            daemon=True
+            target=self._process_put_get, name=f"StorageUnitProcessPutGetThread-{self.zmq_server_info.id}", daemon=True
         )
         self.process_put_get_thread.start()
 
@@ -1391,8 +1420,9 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                             request_type=ZMQRequestType.PUT_GET_OPERATION_ERROR,
                             sender_id=self.zmq_server_info.id,
                             body={
-                                "message": f"Storage unit id #{self.zmq_server_info.id} receive invalid operation: {operation}."
-                            }
+                                "message": f"Storage unit id #{self.zmq_server_info.id} "
+                                f"receive invalid operation: {operation}."
+                            },
                         )
                 except Exception as e:
                     response_msg = ZMQMessage.create(
@@ -1400,8 +1430,8 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                         sender_id=self.zmq_server_info.id,
                         body={
                             "message": f"Storage unit id #{self.zmq_server_info.id} occur error in processing "
-                                       f"put/get/clear request, detail error message: {str(e)}."
-                        }
+                            f"put/get/clear request, detail error message: {str(e)}."
+                        },
                     )
 
                 self.put_get_socket.send_multipart([identity, response_msg.serialize()])
@@ -1424,15 +1454,13 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
 
             # After put operation finish, send a message to the client
             response_msg = ZMQMessage.create(
-                request_type=ZMQRequestType.PUT_DATA_RESPONSE,
-                sender_id=self.zmq_server_info.id,
-                body={}
+                request_type=ZMQRequestType.PUT_DATA_RESPONSE, sender_id=self.zmq_server_info.id, body={}
             )
 
             # Gather per-tensor dtype and shape information for each field
             # global_indexes, local_indexes, and field_data correspond one-to-one
-            per_tensor_dtypes = {}
-            per_tensor_shapes = {}
+            per_tensor_dtypes: dict[int, torch.dtype] = {}
+            per_tensor_shapes: dict[int, torch.Size] = {}
 
             # Initialize the data structure for each global index
             for global_idx in global_indexes:
@@ -1443,8 +1471,8 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
             for field in field_data.keys():
                 for i, data_item in enumerate(field_data[field]):
                     global_idx = global_indexes[i]
-                    per_tensor_dtypes[global_idx][field] = data_item.dtype if hasattr(data_item, 'dtype') else None
-                    per_tensor_shapes[global_idx][field] = data_item.shape if hasattr(data_item, 'shape') else None
+                    per_tensor_dtypes[global_idx][field] = data_item.dtype if hasattr(data_item, "dtype") else None
+                    per_tensor_shapes[global_idx][field] = data_item.shape if hasattr(data_item, "shape") else None
 
             # Broadcast data update message to all controllers with per-tensor dtype/shape information
             self._notify_data_update(list(field_data.keys()), global_indexes, per_tensor_dtypes, per_tensor_shapes)
@@ -1454,8 +1482,9 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                 request_type=ZMQRequestType.PUT_ERROR,
                 sender_id=self.zmq_server_info.id,
                 body={
-                    "message": f"Failed to put data into storage unit id #{self.zmq_server_info.id}, detail error message: {str(e)}"
-                }
+                    "message": f"Failed to put data into storage unit id "
+                    f"#{self.zmq_server_info.id}, detail error message: {str(e)}"
+                },
             )
 
     def _notify_data_update(self, fields, global_indexes, dtypes, shapes) -> None:
@@ -1476,8 +1505,10 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
             data_status_update_socket = self.data_status_update_sockets[controller_id]
             data_status_update_socket.connect(controller_info.to_addr("data_status_update_socket"))
             logger.debug(
-                f"[{self.zmq_server_info.id}]: Data status update connection from storage unit id #{self.zmq_server_info.id} "
-                f"to controller id #{controller_id} establish successfully.")
+                f"[{self.zmq_server_info.id}]: Data status update connection from "
+                f"storage unit id #{self.zmq_server_info.id} to "
+                f"controller id #{controller_id} establish successfully."
+            )
 
             try:
                 poller.register(data_status_update_socket, zmq.POLLIN)
@@ -1490,31 +1521,36 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                         "global_indexes": global_indexes,
                         "dtypes": dtypes,
                         "shapes": shapes,
-                    }
+                    },
                 ).serialize()
 
                 data_status_update_socket.send(request_msg)
                 logger.debug(
-                    f"[{self.zmq_server_info.id}]: Send data status update request from storage unit id #{self.zmq_server_info.id} "
-                    f"to controller id #{controller_id} successfully.")
+                    f"[{self.zmq_server_info.id}]: Send data status update request "
+                    f"from storage unit id #{self.zmq_server_info.id} "
+                    f"to controller id #{controller_id} successfully."
+                )
             except Exception as e:
                 request_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ERROR,
                     sender_id=self.zmq_server_info.id,
                     body={
-                        "message": f"Failed to notify data status update information from storage unit id #{self.zmq_server_info.id}, "
-                                   f"detail error message: {str(e)}"
-                    }
+                        "message": f"Failed to notify data status update information from "
+                        f"storage unit id #{self.zmq_server_info.id}, "
+                        f"detail error message: {str(e)}"
+                    },
                 ).serialize()
 
                 data_status_update_socket.send(request_msg)
 
         # Make sure all controllers successfully receive data status update information.
-        response_controllers = set()
+        response_controllers: set[str] = set()
         start_time = time.time()
 
-        while len(response_controllers) < len(
-                self.controller_infos) and time.time() - start_time < CONTROLLER_DATA_UPDATE_RESPONSE_TIMEOUT:
+        while (
+            len(response_controllers) < len(self.controller_infos)
+            and time.time() - start_time < CONTROLLER_DATA_UPDATE_RESPONSE_TIMEOUT
+        ):
             socks = dict(poller.poll(POLLER_TIMEOUT_MS))
 
             for data_status_update_socket in self.data_status_update_sockets.values():
@@ -1524,13 +1560,17 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                     if response_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE_ACK:
                         response_controllers.add(response_msg.sender_id)
                         logger.debug(
-                            f"[{self.zmq_server_info.id}]: Get data status update ACK response from controller id #{response_msg.sender_id} "
-                            f"to storage unit id #{self.zmq_server_info.id} successfully.")
+                            f"[{self.zmq_server_info.id}]: Get data status update ACK response "
+                            f"from controller id #{response_msg.sender_id} "
+                            f"to storage unit id #{self.zmq_server_info.id} successfully."
+                        )
 
         if len(response_controllers) < len(self.controller_infos):
             logger.warning(
-                f"[{self.zmq_server_info.id}]: Storage unit id #{self.zmq_server_info.id} only get {len(response_controllers)} / {len(self.controller_infos)} "
-                f"data status update ACK responses fron controllers.")
+                f"[{self.zmq_server_info.id}]: Storage unit id #{self.zmq_server_info.id} "
+                f"only get {len(response_controllers)} / {len(self.controller_infos)} "
+                f"data status update ACK responses fron controllers."
+            )
 
     def _handle_get(self, data_parts: ZMQMessage) -> ZMQMessage:
         """
@@ -1552,7 +1592,7 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                 sender_id=self.zmq_server_info.id,
                 body={
                     "data": result_data,
-                }
+                },
             )
         except Exception as e:
             response_msg = ZMQMessage.create(
@@ -1560,8 +1600,8 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                 sender_id=self.zmq_server_info.id,
                 body={
                     "message": f"Failed to get data from storage unit id #{self.zmq_server_info.id}, "
-                               f"detail error message: {str(e)}"
-                }
+                    f"detail error message: {str(e)}"
+                },
             )
         return response_msg
 
@@ -1580,9 +1620,7 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.CLEAR_DATA_RESPONSE,
                 sender_id=self.zmq_server_info.id,
-                body={
-                    'message': f"Clear data in storage unit id #{self.zmq_server_info.id} successfully."
-                }
+                body={"message": f"Clear data in storage unit id #{self.zmq_server_info.id} successfully."},
             )
         except Exception as e:
             response_msg = ZMQMessage.create(
@@ -1590,8 +1628,8 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
                 sender_id=self.zmq_server_info.id,
                 body={
                     "message": f"Failed to clear data in storage unit id #{self.zmq_server_info.id}, "
-                               f"detail error message: {str(e)}"
-                }
+                    f"detail error message: {str(e)}"
+                },
             )
         return response_msg
 
@@ -1601,22 +1639,22 @@ class TransferQueueStorageSimpleUnit(TransferQueueStorage):
 
 class AsyncTransferQueueClient:
     def __init__(
-            self,
-            client_id: str,
-            controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
-            storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        self,
+        client_id: str,
+        controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
     ):
         self.client_id = client_id
 
-        self._controllers = {}
-        self._storages = {}
+        self._controllers: dict[str, ZMQServerInfo] = {}
+        self._storages: dict[str, ZMQServerInfo] = {}
         self._register_servers(TransferQueueRole.CONTROLLER, controller_infos)
         self._register_servers(TransferQueueRole.STORAGE, storage_infos)
 
     def _register_servers(
-            self,
-            role: TransferQueueRole,
-            server_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        self,
+        role: TransferQueueRole,
+        server_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
     ):
         mapping = self._controllers if role == TransferQueueRole.CONTROLLER else self._storages
 
@@ -1695,8 +1733,7 @@ class AsyncTransferQueueClient:
                     return await func(self, *args, **kwargs)
                 except Exception as e:
                     logger.error(
-                        f"[{self.client_id}]: Error in socket operation "
-                        f"with {target_role} {server_info.id}: {e}"
+                        f"[{self.client_id}]: Error in socket operation with {target_role} {server_info.id}: {e}"
                     )
                     raise
                 finally:
@@ -1707,8 +1744,7 @@ class AsyncTransferQueueClient:
                         sock.close(linger=0)
                     except Exception as e:
                         logger.warning(
-                            f"[{self.client_id}]: Error closing socket "
-                            f"to {target_role} {server_info.id}: {e}"
+                            f"[{self.client_id}]: Error closing socket to {target_role} {server_info.id}: {e}"
                         )
 
                     context.term()
@@ -1719,15 +1755,15 @@ class AsyncTransferQueueClient:
 
     @dynamic_socket(target_role=TransferQueueRole.CONTROLLER, socket_name="request_handle_socket")
     async def async_get_meta(
-            self,
-            data_fields: list[str],
-            batch_size: int,
-            global_step: int,
-            mode: str = "fetch",
-            get_n_samples: bool = False,
-            task_name: Optional[str] = None,
-            target_controller: Optional[str] = None,
-            socket: Optional[zmq.asyncio.Socket] = None,
+        self,
+        data_fields: list[str],
+        batch_size: int,
+        global_step: int,
+        mode: str = "fetch",
+        get_n_samples: bool = False,
+        task_name: Optional[str] = None,
+        target_controller: Optional[str] = None,
+        socket: Optional[zmq.asyncio.Socket] = None,
     ) -> BatchMeta:
         """Asynchronously fetches data metadata via ZMQ from the target controller.
 
@@ -1744,6 +1780,7 @@ class AsyncTransferQueueClient:
         Returns:
             BatchMeta: Metadata object containing data structure, sample info, etc.
         """
+        assert socket is not None
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.GET_META,
             sender_id=self.client_id,
@@ -1778,10 +1815,10 @@ class AsyncTransferQueueClient:
             raise RuntimeError(f"[{self.client_id}]: Error in get_meta: {str(e)}") from e
 
     async def async_put(
-            self,
-            data: TensorDict,
-            metadata: Optional[BatchMeta] = None,
-            global_step: Optional[int] = None,
+        self,
+        data: TensorDict,
+        metadata: Optional[BatchMeta] = None,
+        global_step: Optional[int] = None,
     ):
         """Asynchronously writes data to appropriate Storage Units based on metadata.
 
@@ -1795,9 +1832,7 @@ class AsyncTransferQueueClient:
 
         """
         if metadata is None:
-            assert global_step is not None, (
-                "global_steps must be provided if metadata is not given"
-            )
+            assert global_step is not None, "global_steps must be provided if metadata is not given"
 
             metadata = await self.async_get_meta(
                 data_fields=list(data.keys()),
@@ -1827,17 +1862,14 @@ class AsyncTransferQueueClient:
         global_indexes = storage_unit_data["global_indexes"]
         local_indexes = storage_unit_data["local_indexes"]
         field_data = TensorDict(
-            {field: torch.stack(storage_unit_data["field_data"][field]) for field in storage_unit_data["field_data"]})
+            {field: torch.stack(storage_unit_data["field_data"][field]) for field in storage_unit_data["field_data"]}
+        )
 
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.PUT_DATA,
             sender_id=self.client_id,
             receiver_id=target_storage,
-            body={
-                "global_indexes": global_indexes,
-                "local_indexes": local_indexes,
-                "field_data": field_data
-            },
+            body={"global_indexes": global_indexes, "local_indexes": local_indexes, "field_data": field_data},
         )
         try:
             await socket.send(request_msg.serialize())
@@ -1846,7 +1878,8 @@ class AsyncTransferQueueClient:
 
             if response_msg.request_type != ZMQRequestType.PUT_DATA_RESPONSE:
                 raise RuntimeError(
-                    f"Failed to put data to storage unit {target_storage}: {response_msg.body.get('message', 'Unknown error')}"
+                    f"Failed to put data to storage unit {target_storage}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
                 )
         except Exception as e:
             raise RuntimeError(f"Error in put to storage unit {target_storage}: {str(e)}") from e
@@ -1876,7 +1909,8 @@ class AsyncTransferQueueClient:
                 return global_indexes, fields, su_data
             else:
                 raise RuntimeError(
-                    f"Failed to get data from storage unit {target_storage}: {response_msg.body.get('message', 'Unknown error')}"
+                    f"Failed to get data from storage unit {target_storage}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
                 )
         except Exception as e:
             raise RuntimeError(f"Error getting data from storage unit {target_storage}: {str(e)}") from e
@@ -1920,7 +1954,8 @@ class AsyncTransferQueueClient:
 
         results = await asyncio.gather(*tasks)
 
-        storage_data = {}  # global_index: {field1: value, field2: value, ...}
+        # global_index: {field1: value, field2: value, ...}
+        storage_data: dict[int, dict[str, torch.Tensor]] = {}
         for global_indexes, fields, storage_unit_data in results:
             for idx, global_idx in enumerate(global_indexes):
                 if global_idx not in storage_data:
@@ -1928,7 +1963,7 @@ class AsyncTransferQueueClient:
                 for field in fields:
                     storage_data[global_idx][field] = storage_unit_data[field][idx]
 
-        ordered_data = {field: [] for field in metadata.fields}
+        ordered_data: dict[str, torch.Tensor] = {field: [] for field in metadata.fields}
         for global_idx in metadata.global_indexes:
             for field in metadata.fields:
                 ordered_data[field].append(storage_data[global_idx][field])
@@ -2015,7 +2050,8 @@ class AsyncTransferQueueClient:
 
             if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
                 raise RuntimeError(
-                    f"Failed to clear controller {target_controller}: {response_msg.body.get('message', 'Unknown error')}"
+                    f"Failed to clear controller {target_controller}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
                 )
 
             logger.info(
@@ -2041,7 +2077,7 @@ class AsyncTransferQueueClient:
 
             if response_msg.request_type != ZMQRequestType.CLEAR_DATA_RESPONSE:
                 raise RuntimeError(
-                    f"Failed to clear storage unit {target_storage}: {response_msg.body.get('message', 'Unknown error')}"
+                    f"Failed to clear storage {target_storage}: {response_msg.body.get('message', 'Unknown error')}"
                 )
 
             logger.info(f"[{self.client_id}]: Successfully clear storage unit {target_storage}")
@@ -2052,10 +2088,10 @@ class AsyncTransferQueueClient:
 
 class TransferQueueClient(AsyncTransferQueueClient):
     def __init__(
-            self,
-            client_id: str,
-            controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
-            storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        self,
+        client_id: str,
+        controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
     ):
         super().__init__(
             client_id,
@@ -2099,16 +2135,16 @@ class TransferQueueClient(AsyncTransferQueueClient):
     #     # 构造迭代器将get过程进行抽象
     #     pass
 
-    def put(self, data: TensorDict, metadata: BatchMeta = None, global_step: Optional[int] = None):
+    def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, global_step: Optional[int] = None):
         return asyncio.run(self.async_put(data, metadata, global_step))
 
     def get_meta(
-            self,
-            data_fields: list[str],
-            batch_size: int,
-            global_step: int,
-            get_n_samples: bool = False,
-            task_name: str = None,
+        self,
+        data_fields: list[str],
+        batch_size: int,
+        global_step: int,
+        get_n_samples: bool = False,
+        task_name: Optional[str] = None,
     ) -> BatchMeta:
         return asyncio.run(
             self.async_get_meta(
@@ -2150,46 +2186,42 @@ class TransferQueueClient(AsyncTransferQueueClient):
 #             pass
 
 
-def process_zmq_server_info(
-        handlers: dict[Any, Union[TransferQueueController, TransferQueueStorageSimpleUnit]]):  # noqa: UP007
+def process_zmq_server_info(handlers: dict[Any, Union[TransferQueueController, TransferQueueStorageSimpleUnit]]):  # noqa: UP007
     server_info = {}
     for name, handler in handlers.items():
-        server_info[name] = ray.get(handler.get_zmq_server_info.remote())
+        server_info[name] = ray.get(handler.get_zmq_server_info.remote())  # type: ignore[attr-defined]
     return server_info
 
 
 def _add_field_data(
-        transfer_dict: Dict[str, any],
-        storage_meta_group: StorageMetaGroup,
-        data: TensorDict
-) -> Dict[str, any]:
+    transfer_dict: dict[str, Any], storage_meta_group: StorageMetaGroup, data: TensorDict
+) -> dict[str, Any]:
     """Helper function to add field data to the transfer dictionary"""
-    field_names = transfer_dict['fields']
-    for field in field_names:
-        if field in data.keys():
-            transfer_dict['field_data'][field] = []
+    field_names = transfer_dict["fields"]
+    for fname in field_names:
+        if fname in data.keys():
+            transfer_dict["field_data"][fname] = []
             for sample_meta in storage_meta_group.sample_metas:
-                transfer_dict['field_data'][field].append(data[field][sample_meta.batch_index])
+                transfer_dict["field_data"][fname].append(data[fname][sample_meta.batch_index])
     return transfer_dict
 
 
 def get_transfer_info(
-        storage_meta_group: StorageMetaGroup,
-        data: TensorDict,
-) -> Dict[str, any]:
+    storage_meta_group: StorageMetaGroup,
+    data: TensorDict,
+) -> dict[str, Any]:
     """Convert to dictionary format with field data for put operations"""
     result = storage_meta_group.get_transfer_info(field_names=data.keys())
     result = _add_field_data(result, storage_meta_group, data)
     return result
 
-def _union_fields(fields1: Dict[str, FieldMeta], fields2: Dict[str, FieldMeta]) -> TensorDict:
+
+def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) -> TensorDict:
     """Union two sample's fields."""
     for name in fields2.keys():
         if name not in fields1:
             fields1[name] = fields2[name]
         else:
-            assert fields1[name].equals(fields2[name]), (
-                f"{name} in fields1 and fields2 are not the same object"
-            )
+            assert fields1[name].equals(fields2[name]), f"{name} in fields1 and fields2 are not the same object"
 
     return fields1

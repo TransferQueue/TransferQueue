@@ -1,15 +1,16 @@
 import sys
 from pathlib import Path
-import pytest
-import torch
-import tensordict
+
 import numpy as np
+import pytest
+import tensordict
+import torch
 from tensordict import NonTensorData, NonTensorStack, TensorDict
 
 # Import your classes here
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
-from transfer_queue.utils.serial_utils import MsgpackEncoder, MsgpackDecoder
+from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder
 
 
 def get_tensordict(tensor_dict: dict[str, torch.Tensor | list], non_tensor_dict: dict = None) -> TensorDict:
@@ -158,21 +159,11 @@ def test_tensordict_with_packing():
 
 
 def test_nested_tensordict_serialization():
-    td1 = tensordict.TensorDict({
-        'a': torch.randn(2, 3),
-        'b': torch.randn(2, 4)
-    }, batch_size=[2])
+    td1 = tensordict.TensorDict({"a": torch.randn(2, 3), "b": torch.randn(2, 4)}, batch_size=[2])
 
-    td2 = tensordict.TensorDict({
-        'c': torch.randn(2, 5),
-        'd': torch.randn(2, 6)
-    }, batch_size=[2])
+    td2 = tensordict.TensorDict({"c": torch.randn(2, 5), "d": torch.randn(2, 6)}, batch_size=[2])
 
-    td = tensordict.TensorDict({
-        'part1': td1,
-        'part2': td2,
-        'e': torch.randn(2, 7)
-    }, batch_size=[2])
+    td = tensordict.TensorDict({"part1": td1, "part2": td2, "e": torch.randn(2, 7)}, batch_size=[2])
 
     encoder = MsgpackEncoder()
     decoder = MsgpackDecoder(TensorDict)
@@ -180,16 +171,17 @@ def test_nested_tensordict_serialization():
 
     assert isinstance(deserialized_td, tensordict.TensorDict)
     assert set(deserialized_td.keys()) == set(td.keys())
-    assert isinstance(deserialized_td['part1'], tensordict.TensorDict)
-    assert isinstance(deserialized_td['part2'], tensordict.TensorDict)
+    assert isinstance(deserialized_td["part1"], tensordict.TensorDict)
+    assert isinstance(deserialized_td["part2"], tensordict.TensorDict)
 
-    assert set(deserialized_td['part1'].keys()) == set(td1.keys())
-    assert set(deserialized_td['part2'].keys()) == set(td2.keys())
+    assert set(deserialized_td["part1"].keys()) == set(td1.keys())
+    assert set(deserialized_td["part2"].keys()) == set(td2.keys())
 
     for key in td.keys():
         if isinstance(td[key], tensordict.TensorDict):
             for inner_key in td[key].keys():
-                assert torch.allclose(deserialized_td[key][inner_key], td[key][inner_key]), \
+                assert torch.allclose(deserialized_td[key][inner_key], td[key][inner_key]), (
                     f"Values for key '{key}.{inner_key}' do not match"
+                )
         else:
             assert torch.allclose(deserialized_td[key], td[key]), f"Values for key '{key}' do not match"
