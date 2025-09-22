@@ -586,11 +586,6 @@ class TransferQueueController:
         # Per-sample dtype and shape storage: {global_index: {field_name: {'dtype': dtype, 'shape': shape}}}
         self.per_tensor_dtype_mapping: dict[int, dict[str, torch.dtype]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, torch.Size]] = {}
-        # 例如：{'Prompt':0, 'Response':1, ...}
-
-        # 用于支持每个rank自行获取数据的场景
-        # self.dp_metadata_buffer = {}  # 例：{'DP0':BatchMeta, 'DP1':BatchMeta}
-        # self.dp_rank_consumption = {}  # 例：{'DP0':set(), 'DP1':set()}  # 其中set记录已经消费过这个metadata的rank_id
 
         self._build_index_storage_mapping()
 
@@ -687,67 +682,6 @@ class TransferQueueController:
 
     def get_global_index_mapping(self):
         return self._global_index_storage_rank_mapping, self.global_index_local_index_mapping
-
-    # DEPRECATED：第一阶段只调通主控拿metadata+worker拿data，因此暂时无需维护dp身份感知的功能，即
-    # num_dp_groups: int,
-    # dp_rank: int = None,
-    # dp_size: int = None,
-    # rank_id: int = None,
-    # 无需设计
-    # def _get_metadata(
-    #     self,
-    #     data_fields: List[str],
-    #     experience_count: int,
-    #     current_step: int,
-    #     dp_world_size: int,
-    #     num_dp_groups: int = None,
-    #     dp_rank: int = None,
-    #     rank_id: int = None,
-    #     get_n_samples=False,
-    #     schedule_policy: str = "DP_balance",
-    #     *args,
-    #     **kwargs,
-    # ) -> BatchMeta:
-    #     # 向TransferQueue读数据时，查找当前batch内可被消费的样本，并打包返回BatchMeta
-
-    #     # 为保证兼容性，当前考虑支持两种使用方式：
-    #     # 方式1：主控读取所有DP的metadata，通过dispatch进行分发。此时无需指定dp_rank与dp_size
-    #     # 方式2：每个Rank自行请求数据，这时需要指定dp_rank与dp_size，在TransferQueue系统内
-    #     # 保证相同DP拿到相同数据、不同DP拿到不同数据
-
-    #     # 1. 根据是否指定dp_rank、dp_size、rank_id，判断是否需要记录请求队列
-    #     if dp_rank and dp_size and rank_id:
-    #         if dp_rank in self.dp_metadata_buffer.keys():
-    #             # 说明该dp_rank中其他的某张卡已经发送过数据读取请求
-    #             if rank_id not in self.dp_rank_consumption["DP" + str(dp_rank)]:
-    #                 # 说明当前rank没有消费过这个batch的数据，直接从buffer中读取metadata
-    #                 metadata = self.dp_metadata_buffer["DP" + str(dp_rank)]
-    #                 self.dp_rank_consumption["DP" + str(dp_rank)].add(rank_id)
-    #                 if len(self.dp_rank_consumption["DP" + str(dp_rank)]) == dp_size:
-    #                     # 这批数据已经被DP域内所有rank消费过，逐出
-    #                     del self.dp_rank_consumption["DP" + str(dp_rank)]
-    #                     del self.dp_metadata_buffer["DP" + str(dp_rank)]
-    #                 return metadata
-    #             else:
-    #                 # 异常处理，DP域内某个rank在其他rank没有计算完的时候又发了一个请求，抛出异常
-    #                 pass
-
-    #     # 执行至此，说明需要重新采样一批数据
-    #     # 2. 扫描数据状态，找到所有可消费数据
-    #     ready_for_consume_idx = self._scan_data_status(data_columns, current_step, get_n_samples)
-    #     # 3. 执行负载均衡，采样一批数据
-    #     batch_global_indexes = self._run_schedule_policy(
-    #         schedule_policy, experience_count, ready_for_consume_idx, *args, **kwargs
-    #     )
-    #     # 4. 标记这批数据状态为已消费
-    #     self.data_consumption_status[batch_global_indexes] = 1
-    #     # 5. 打包为metadata
-    #     metadata = self._generate_experience_meta(batch_global_indexes, data_columns)
-    #     # 6. 如果是方式2，则将metadata进行缓存
-    #     if dp_rank and dp_size and rank_id:
-    #         pass
-
-    #     return metadata
 
     def _get_metadata(
         self,
@@ -2099,42 +2033,6 @@ class TransferQueueClient(AsyncTransferQueueClient):
             storage_infos,
         )
 
-    # DEPRECATED：第一阶段无需设计此函数
-    # def get(
-    #     self,
-    #     data_fields: list[str],
-    #     experience_count: int,
-    #     dp_world_size: int,
-    #     num_dp_groups: int = None,
-    #     rank_id: int = None,
-    #     get_n_samples=False,
-    #     schedule_policy: str = "DP_balance",
-    #     *args,
-    #     **kwargs,
-    # ) -> (TensorDict, BatchMeta, int):
-    #     # 获取对应的meta data和数据，封装了get_meta和get_data两个步骤
-    #     # 这里DP相关的配置用来支持不同的数据获取方式：
-    #     # 方式1. 每个worker进程自己向主控发起数据获取请求，dp_rank用来区分来自不同dp域的请求，
-    #     # dp_size作为计数器，统计一个batch的数据是否被DP域内所有rank拿走过一遍
-
-    #     metadata, current_global_step = self.get_meta(
-    #         data_fields, experience_count, dp_world_size, num_dp_groups, rank_id
-    #     )
-    #     data = self.get_data(metadata)
-    #     return data, metadata, current_global_step
-
-    # DEPRECATED：第一阶段无需设计此函数，后续dataloader等抽象作为recipe提供一种极致性能实现
-    # def get_data_loader(
-    #     self,
-    #     data_fields: list[str],
-    #     experience_count: int,
-    #     dp_world_size: int,
-    #     num_dp_groups: int = None,
-    #     rank_id: int = None,
-    # ) -> StreamDataLoader:
-    #     # 构造迭代器将get过程进行抽象
-    #     pass
-
     def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, global_step: Optional[int] = None):
         return asyncio.run(self.async_put(data, metadata, global_step))
 
@@ -2166,24 +2064,6 @@ class TransferQueueClient(AsyncTransferQueueClient):
         # 检查当前global batch是否消耗完
         # TODO: Implement step consumption check
         pass
-
-
-# DEPRECATED：第一阶段无需设计此函数，后续dataloader等抽象作为recipe提供一种极致性能实现
-# class StreamDataLoader(torch.utils.data.DataLoader):
-#     def __init__(self, dataset: StreamingDataset):
-#         self.dataset = dataset
-#         super().__init__(dataset=self.dataset, collate_fn=_custom_collate)
-
-# DEPRECATED：第一阶段无需设计此函数，后续dataloader等抽象作为recipe提供一种极致性能实现
-# class StreamingDataset(IterableDataset):
-#     def __init__(self, client_handler):
-#         super().__init__()
-#         self.client_handler = client_handler
-#         pass
-#
-#     def __iter__(self):
-#         while self.client_handler.check_current_step_consumption():
-#             pass
 
 
 def process_zmq_server_info(handlers: dict[Any, Union[TransferQueueController, TransferQueueStorageSimpleUnit]]):  # noqa: UP007
