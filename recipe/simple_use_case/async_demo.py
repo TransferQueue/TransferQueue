@@ -16,7 +16,7 @@ parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 from transfer_queue.data_system import AsyncTransferQueueClient, TransferQueueController, \
     TransferQueueStorageSimpleUnit, process_zmq_server_info
-from transfer_queue.utils.utils import get_placement_group
+from transfer_queue.utils.utils import get_placement_group, extract_field_info
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -42,12 +42,11 @@ class ActorRolloutRefWorker:
 
         output = generate_sequences(data["input_ids"])
 
-        # 2. 修改data_meta，用于存放当前任务返回结果的元数据
-        data_meta.set_output_fields(["generate_sequences_ids"])
         output = TensorDict({"generate_sequences_ids": output}, batch_size=output.size(0))
 
-        # 3. 根据data_meta将结果写回storage unit
+        # 2. 根据data_meta将结果写回storage unit
         asyncio.run(data_system_client.async_put(data=output, metadata=data_meta))
+        data_meta.add_fields(**extract_field_info(output))
         logger.info("demo put data to storages done")
 
         return data_meta
@@ -59,12 +58,11 @@ class ActorRolloutRefWorker:
 
         output = compute_old_log_prob(data["input_ids"], data["generate_sequences_ids"])
 
-        # 2. 修改data_meta，用于存放当前任务返回结果的元数据
-        data_meta.set_output_fields(["old_log_prob"])
         output = TensorDict({"old_log_prob": output}, batch_size=output.size(0))
 
-        # 3. 根据data_meta将结果写回storage unit
+        # 2. 根据data_meta将结果写回storage unit
         asyncio.run(data_system_client.async_put(data=output, metadata=data_meta))
+        data_meta.add_fields(**extract_field_info(output))
         logger.info("demo put data to storages done")
 
         return data_meta
@@ -83,8 +81,6 @@ class AsyncvLLMServer:
         data += 1
         await asyncio.sleep(3)
 
-        # 修改data_meta，用于存放当前任务返回结果的元数据
-        data_meta.set_output_fields(["generate_sequences_ids"])
         output = TensorDict({"generate_sequences_ids": data}, batch_size=data.size(0))
 
         await self.data_system_client.async_put(data=output, metadata=data_meta)
@@ -205,20 +201,20 @@ class Trainer:
                 logger.info("demo put prompts ok! ")
                 time.sleep(5)
 
-                prompt_meta = asyncio.run(self.data_system_client.async_get_meta(
+                batch_meta = asyncio.run(self.data_system_client.async_get_meta(
                     data_fields=['input_ids', 'attention_mask'],
                     batch_size=self.config.global_batch_size,
                     global_step=step,
                     get_n_samples=False,
                     task_name='generate_sequences',
                 ))
-                logger.info(f"demo get meta {prompt_meta}")
+                logger.info(f"demo get meta {batch_meta}")
 
                 # Simulate calling the generate sequences task of the worker group
                 if not self.config.async_rollout_mode:
-                    self.actor_rollout_wg.actor_rollout_wg_generate_sequences(prompt_meta, self.data_system_client)
+                    batch_meta = self.actor_rollout_wg.actor_rollout_wg_generate_sequences(batch_meta, self.data_system_client)
                 else:
-                    self.async_rollout_manager.generate_sequences(prompt_meta)
+                    batch_meta= self.async_rollout_manager.generate_sequences(batch_meta)
 
                 log_prob_meta = asyncio.run(self.data_system_client.async_get_meta(
                     data_fields=['input_ids', 'attention_mask', 'generate_sequences_ids'],
@@ -230,7 +226,9 @@ class Trainer:
                 logger.info(f"demo get log prob meta: {log_prob_meta}")
 
                 # Simulate calling the compute old log prob task of the worker group
-                self.actor_rollout_wg.actor_rollout_wg_compute_old_log_prob(log_prob_meta, self.data_system_client)
+                old_log_prob_meta = self.actor_rollout_wg.actor_rollout_wg_compute_old_log_prob(log_prob_meta, self.data_system_client)
+
+                batch_meta = batch_meta.union(old_log_prob_meta)
 
                 # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；client再根据metadata通知所有storage unit清空
                 # client选择一个主controller拿到metadata，其他的controller直接清空不用返回metadata即可

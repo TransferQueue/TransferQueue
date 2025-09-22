@@ -13,7 +13,7 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 from transfer_queue.data_system import TransferQueueController, TransferQueueStorageSimpleUnit, process_zmq_server_info
-from transfer_queue.utils.utils import get_placement_group
+from transfer_queue.utils.utils import get_placement_group, extract_field_info
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -90,12 +90,11 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
 
     output = generate_sequences(data["input_ids"])
 
-    # 2. 修改data_meta，用于存放当前任务返回结果的元数据
-    data_meta.set_output_fields(["generate_sequences_ids"])
     output = TensorDict({"generate_sequences_ids": output}, batch_size=output.size(0))
 
-    # 3. 根据data_meta将结果写回storage unit
+    # 2. 根据data_meta将结果写回storage unit
     data_system_client.put(data=output, metadata=data_meta)
+    data_meta.add_fields(**extract_field_info(output))
     logger.info("demo put data to storages done")
 
     return data_meta
@@ -108,12 +107,11 @@ def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
 
     output = compute_old_log_prob(data["input_ids"], data["generate_sequences_ids"])
 
-    # 2. 修改data_meta，用于存放当前任务返回结果的元数据
-    data_meta.set_output_fields(["old_log_prob"])
     output = TensorDict({"old_log_prob": output}, batch_size=output.size(0))
 
-    # 3. 根据data_meta将结果写回storage unit
+    # 2. 根据data_meta将结果写回storage unit
     data_system_client.put(data=output, metadata=data_meta)
+    data_meta.add_fields(**extract_field_info(output))
     logger.info("demo put data to storages done")
 
     return data_meta
@@ -131,7 +129,7 @@ def fit(config, data_system_client):
             logger.info("demo put prompts ok! ")
             time.sleep(5)
 
-            prompt_meta = data_system_client.get_meta(
+            batch_meta = data_system_client.get_meta(
                 data_fields=['input_ids', 'attention_mask'],
                 batch_size=config.global_batch_size,
                 global_step=step,
@@ -139,10 +137,10 @@ def fit(config, data_system_client):
                 task_name='generate_sequences',
             )
             # Set output fields for RL training - in this case, we want to generate sequences from input_ids
-            logger.info(f"demo get meta {prompt_meta}")
+            logger.info(f"demo get meta {batch_meta}")
 
             # Simulate calling the generate sequences task of the worker group
-            actor_rollout_wg_generate_sequences(prompt_meta, data_system_client)
+            batch_meta = actor_rollout_wg_generate_sequences(batch_meta, data_system_client)
 
             log_prob_meta = data_system_client.get_meta(
                 data_fields=['input_ids', 'attention_mask', 'generate_sequences_ids'],
@@ -155,7 +153,9 @@ def fit(config, data_system_client):
             logger.info(f"demo get log prob meta: {log_prob_meta}")
 
             # Simulate calling the compute old log prob task of the worker group
-            actor_rollout_wg_compute_old_log_prob(log_prob_meta, data_system_client)
+            old_log_prob_meta = actor_rollout_wg_compute_old_log_prob(log_prob_meta, data_system_client)
+
+            batch_meta = batch_meta.union(old_log_prob_meta)
 
             # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；client再根据metadata通知所有storage unit清空
             # client选择一个主controller拿到metadata，其他的controller直接清空不用返回metadata即可
