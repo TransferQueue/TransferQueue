@@ -6,11 +6,13 @@ from .client import (
     process_zmq_server_info,
 )
 from .controller import TransferQueueController
+from .metadata import BatchMeta
 from .storage import TransferQueueStorageSimpleUnit
 
 __all__ = [
-    "TransferQueueClient",
     "AsyncTransferQueueClient",
+    "BatchMeta",
+    "TransferQueueClient",
     "TransferQueueController",
     "TransferQueueStorageSimpleUnit",
     "process_zmq_server_info",
