@@ -13,7 +13,7 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue.data_system import (  # noqa: E402
+from transfer_queue import (  # noqa: E402
     AsyncTransferQueueClient,
     BatchMeta,
     TransferQueueController,
@@ -226,7 +226,6 @@ class Trainer:
                     )
                 else:
                     batch_meta = self.async_rollout_manager.generate_sequences(batch_meta)
-
                 log_prob_meta = asyncio.run(
                     self.data_system_client.async_get_meta(
                         data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
