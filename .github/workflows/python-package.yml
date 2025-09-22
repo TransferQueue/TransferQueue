@@ -41,4 +41,4 @@ jobs:
         RAY_LOG_TO_STDERR: 1
       run: |
         mkdir -p /tmp/ray_logs
-        RAY_LOG_DIR=/tmp/ray_logs pytest -n 0 -v --capture=tee-sys || (cat /tmp/ray_logs/* || true)
+        RAY_LOG_DIR=/tmp/ray_logs pytest -v --capture=tee-sys || (cat /tmp/ray_logs/* || true)
