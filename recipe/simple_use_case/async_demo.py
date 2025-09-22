@@ -15,6 +15,7 @@ sys.path.append(str(parent_dir))
 
 from transfer_queue.data_system import (  # noqa: E402
     AsyncTransferQueueClient,
+    BatchMeta,
     TransferQueueController,
     TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
@@ -106,7 +107,7 @@ class AsyncRolloutWorker:
             # otherwise an error will be reported：a coroutine was expected, got ObjectRef(xxx)
             tasks.append(asyncio.create_task(self.generate(data_meta_chunk[i])))
         data_metas = await asyncio.gather(*tasks)
-        return data_metas
+        return BatchMeta.concat(data_metas)
 
     async def generate(self, data_meta):
         data_meta_new = await self.async_vllm_server.generate.remote(data_meta)
@@ -130,10 +131,10 @@ class RolloutManager:
                 for worker, data_meta_chunk in zip(self.async_rollout_workers, data_meta_chunkes, strict=True)
             ]
         )
+        batch_meta = BatchMeta.concat(data_metas)
+        logger.info(f"batch_meta: {batch_meta}")
 
-        logger.info(f"data_metas: {data_metas}")
-
-        return data_metas
+        return batch_meta
 
 
 class Trainer:
