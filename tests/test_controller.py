@@ -29,7 +29,8 @@ def ray_setup():
 
 @pytest.fixture(scope="function")
 def setup_teardown_transfer_queue_controller(ray_setup):
-    global_batch_size = 8  # 用作global index的offset，区分是哪个global step对应的数据
+    # Used as the offset for the global index to distinguish which global step the data corresponds to
+    global_batch_size = 8
     num_global_batch = 2
     num_n_samples = 2
     num_data_storage_units = 2
@@ -73,7 +74,8 @@ class TestTransferQueueController:
     @pytest.mark.parametrize("num_n_samples", [1, 2])
     @pytest.mark.parametrize("num_global_batch", [1, 2])
     def test_build_index_storage_mapping(self, num_n_samples, num_global_batch):
-        global_batch_size = 8  # 用作global index的offset，区分是哪个global step对应的数据
+        # Used as the offset for the global index to distinguish which global step the data corresponds to
+        global_batch_size = 8
         num_global_batch = num_global_batch
         num_n_samples = num_n_samples
         num_data_storage_units = 2
@@ -91,13 +93,13 @@ class TestTransferQueueController:
         if num_global_batch == 1 and num_n_samples == 1:
             assert (np.array_equal(global_index_storage_mapping, np.array([0, 0, 0, 0, 1, 1, 1, 1])))
             assert (np.array_equal(global_index_local_index_mapping, np.array([0, 1, 2, 3, 0, 1, 2, 3])))
-        # 单个GBS的数据会分散在不同的storage unit中
+        # The data of a single GBS will be distributed across different storage units
         elif num_global_batch == 2 and num_n_samples == 1:
             assert (np.array_equal(global_index_storage_mapping,
                                    np.array([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1])))
             assert (np.array_equal(global_index_local_index_mapping,
                                    np.array([0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7])))
-        # num_n_samples > 1
+        # When num_n_samples is larger than 1
         elif num_global_batch == 1 and num_n_samples == 2:
             assert (np.array_equal(global_index_storage_mapping,
                                    np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1])))
@@ -106,18 +108,18 @@ class TestTransferQueueController:
         elif num_global_batch == 2 and num_n_samples == 2:
             assert (np.array_equal(global_index_storage_mapping,
                                    np.array(
-                                       [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1,
-                                        1, 1, 1, 1, 1])))
+                                       [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+                                        1, 1, 1, 1, 1, 1, 1, 1])))
             assert (np.array_equal(global_index_local_index_mapping,
                                    np.array(
-                                       [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 8,
-                                        9, 10, 11, 12, 13, 14, 15])))
+                                       [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+                                        14, 15, 8, 9, 10, 11, 12, 13, 14, 15])))
 
     def test_update_production_status(self, setup_teardown_transfer_queue_controller):
         tq_controller, global_batch_size, num_global_batch, num_n_samples = setup_teardown_transfer_queue_controller
 
         total_storage_size = global_batch_size * num_global_batch * num_n_samples
-        # init get_data_production_status and column_name_mapping
+        # Initialize get_data_production_status and filed_name_mapping
         init_update_production_status = torch.zeros(total_storage_size, INIT_FIELD_NUM, dtype=torch.int8)
         assert torch.equal(ray.get(tq_controller.get_data_production_status.remote()), init_update_production_status)
         assert ray.get(tq_controller.get_field_name_mapping.remote()) == {}
@@ -162,4 +164,5 @@ class TestTransferQueueController:
         storage_ids = [sample.storage_id for sample in metadata]
         assert len(set(storage_ids[:len(storage_ids) // 2])) == 1
 
-    # TODO: 多个client并发向一个controller读取datameta的测试用例，每个client都能拿到正确的返回
+    # TODO: Test case where multiple clients concurrently read datameta from a single controller,
+    #  and each client receives the correct response

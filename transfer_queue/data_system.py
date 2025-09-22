@@ -434,7 +434,7 @@ class BatchMeta:
             current_chunk_size = base_size + 1 if i < remainder else base_size
             end = start + current_chunk_size
             chunk_samples = self.samples[start:end]
-            chunk = BatchMeta(samples=chunk_samples, extra_info=self.extra_info)
+            chunk = BatchMeta(samples=chunk_samples, extra_info=self.extra_info.copy())
             chunk_list.append(chunk)
             start = end
         return chunk_list
