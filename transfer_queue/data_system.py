@@ -924,11 +924,11 @@ class TransferQueueController:
                 new_matrix = torch.zeros((self.total_storage_size, add_fields), dtype=torch.int8)
                 self.data_production_status = torch.cat([self.data_production_status, new_matrix], dim=1)
 
-        for f in fields:
-            if f not in self.field_name_mapping.keys():
-                self.field_name_mapping[f] = len(self.field_name_mapping)
+        for field in fields:
+            if field not in self.field_name_mapping.keys():
+                self.field_name_mapping[field] = len(self.field_name_mapping)
         self.data_production_status[
-            torch.tensor(indexes)[:, None], torch.tensor([self.field_name_mapping.get(f) for f in fields])
+            torch.tensor(indexes)[:, None], torch.tensor([self.field_name_mapping.get(field) for field in fields])
         ] = 1
 
     def _update_field_info(
@@ -953,11 +953,11 @@ class TransferQueueController:
             if global_idx not in self.per_tensor_shape_mapping:
                 self.per_tensor_shape_mapping[global_idx] = {}
 
-            for f in fields:
-                if global_idx in per_tensor_dtypes and f in per_tensor_dtypes[global_idx]:
-                    self.per_tensor_dtype_mapping[global_idx][f] = per_tensor_dtypes[global_idx][f]
-                if global_idx in per_tensor_shapes and f in per_tensor_shapes[global_idx]:
-                    self.per_tensor_shape_mapping[global_idx][f] = per_tensor_shapes[global_idx][f]
+            for field in fields:
+                if global_idx in per_tensor_dtypes and field in per_tensor_dtypes[global_idx]:
+                    self.per_tensor_dtype_mapping[global_idx][field] = per_tensor_dtypes[global_idx][field]
+                if global_idx in per_tensor_shapes and field in per_tensor_shapes[global_idx]:
+                    self.per_tensor_shape_mapping[global_idx][field] = per_tensor_shapes[global_idx][field]
 
     def _init_zmq_socket(self):
         # 建立3个ZMQ服务端口，分别用于 ①注册发现 ② 接收Client的数据读写请求 ③ 接收Storage发送的状态更新信号
@@ -1201,18 +1201,18 @@ class StorageUnitData:
         """
         result: dict[str, list] = {}
 
-        for f in fields:
+        for field in fields:
             # Validate field name
-            if f not in self.field_data:
+            if field not in self.field_data:
                 raise ValueError(
-                    f"StorageUnitData get_data operation receive invalid field: {f} beyond {self.field_data.keys()}"
+                    f"StorageUnitData get_data operation receive invalid field: {field} beyond {self.field_data.keys()}"
                 )
 
             if len(local_indexes) == 1:
                 # The unsqueeze op make the shape from n to (1, n)
-                result[f] = torch.tensor(list(self.field_data[f][local_indexes[0]])).unsqueeze(0)
+                result[field] = torch.tensor(list(self.field_data[field][local_indexes[0]])).unsqueeze(0)
             else:
-                result[f] = torch.stack(list(itemgetter(*local_indexes)(self.field_data[f])))
+                result[field] = torch.stack(list(itemgetter(*local_indexes)(self.field_data[field])))
 
         return TensorDict(result)
 
@@ -1957,13 +1957,13 @@ class AsyncTransferQueueClient:
             for idx, global_idx in enumerate(global_indexes):
                 if global_idx not in storage_data:
                     storage_data[global_idx] = {}
-                for f in fields:
-                    storage_data[global_idx][f] = storage_unit_data[f][idx]
+                for field in fields:
+                    storage_data[global_idx][field] = storage_unit_data[field][idx]
 
         ordered_data: dict[str, torch.Tensor] = {field: [] for field in metadata.fields}
         for global_idx in metadata.global_indexes:
-            for f in metadata.fields:
-                ordered_data[f].append(storage_data[global_idx][f])
+            for field in metadata.fields:
+                ordered_data[field].append(storage_data[global_idx][field])
 
         tensor_data = {field: torch.stack(v) for field, v in ordered_data.items()}
         tensor_data["global_indexes"] = torch.tensor(metadata.global_indexes)
