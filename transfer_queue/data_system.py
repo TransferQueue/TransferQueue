@@ -18,7 +18,7 @@ import torch
 import zmq
 import zmq.asyncio
 from ray.util import get_node_ip_address
-from tensordict import TensorDict
+from tensordict import NonTensorStack, TensorDict
 from torch import Tensor
 
 from transfer_queue.utils.utils import (
@@ -1149,9 +1149,21 @@ class StorageUnitData:
 
             if len(local_indexes) == 1:
                 # The unsqueeze op make the shape from n to (1, n)
-                result[field] = torch.tensor(list(self.field_data[field][local_indexes[0]])).unsqueeze(0)
+                gathered_item = self.field_data[field][local_indexes[0]]
+
+                if not isinstance(gathered_item, torch.Tensor):
+                    result[field] = NonTensorStack(gathered_item).unsqueeze(0)
+                else:
+                    result[field] = torch.tensor(list(gathered_item)).unsqueeze(0)
             else:
-                result[field] = torch.stack(list(itemgetter(*local_indexes)(self.field_data[field])))
+                gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
+
+                if gathered_items:
+                    all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
+                    if all_tensors:
+                        result[field] = torch.nested.as_nested_tensor(gathered_items)
+                    else:
+                        result[field] = NonTensorStack(*gathered_items)
 
         return TensorDict(result)
 
@@ -1796,7 +1808,15 @@ class AsyncTransferQueueClient:
         global_indexes = storage_unit_data["global_indexes"]
         local_indexes = storage_unit_data["local_indexes"]
         field_data = TensorDict(
-            {field: torch.stack(storage_unit_data["field_data"][field]) for field in storage_unit_data["field_data"]}
+            {
+                field: (
+                    torch.nested.as_nested_tensor(storage_unit_data["field_data"][field])
+                    if storage_unit_data["field_data"][field]
+                    and all(isinstance(x, torch.Tensor) for x in storage_unit_data["field_data"][field])
+                    else NonTensorStack(*storage_unit_data["field_data"][field])
+                )
+                for field in storage_unit_data["field_data"]
+            }
         )
 
         request_msg = ZMQMessage.create(
@@ -1902,7 +1922,20 @@ class AsyncTransferQueueClient:
             for field in metadata.fields:
                 ordered_data[field].append(storage_data[global_idx][field])
 
-        tensor_data = {field: torch.stack(v) for field, v in ordered_data.items()}
+        tensor_data = {
+            field: (
+                torch.stack(torch.nested.as_nested_tensor(v).unbind())
+                if v
+                and all(isinstance(item, torch.Tensor) for item in v)
+                and all(item.shape == v[0].shape for item in v)
+                else (
+                    torch.nested.as_nested_tensor(v)
+                    if v and all(isinstance(item, torch.Tensor) for item in v)
+                    else NonTensorStack(*v)
+                )
+            )
+            for field, v in ordered_data.items()
+        }
         tensor_data["global_indexes"] = torch.tensor(metadata.global_indexes)
 
         return TensorDict(tensor_data, batch_size=len(storage_data))
