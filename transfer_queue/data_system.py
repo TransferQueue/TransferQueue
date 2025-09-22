@@ -410,67 +410,67 @@ class BatchMeta:
         else:
             raise TypeError(f"Indexing with {type(item)} is not supported now!")
 
-    def chunk(self, num_chunks: int) -> list["BatchMeta"]:
+    def chunk(self, chunks: int) -> list["BatchMeta"]:
         """
         Split this batch into smaller chunks.
 
         Args:
-            num_chunks: number of chunks
+            chunks: number of chunks
 
         Return:
             List of smaller BatchMeta chunks
 
         """
-        chunks = []
+        chunk_list = []
         n = len(self.samples)
 
         # Calculate the base size and remainder of each chunk
-        base_size = n // num_chunks
-        remainder = n % num_chunks
+        base_size = n // chunks
+        remainder = n % chunks
 
         start = 0
-        for i in range(num_chunks):
+        for i in range(chunks):
             # Calculate the size of the current chunk(the first remainder chunk is 1 more than the base size)
             current_chunk_size = base_size + 1 if i < remainder else base_size
             end = start + current_chunk_size
             chunk_samples = self.samples[start:end]
-            chunk = BatchMeta(samples=chunk_samples)
-            chunks.append(chunk)
+            chunk = BatchMeta(samples=chunk_samples, extra_info=self.extra_info)
+            chunk_list.append(chunk)
             start = end
-        return chunks
+        return chunk_list
 
     @classmethod
-    def concat(cls, chunks: list["BatchMeta"], validate: bool = True) -> Optional["BatchMeta"]:
+    def concat(cls, data: list["BatchMeta"], validate: bool = True) -> Optional["BatchMeta"]:
         """
         Concatenate multiple BatchMeta chunks into one large batch.
 
         Args:
-            chunks: List of BatchMeta chunks to concatenate
+            data: List of BatchMeta chunks to concatenate
             validate: Whether to validate concatenation conditions
 
         Returns:
             Concatenated BatchMeta (None if validation fails)
         """
-        if not chunks:
+        if not data:
             return None
 
         if validate:
-            base_fields = chunks[0].fields
+            base_fields = data[0].fields
 
-            for chunk in chunks:
+            for chunk in data:
                 if chunk.fields != base_fields:
                     raise ValueError("Error: Field names do not match for concatenation.")
 
         # Combine all samples
         all_samples = []
-        for chunk in chunks:
+        for chunk in data:
             all_samples.extend(chunk.samples)
 
         # Combine extra info (later chunks overwrite earlier ones on key conflicts)
         all_extra_info = {}
-        for chunk in chunks:
+        for chunk in data:
             all_extra_info.update(chunk.extra_info)
-
+        # TODO: can return data[0].extra_info directly
         return BatchMeta(samples=all_samples, extra_info=all_extra_info)
 
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
