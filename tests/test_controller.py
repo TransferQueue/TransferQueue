@@ -1,16 +1,10 @@
 import logging
 import math
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 import ray
 import torch
-
-
-parent_dir = Path(__file__).resolve().parent.parent
-sys.path.append(str(parent_dir))
 
 from transfer_queue.data_system import INIT_FIELD_NUM, TransferQueueController, TransferQueueStorageSimpleUnit
 
