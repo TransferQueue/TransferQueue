@@ -65,7 +65,7 @@ def setup_teardown_register_controller_info(setup_teardown_transfer_queue_contro
         [
             storage_unit.register_controller_info.remote(controller_infos)
             for storage_unit in data_system_storage_units.values()
-         ]
+        ]
     )
 
     yield tq_controller, global_batch_size, data_system_storage_units
