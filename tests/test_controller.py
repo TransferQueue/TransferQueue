@@ -62,9 +62,9 @@ def setup_teardown_register_controller_info(setup_teardown_transfer_queue_contro
     controller_infos = {zmq_server_info.id: zmq_server_info}
 
     ray.get(
-        [storage_unit.register_controller_info.remote(controller_infos)
-         for storage_unit in
-             data_system_storage_units.values()
+        [
+            storage_unit.register_controller_info.remote(controller_infos)
+            for storage_unit in data_system_storage_units.values()
          ]
     )
 
@@ -107,9 +107,11 @@ class TestTransferQueueController:
         # When num_n_samples is larger than 1
         elif num_global_batch == 1 and num_n_samples == 2:
             assert np.array_equal(
-                global_index_storage_mapping, np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]))
+                global_index_storage_mapping, np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1])
+            )
             assert np.array_equal(
-                global_index_local_index_mapping, np.array([0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7]))
+                global_index_local_index_mapping, np.array([0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7])
+            )
         elif num_global_batch == 2 and num_n_samples == 2:
             assert np.array_equal(
                 global_index_storage_mapping,
@@ -152,7 +154,7 @@ class TestTransferQueueController:
                         12,
                         13,
                         14,
-                        15
+                        15,
                     ]
                 ),
             )
@@ -175,7 +177,7 @@ class TestTransferQueueController:
         assert new_field_name_mapping["test_prompts"] == 0
 
         new_data_production_status = ray.get(tq_controller.get_data_production_status.remote())
-        assert new_data_production_status[:, 0][:len(global_indexes)].sum() == len(global_indexes)
+        assert new_data_production_status[:, 0][: len(global_indexes)].sum() == len(global_indexes)
 
     def test_data_consumption_status(self, setup_teardown_transfer_queue_controller):
         tq_controller, global_batch_size, num_global_batch, num_n_samples = setup_teardown_transfer_queue_controller
@@ -216,7 +218,7 @@ class TestTransferQueueController:
             28,
             29,
             30,
-            31
+            31,
         ]
         assert [sample.local_index for sample in metadata] == [
             8,
@@ -234,7 +236,7 @@ class TestTransferQueueController:
             12,
             13,
             14,
-            15
+            15,
         ]
         storage_ids = [sample.storage_id for sample in metadata]
         assert len(set(storage_ids[: len(storage_ids) // 2])) == 1
