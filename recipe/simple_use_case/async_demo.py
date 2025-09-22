@@ -15,10 +15,10 @@ sys.path.append(str(parent_dir))
 
 from transfer_queue.data_system import (  # noqa: E402
     AsyncTransferQueueClient,
+    BatchMeta,
     TransferQueueController,
     TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
-    BatchMeta
 )
 from transfer_queue.utils.utils import (  # noqa: E402
     extract_field_info,

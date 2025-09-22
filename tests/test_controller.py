@@ -1,22 +1,20 @@
-import sys
-import unittest
-import math
-from pathlib import Path
 import logging
-from unittest.mock import patch, MagicMock
+import math
+import sys
+from pathlib import Path
 
-import zmq
-import ray
-import pytest
-import torch
 import numpy as np
+import pytest
+import ray
+import torch
+
 
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue.data_system import TransferQueueController, INIT_FIELD_NUM, TransferQueueStorageSimpleUnit
+from transfer_queue.data_system import INIT_FIELD_NUM, TransferQueueController, TransferQueueStorageSimpleUnit
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -63,8 +61,12 @@ def setup_teardown_register_controller_info(setup_teardown_transfer_queue_contro
     zmq_server_info = ray.get(tq_controller.get_zmq_server_info.remote())
     controller_infos = {zmq_server_info.id: zmq_server_info}
 
-    ray.get([storage_unit.register_controller_info.remote(controller_infos) for storage_unit in
-             data_system_storage_units.values()])
+    ray.get(
+        [storage_unit.register_controller_info.remote(controller_infos)
+         for storage_unit in
+             data_system_storage_units.values()
+         ]
+    )
 
     yield tq_controller, global_batch_size, data_system_storage_units
 
@@ -87,33 +89,73 @@ class TestTransferQueueController:
             num_n_samples=num_n_samples,
         )
 
-        global_index_storage_mapping, global_index_local_index_mapping = \
-            ray.get(self.tq_controller.get_global_index_mapping.remote())
+        global_index_storage_mapping, global_index_local_index_mapping = ray.get(
+            self.tq_controller.get_global_index_mapping.remote()
+        )
 
         if num_global_batch == 1 and num_n_samples == 1:
-            assert (np.array_equal(global_index_storage_mapping, np.array([0, 0, 0, 0, 1, 1, 1, 1])))
-            assert (np.array_equal(global_index_local_index_mapping, np.array([0, 1, 2, 3, 0, 1, 2, 3])))
+            assert np.array_equal(global_index_storage_mapping, np.array([0, 0, 0, 0, 1, 1, 1, 1]))
+            assert np.array_equal(global_index_local_index_mapping, np.array([0, 1, 2, 3, 0, 1, 2, 3]))
         # The data of a single GBS will be distributed across different storage units
         elif num_global_batch == 2 and num_n_samples == 1:
-            assert (np.array_equal(global_index_storage_mapping,
-                                   np.array([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1])))
-            assert (np.array_equal(global_index_local_index_mapping,
-                                   np.array([0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7])))
+            assert np.array_equal(
+                global_index_storage_mapping, np.array([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1])
+            )
+            assert np.array_equal(
+                global_index_local_index_mapping, np.array([0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7])
+            )
         # When num_n_samples is larger than 1
         elif num_global_batch == 1 and num_n_samples == 2:
-            assert (np.array_equal(global_index_storage_mapping,
-                                   np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1])))
-            assert (np.array_equal(global_index_local_index_mapping,
-                                   np.array([0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7])))
+            assert np.array_equal(
+                global_index_storage_mapping, np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]))
+            assert np.array_equal(
+                global_index_local_index_mapping, np.array([0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7]))
         elif num_global_batch == 2 and num_n_samples == 2:
-            assert (np.array_equal(global_index_storage_mapping,
-                                   np.array(
-                                       [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
-                                        1, 1, 1, 1, 1, 1, 1, 1])))
-            assert (np.array_equal(global_index_local_index_mapping,
-                                   np.array(
-                                       [0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
-                                        14, 15, 8, 9, 10, 11, 12, 13, 14, 15])))
+            assert np.array_equal(
+                global_index_storage_mapping,
+                np.array(
+                    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
+                ),
+            )
+            assert np.array_equal(
+                global_index_local_index_mapping,
+                np.array(
+                    [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        11,
+                        12,
+                        13,
+                        14,
+                        15,
+                        8,
+                        9,
+                        10,
+                        11,
+                        12,
+                        13,
+                        14,
+                        15
+                    ]
+                ),
+            )
 
     def test_update_production_status(self, setup_teardown_transfer_queue_controller):
         tq_controller, global_batch_size, num_global_batch, num_n_samples = setup_teardown_transfer_queue_controller
@@ -125,7 +167,7 @@ class TestTransferQueueController:
         assert ray.get(tq_controller.get_field_name_mapping.remote()) == {}
 
         columns_list = ["test_prompts"]
-        global_indexes = list(range(global_batch_size*num_n_samples))
+        global_indexes = list(range(global_batch_size * num_n_samples))
 
         # update production status
         tq_controller._update_production_status.remote(global_indexes, columns_list)
@@ -153,16 +195,49 @@ class TestTransferQueueController:
         data_fields = ["test_prompts"]
         global_step = 5
 
-        metadata = ray.get(tq_controller._get_metadata.remote(
-            data_fields=data_fields,
-            batch_size=global_batch_size,
-            global_step=global_step,
-            mode="insert"
-        ))
-        assert [sample.global_index for sample in metadata] == [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
-        assert [sample.local_index for sample in metadata] == [8, 9, 10, 11, 12, 13, 14, 15, 8, 9, 10, 11, 12, 13, 14, 15]
+        metadata = ray.get(
+            tq_controller._get_metadata.remote(
+                data_fields=data_fields, batch_size=global_batch_size, global_step=global_step, mode="insert"
+            )
+        )
+        assert [sample.global_index for sample in metadata] == [
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+        ]
+        assert [sample.local_index for sample in metadata] == [
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+        ]
         storage_ids = [sample.storage_id for sample in metadata]
-        assert len(set(storage_ids[:len(storage_ids) // 2])) == 1
+        assert len(set(storage_ids[: len(storage_ids) // 2])) == 1
 
     # TODO: Test case where multiple clients concurrently read datameta from a single controller,
     #  and each client receives the correct response
