@@ -37,5 +37,8 @@ jobs:
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
+      env:
+        RAY_LOG_TO_STDERR: 1
       run: |
-        pytest
+        mkdir -p /tmp/ray_logs
+        RAY_LOG_DIR=/tmp/ray_logs pytest -v --capture=tee-sys || (cat /tmp/ray_logs/* || true)
