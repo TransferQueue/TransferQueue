@@ -12,9 +12,17 @@ from tensordict import TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
-from transfer_queue.data_system import AsyncTransferQueueClient, TransferQueueController, \
-    TransferQueueStorageSimpleUnit, process_zmq_server_info
-from transfer_queue.utils.utils import get_placement_group, extract_field_info
+
+from transfer_queue.data_system import (  # noqa: E402
+    AsyncTransferQueueClient,
+    TransferQueueController,
+    TransferQueueStorageSimpleUnit,
+    process_zmq_server_info,
+)
+from transfer_queue.utils.utils import (  # noqa: E402
+    extract_field_info,
+    get_placement_group,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -199,20 +207,24 @@ class Trainer:
                 logger.info("demo put prompts ok! ")
                 time.sleep(5)
 
-                batch_meta = asyncio.run(self.data_system_client.async_get_meta(
-                    data_fields=['input_ids', 'attention_mask'],
-                    batch_size=self.config.global_batch_size,
-                    global_step=step,
-                    get_n_samples=False,
-                    task_name='generate_sequences',
-                ))
+                batch_meta = asyncio.run(
+                    self.data_system_client.async_get_meta(
+                        data_fields=["input_ids", "attention_mask"],
+                        batch_size=self.config.global_batch_size,
+                        global_step=step,
+                        get_n_samples=False,
+                        task_name="generate_sequences",
+                    )
+                )
                 logger.info(f"demo get meta {batch_meta}")
 
                 # Simulate calling the generate sequences task of the worker group
                 if not self.config.async_rollout_mode:
-                    batch_meta = self.actor_rollout_wg.actor_rollout_wg_generate_sequences(batch_meta, self.data_system_client)
+                    batch_meta = self.actor_rollout_wg.actor_rollout_wg_generate_sequences(
+                        batch_meta, self.data_system_client
+                    )
                 else:
-                    batch_meta= self.async_rollout_manager.generate_sequences(batch_meta)
+                    batch_meta = self.async_rollout_manager.generate_sequences(batch_meta)
 
                 log_prob_meta = asyncio.run(
                     self.data_system_client.async_get_meta(
@@ -226,7 +238,9 @@ class Trainer:
                 logger.info(f"demo get log prob meta: {log_prob_meta}")
 
                 # Simulate calling the compute old log prob task of the worker group
-                old_log_prob_meta = self.actor_rollout_wg.actor_rollout_wg_compute_old_log_prob(log_prob_meta, self.data_system_client)
+                old_log_prob_meta = self.actor_rollout_wg.actor_rollout_wg_compute_old_log_prob(
+                    log_prob_meta, self.data_system_client
+                )
 
                 batch_meta = batch_meta.union(old_log_prob_meta)
 

@@ -73,11 +73,10 @@ class FieldMeta:
         """Check if this field is ready for consumption"""
         return self.production_status == ProductionStatus.READY_FOR_CONSUME
 
-    def equals(self, other: 'FieldMeta') -> bool:
+    def equals(self, other: "FieldMeta") -> bool:
         """Check if two FieldMeta are equal (based on name, dtype, shape)"""
-        return (self.name == other.name and
-                self.dtype == other.dtype and
-                self.shape == other.shape)
+        return self.name == other.name and self.dtype == other.dtype and self.shape == other.shape
+
 
 @dataclass
 class SampleMeta:
@@ -100,10 +99,14 @@ class SampleMeta:
     def __post_init__(self):
         """Initialize is_ready property based on field readiness"""
         # Check if all fields are ready and update is_ready property
-        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.fields.values()))
+        object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
 
     def __str__(self) -> str:
-        return f"SampleMeta(global_step={self.global_step}, global_index={self.global_index}, storage_id='{self.storage_id}', local_index={self.local_index}, fields={self.fields})"
+        return (
+            f"SampleMeta(global_step={self.global_step}, "
+            f"global_index={self.global_index}, storage_id='{self.storage_id}', "
+            f"local_index={self.local_index}, fields={self.fields})"
+        )
 
     @property
     def field_names(self) -> list[str]:
@@ -127,19 +130,19 @@ class SampleMeta:
         """Check if a specific field is ready for consumption"""
         field = self.fields.get(field_name)
         return field.is_ready if field else False
-    
-    def add_fields(self, names: List[str], dtypes: List[torch.dtype], shapes: List[torch.Size]) -> None:
+
+    def add_fields(self, names: list[str], dtypes: list[torch.dtype], shapes: list[torch.Size]) -> None:
         """
         Add new fields to this sample. New fields will be initialized with default FieldMeta.
         This modifies the sample in-place to include the new fields.
         """
-        for field_name, dtype, shape in zip(names, dtypes, shapes):
+        for field_name, dtype, shape in zip(names, dtypes, shapes, strict=False):
             assert field_name not in self.fields, f"Field '{field_name}' already exists in SampleMeta."
             self.fields[field_name] = FieldMeta(name=field_name, dtype=dtype, shape=shape)
         # Update is_ready property
-        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.fields.values()))
-    
-    def union(self, other: 'SampleMeta', validate: bool = True) -> 'SampleMeta':
+        object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
+
+    def union(self, other: "SampleMeta", validate: bool = True) -> "SampleMeta":
         """
         Create a union of this sample's fields with another sample's fields.
         Assume both samples have the same global index, and if fields overlap, they must be identical.
@@ -151,14 +154,16 @@ class SampleMeta:
         """
         if validate:
             if self.global_index != other.global_index:
-                raise ValueError(f"Error: Global indexes ({self.global_index} and {other.global_index}) do not match for union.")
+                raise ValueError(
+                    f"Error: Global indexes ({self.global_index} and {other.global_index}) do not match for union."
+                )
 
         # Merge fields
         merged_fields = _union_fields(self.fields, other.fields)
         self.fields = merged_fields
 
         # Update is_ready property
-        object.__setattr__(self, '_is_ready', all(field.is_ready for field in self.fields.values()))
+        object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
         return self
 
     @property
@@ -205,14 +210,14 @@ class StorageMetaGroup:
         """Get all local indexes from stored SampleMeta objects"""
         return [meta.local_index for meta in self.sample_metas]
 
-    def get_field_names(self) -> List[str]:
+    def get_field_names(self) -> list[str]:
         """Get all unique field names from stored SampleMeta objects"""
         all_fields: set[str] = set()
         for meta in self.sample_metas:
             all_fields.update(meta.fields.keys())
         return list(all_fields)
 
-    def get_transfer_info(self, field_names: List[str] = None) -> Dict[str, List]:
+    def get_transfer_info(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
         """Convert to dictionary format for backward compatibility"""
         if field_names is None:
             field_names = self.get_field_names()
@@ -276,7 +281,7 @@ class BatchMeta:
             object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
             # assume all samples have the same fields.
-            object.__setattr__(self, '_fields', self.samples[0].field_names)
+            object.__setattr__(self, "_fields", self.samples[0].field_names)
 
             # Initialize storage groups for efficient client operations
             storage_meta_groups = self._build_storage_meta_groups()
@@ -317,7 +322,7 @@ class BatchMeta:
     def is_ready(self) -> bool:
         """Check if all samples in this batch are ready for consumption"""
         # TODO: get ready status from controller realtime
-        return getattr(self, '_is_ready', False)
+        return getattr(self, "_is_ready", False)
 
     def _build_storage_meta_groups(self) -> dict[str, StorageMetaGroup]:
         """Build storage groups from samples during initialization"""
@@ -375,8 +380,8 @@ class BatchMeta:
     def get_all_extra_info(self) -> dict[str, Any]:
         """Get all extra info as a dictionary"""
         return self.extra_info.copy()
-    
-    def add_fields(self, names: List[str], **kwargs) -> None:
+
+    def add_fields(self, names: list[str], **kwargs) -> None:
         """
         Add new fields to all samples in this batch. New fields will be initialized with default FieldMeta.
         This modifies each sample in-place to include the new fields.
@@ -387,7 +392,7 @@ class BatchMeta:
         # Update batch-level fields cache
         updated_fields = set(self.fields)
         updated_fields.update(names)
-        object.__setattr__(self, '_fields', list(updated_fields))
+        object.__setattr__(self, "_fields", list(updated_fields))
 
     def __iter__(self) -> Iterator[SampleMeta]:
         """Iterate over samples in this batch."""
@@ -460,7 +465,7 @@ class BatchMeta:
         all_samples = []
         for chunk in chunks:
             all_samples.extend(chunk.samples)
-        
+
         # Combine extra info (later chunks overwrite earlier ones on key conflicts)
         all_extra_info = {}
         for chunk in chunks:
@@ -468,7 +473,7 @@ class BatchMeta:
 
         return BatchMeta(samples=all_samples, extra_info=all_extra_info)
 
-    def union(self, other: 'BatchMeta', validate: bool = True) -> Optional['BatchMeta']:
+    def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
         """
         Create a union of this batch's fields with another batch's fields.
         Assume both batches have the same global indices.
@@ -905,7 +910,7 @@ class TransferQueueController:
                 global_index=global_index,
                 storage_id=storage_id,
                 local_index=local_index,
-                fields={field.name: field for field in fields}
+                fields={field.name: field for field in fields},
             )
             samples.append(sample)
 
@@ -1827,9 +1832,7 @@ class AsyncTransferQueueClient:
 
         """
         if metadata is None:
-            assert global_step is not None, (
-                "global_steps must be provided if metadata is not given"
-            )
+            assert global_step is not None, "global_steps must be provided if metadata is not given"
 
             metadata = await self.async_get_meta(
                 data_fields=list(data.keys()),
@@ -2204,22 +2207,21 @@ def _add_field_data(
 
 
 def get_transfer_info(
-        storage_meta_group: StorageMetaGroup,
-        data: TensorDict,
-) -> Dict[str, any]:
+    storage_meta_group: StorageMetaGroup,
+    data: TensorDict,
+) -> dict[str, Any]:
     """Convert to dictionary format with field data for put operations"""
     result = storage_meta_group.get_transfer_info(field_names=data.keys())
     result = _add_field_data(result, storage_meta_group, data)
     return result
 
-def _union_fields(fields1: Dict[str, FieldMeta], fields2: Dict[str, FieldMeta]) -> TensorDict:
+
+def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) -> TensorDict:
     """Union two sample's fields."""
     for name in fields2.keys():
         if name not in fields1:
             fields1[name] = fields2[name]
         else:
-            assert fields1[name].equals(fields2[name]), (
-                f"{name} in fields1 and fields2 are not the same object"
-            )
+            assert fields1[name].equals(fields2[name]), f"{name} in fields1 and fields2 are not the same object"
 
     return fields1

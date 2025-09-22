@@ -12,7 +12,7 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue.data_system import (
+from transfer_queue.data_system import (  # noqa: E402
     BatchMeta,
     FieldMeta,
     SampleMeta,
@@ -106,7 +106,7 @@ class MockController:
                 global_index=i,
                 storage_id="storage_0",
                 local_index=i,
-                fields={field.name: field for field in fields}
+                fields={field.name: field for field in fields},
             )
             samples.append(sample)
         metadata = BatchMeta(samples=samples)

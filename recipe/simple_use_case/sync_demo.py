@@ -11,8 +11,16 @@ from tensordict import TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
-from transfer_queue.data_system import TransferQueueController, TransferQueueStorageSimpleUnit, process_zmq_server_info
-from transfer_queue.utils.utils import get_placement_group, extract_field_info
+
+from transfer_queue.data_system import (  # noqa: E402
+    TransferQueueController,
+    TransferQueueStorageSimpleUnit,
+    process_zmq_server_info,
+)
+from transfer_queue.utils.utils import (  # noqa: E402
+    extract_field_info,
+    get_placement_group,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -133,7 +141,7 @@ def fit(config, data_system_client):
             time.sleep(5)
 
             batch_meta = data_system_client.get_meta(
-                data_fields=['input_ids', 'attention_mask'],
+                data_fields=["input_ids", "attention_mask"],
                 batch_size=config.global_batch_size,
                 global_step=step,
                 get_n_samples=False,
@@ -160,7 +168,8 @@ def fit(config, data_system_client):
 
             batch_meta = batch_meta.union(old_log_prob_meta)
 
-            # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；client再根据metadata通知所有storage unit清空
+            # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；
+            # client再根据metadata通知所有storage unit清空
             # client选择一个主controller拿到metadata，其他的controller直接清空不用返回metadata即可
             data_system_client.clear(global_step=step)
             logger.info("clear ok! ")
