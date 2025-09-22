@@ -213,8 +213,8 @@ def test_put_get_single_client(storage_setup):
     retrieved_data = response.body["data"]
     assert "log_probs" in retrieved_data
     assert "rewards" in retrieved_data
-    assert len(retrieved_data["log_probs"]) == 2
-    assert len(retrieved_data["rewards"]) == 2
+    assert retrieved_data["log_probs"].size(0) == 2
+    assert retrieved_data["rewards"].size(0) == 2
 
     # Verify data correctness
     torch.testing.assert_close(retrieved_data["log_probs"][0], torch.tensor([1.0, 2.0, 3.0]))
@@ -265,8 +265,8 @@ def test_put_get_multiple_clients(storage_setup):
         assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
 
         retrieved_data = response.body["data"]
-        assert len(retrieved_data["log_probs"]) == 2
-        assert len(retrieved_data["rewards"]) == 2
+        assert retrieved_data["log_probs"].size(0) == 2
+        assert retrieved_data["rewards"].size(0) == 2
 
         # For index 0, expect data from overlapping_client; others from original client
         if i == 0:
