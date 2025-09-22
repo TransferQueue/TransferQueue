@@ -3,7 +3,7 @@ import pickle
 from collections.abc import Sequence
 from inspect import isclass
 from types import FunctionType
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 import cloudpickle
 import torch
@@ -16,7 +16,7 @@ CUSTOM_TYPE_PICKLE = 1
 CUSTOM_TYPE_CLOUDPICKLE = 2
 CUSTOM_TYPE_RAW_VIEW = 3
 
-bytestr = bytes | bytearray | memoryview | zmq.Frame
+bytestr: TypeAlias = bytes | bytearray | memoryview | zmq.Frame
 tensorenc = tuple[str, tuple[int, ...], int | memoryview]
 
 
@@ -76,6 +76,7 @@ class MsgpackEncoder:
         return msgpack.Ext(CUSTOM_TYPE_PICKLE, pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL))
 
     def _encode_tensordict(self, obj: TensorDict) -> tuple[tuple[int, ...], Optional[str], dict[str, tuple[str, Any]]]:
+        assert self.aux_buffers is not None
         encoded_items: dict[str, tuple[str, Any]] = {}
         for k, v in obj.items():
             if isinstance(v, torch.Tensor):
@@ -115,6 +116,7 @@ class MsgpackEncoder:
         return dtype, obj.shape, data
 
     def _encode_non_tensor_data(self, obj: NonTensorData) -> tuple[tuple[int, ...], Optional[str], int]:
+        assert self.aux_buffers is not None
         batch_size = tuple(obj.batch_size)
         device = str(obj.device) if obj.device is not None else None
         data = len(self.aux_buffers)
@@ -140,7 +142,7 @@ class MsgpackDecoder:
 
         self.aux_buffers = bufs
         try:
-            return self.decoder.decode(bufs[0])
+            return self.decoder.decode(bufs[0])  # type: ignore[index]
         finally:
             self.aux_buffers = ()
 
