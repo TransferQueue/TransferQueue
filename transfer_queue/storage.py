@@ -25,10 +25,9 @@ from transfer_queue.utils.zmq_utils import (
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
-TQ_POLLER_TIMEOUT = os.environ.get("TQ_POLLER_TIMEOUT", 1000)
-# TODO: 下面的环境变量命名和设置方式请再审视下@congzhen
-CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT = int(os.environ.get("CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT", 30))
-CONTROLLER_DATA_UPDATE_RESPONSE_TIMEOUT = int(os.environ.get("CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT", 600))
+TQ_STORAGE_POLLER_TIMEOUT = os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 1000)
+TQ_STORAGE_HANDSHAKE_TIMEOUT = int(os.environ.get("TQ_STORAGE_HANDSHAKE_TIMEOUT", 30))
+TQ_DATA_UPDATE_RESPONSE_TIMEOUT = int(os.environ.get("TQ_DATA_UPDATE_RESPONSE_TIMEOUT", 600))
 
 
 class StorageUnitData:
@@ -230,9 +229,9 @@ class TransferQueueStorageSimpleUnit:
         start_time = time.time()
         while (
             len(connected_controllers) < len(self.controller_infos)
-            and time.time() - start_time < CONTROLLER_STORAGE_HANDSHAKE_TIMEOUT
+            and time.time() - start_time < TQ_STORAGE_HANDSHAKE_TIMEOUT
         ):
-            socks = dict(poller.poll(TQ_POLLER_TIMEOUT))
+            socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT))
 
             for controller_handshake_socket in self.controller_handshake_sockets.values():
                 if controller_handshake_socket in socks:
@@ -265,7 +264,7 @@ class TransferQueueStorageSimpleUnit:
         poller.register(self.put_get_socket, zmq.POLLIN)
 
         while True:
-            socks = dict(poller.poll(TQ_POLLER_TIMEOUT))
+            socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT))
 
             if self.put_get_socket in socks:
                 identity, serialized_msg = self.put_get_socket.recv_multipart()
@@ -415,9 +414,9 @@ class TransferQueueStorageSimpleUnit:
 
         while (
             len(response_controllers) < len(self.controller_infos)
-            and time.time() - start_time < CONTROLLER_DATA_UPDATE_RESPONSE_TIMEOUT
+            and time.time() - start_time < TQ_DATA_UPDATE_RESPONSE_TIMEOUT
         ):
-            socks = dict(poller.poll(TQ_POLLER_TIMEOUT))
+            socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT))
 
             for data_status_update_socket in self.data_status_update_sockets.values():
                 if data_status_update_socket in socks:
@@ -435,7 +434,7 @@ class TransferQueueStorageSimpleUnit:
             logger.warning(
                 f"[{self.zmq_server_info.id}]: Storage unit id #{self.zmq_server_info.id} "
                 f"only get {len(response_controllers)} / {len(self.controller_infos)} "
-                f"data status update ACK responses fron controllers."
+                f"data status update ACK responses from controllers."
             )
 
     def _handle_get(self, data_parts: ZMQMessage) -> ZMQMessage:
