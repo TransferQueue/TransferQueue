@@ -54,7 +54,7 @@ class TransferQueueController:
             num_storage_units: Number of storage units in the system
             global_batch_size: Size of each global batch
             num_global_batch: Number of global batches to maintain in storage
-            num_n_samples: For each prompt, sample n response
+            num_n_samples: For each prompt, sample n responses
         """
         self.controller_id = f"TQ_CONTROLLER_{uuid4()}"
 
@@ -281,8 +281,8 @@ class TransferQueueController:
             TimeoutError: If waiting for sufficient data times out in fetch mode
         """
         if mode == "insert":
-            # TODO: Currently only supports putting entire GBS data, need to extend to support multiple puts to
-            #  same step
+            # TODO: Currently only supports putting entire GBS data, need to extend to support multiple puts to same
+            #  step
             assert batch_size == self.global_batch_size
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             batch_global_indexes = list(range(start_idx, end_idx))
