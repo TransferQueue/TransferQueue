@@ -446,7 +446,7 @@ class BatchMeta:
             New BatchMeta with unioned fields
 
         Raises:
-            ValueError: If validation fails (e.g., batch sizes or global indexes do not match
+            ValueError: If validation fails (e.g., batch sizes or global indexes do not match)
         """
         if validate:
             if self.size != other.size:
