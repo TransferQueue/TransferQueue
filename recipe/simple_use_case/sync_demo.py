@@ -12,7 +12,7 @@ from tensordict import TensorDict
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue.data_system import (  # noqa: E402
+from transfer_queue import (  # noqa: E402
     TransferQueueController,
     TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
@@ -69,7 +69,7 @@ def initialize_data_system(config):
     )
 
     # 4. 创建Client
-    from transfer_queue.data_system import TransferQueueClient
+    from transfer_queue import TransferQueueClient
 
     data_system_client = TransferQueueClient(
         client_id="Trainer",
@@ -152,7 +152,6 @@ def fit(config, data_system_client):
 
             # Simulate calling the generate sequences task of the worker group
             batch_meta = actor_rollout_wg_generate_sequences(batch_meta, data_system_client)
-
             log_prob_meta = data_system_client.get_meta(
                 data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                 batch_size=config.global_batch_size,
