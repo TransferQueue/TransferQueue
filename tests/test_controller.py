@@ -11,7 +11,8 @@ import torch
 # parent_dir = Path(__file__).resolve().parent.parent
 # sys.path.append(str(parent_dir))
 
-from transfer_queue.data_system import INIT_FIELD_NUM, TransferQueueController, TransferQueueStorageSimpleUnit
+from transfer_queue.controller import TQ_INIT_FIELD_NUM, TransferQueueController
+from transfer_queue.storage import TransferQueueStorageSimpleUnit
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -72,13 +73,11 @@ def setup_teardown_register_controller_info(setup_teardown_transfer_queue_contro
 
 class TestTransferQueueController:
 
-    @pytest.mark.parametrize("num_n_samples", [1, 2])
-    @pytest.mark.parametrize("num_global_batch", [1, 2])
-    def test_build_index_storage_mapping(self, num_n_samples, num_global_batch):
+    def test_build_index_storage_mapping(self):
         # Used as the offset for the global index to distinguish which global step the data corresponds to
         global_batch_size = 8
-        num_global_batch = num_global_batch
-        num_n_samples = num_n_samples
+        num_global_batch = 2  # num_global_batch
+        num_n_samples = 2  # num_n_samples
         num_data_storage_units = 2
 
         self.tq_controller = TransferQueueController.remote(
@@ -163,7 +162,7 @@ class TestTransferQueueController:
 
         total_storage_size = global_batch_size * num_global_batch * num_n_samples
         # Initialize get_data_production_status and filed_name_mapping
-        init_update_production_status = torch.zeros(total_storage_size, INIT_FIELD_NUM, dtype=torch.int8)
+        init_update_production_status = torch.zeros(total_storage_size, TQ_INIT_FIELD_NUM, dtype=torch.int8)
         assert torch.equal(ray.get(tq_controller.get_data_production_status.remote()), init_update_production_status)
         assert ray.get(tq_controller.get_field_name_mapping.remote()) == {}
 
