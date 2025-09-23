@@ -42,11 +42,11 @@ TQ_INIT_FIELD_NUM = os.environ.get("TQ_INIT_FIELD_NUM", 10)
 @ray.remote(num_cpus=1)
 class TransferQueueController:
     def __init__(
-            self,
-            num_storage_units: int,
-            global_batch_size: int,
-            num_global_batch: int = 1,
-            num_n_samples: int = 1,
+        self,
+        num_storage_units: int,
+        global_batch_size: int,
+        num_global_batch: int = 1,
+        num_n_samples: int = 1,
     ) -> None:
         """Initialize the TransferQueueController.
 
@@ -61,7 +61,9 @@ class TransferQueueController:
         self._init_zmq_socket()  # Initialize ZMQ sockets for data communication
 
         self.num_storage_units = num_storage_units
-        self.global_batch_size = global_batch_size  # Used as offset for global index to identify corresponding global step
+        self.global_batch_size = (
+            global_batch_size  # Used as offset for global index to identify corresponding global step
+        )
         self.num_global_batch = num_global_batch
         self.num_n_samples = num_n_samples
         self.total_storage_size = self.global_batch_size * self.num_global_batch * self.num_n_samples
@@ -72,7 +74,8 @@ class TransferQueueController:
         # task_name -> consumption_status mapping
         self.data_consumption_status: dict[str, torch.Tensor] = {}
         self.field_name_mapping: dict[
-            str, int] = {}  # Mapping table for column indices between data_field and data_production_status tables
+            str, int
+        ] = {}  # Mapping table for column indices between data_field and data_production_status tables
         # Per-sample dtype and shape storage: {global_index: {field_name: {'dtype': dtype, 'shape': shape}}}
         self.per_tensor_dtype_mapping: dict[int, dict[str, torch.dtype]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, torch.Size]] = {}
@@ -137,7 +140,7 @@ class TransferQueueController:
         return start_idx, end_idx
 
     def generate_data_status_mask(
-            self, data_fields: list[str], global_step: int, task_name: str
+        self, data_fields: list[str], global_step: int, task_name: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Generate mask matrix for filtering data based on field availability and consumption status.
@@ -240,15 +243,15 @@ class TransferQueueController:
         return self._global_index_storage_rank_mapping, self.global_index_local_index_mapping
 
     def _get_metadata(
-            self,
-            data_fields: list[str],
-            batch_size: int,
-            mode: str = "fetch",
-            global_step=0,
-            task_name: str | None = None,
-            get_n_samples=False,
-            *args,
-            **kwargs,
+        self,
+        data_fields: list[str],
+        batch_size: int,
+        mode: str = "fetch",
+        global_step=0,
+        task_name: str | None = None,
+        get_n_samples=False,
+        *args,
+        **kwargs,
     ) -> BatchMeta:
         """
         Retrieve metadata with support for three modes.
@@ -273,7 +276,8 @@ class TransferQueueController:
             TimeoutError: If waiting for sufficient data times out in fetch mode
         """
         if mode == "insert":
-            # TODO: Currently only supports putting entire GBS data, need to extend to support multiple puts to same step
+            # TODO: Currently only supports putting entire GBS data, need to extend to support multiple puts to
+            #  same step
             assert batch_size == self.global_batch_size
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             batch_global_indexes = list(range(start_idx, end_idx))
@@ -322,7 +326,7 @@ class TransferQueueController:
         return metadata
 
     def _scan_data_status(
-            self, data_fields: list[str], global_step: int, task_name: str, get_n_samples: bool
+        self, data_fields: list[str], global_step: int, task_name: str, get_n_samples: bool
     ) -> list[int]:
         """
         Scan data status to find samples ready for consumption.
@@ -375,7 +379,7 @@ class TransferQueueController:
             return ready_for_consume_idx
 
     def _generate_batch_meta(
-            self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
+        self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
     ) -> BatchMeta:
         """
         Generate BatchMeta by resolving storage locations for given global indexes.
@@ -474,11 +478,11 @@ class TransferQueueController:
         ] = 1
 
     def _update_field_info(
-            self,
-            fields: list[str],
-            per_tensor_dtypes: dict[int, dict[str, Any]],
-            per_tensor_shapes: dict[int, dict[str, Any]],
-            global_indexes: list[int],
+        self,
+        fields: list[str],
+        per_tensor_dtypes: dict[int, dict[str, Any]],
+        per_tensor_shapes: dict[int, dict[str, Any]],
+        global_indexes: list[int],
     ) -> None:
         """
         Store per-tensor dtype and shape information.
