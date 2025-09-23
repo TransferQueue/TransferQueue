@@ -9,7 +9,7 @@ import ray
 import torch
 import zmq
 from ray.util import get_node_ip_address
-from tensordict import TensorDict
+from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.utils.utils import (
     TransferQueueRole,
@@ -71,9 +71,20 @@ class StorageUnitData:
 
             if len(local_indexes) == 1:
                 # The unsqueeze op make the shape from n to (1, n)
-                result[field] = torch.tensor(list(self.field_data[field][local_indexes[0]])).unsqueeze(0)
+                gathered_item = self.field_data[field][local_indexes[0]]
+                if not isinstance(gathered_item, torch.Tensor):
+                    result[field] = NonTensorStack(gathered_item).unsqueeze(0)
+                else:
+                    result[field] = gathered_item.unsqueeze(0)
             else:
-                result[field] = torch.stack(list(itemgetter(*local_indexes)(self.field_data[field])))
+                gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
+
+                if gathered_items:
+                    all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
+                    if all_tensors:
+                        result[field] = torch.nested.as_nested_tensor(gathered_items)
+                    else:
+                        result[field] = NonTensorStack(*gathered_items)
 
         return TensorDict(result)
 
