@@ -75,11 +75,12 @@ def setup_teardown_register_controller_info(setup_teardown_transfer_queue_contro
 
 
 class TestTransferQueueController:
-    def test_build_index_storage_mapping(self):
+    @pytest.mark.parametrize("num_n_samples", [1, 2])
+    def test_build_index_storage_mapping(self, num_n_samples):
         # Used as the offset for the global index to distinguish which global step the data corresponds to
         global_batch_size = 8
         num_global_batch = 2  # num_global_batch
-        num_n_samples = 2  # num_n_samples
+        num_n_samples = num_n_samples
         num_data_storage_units = 2
 
         self.tq_controller = TransferQueueController.remote(
