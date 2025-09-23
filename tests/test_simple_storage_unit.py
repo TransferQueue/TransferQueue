@@ -362,13 +362,9 @@ def test_put_get_nested_tensor_single_client(storage_setup):
             "variable_length_sequences": [
                 torch.tensor([-0.5, -1.2, -0.8]),
                 torch.tensor([-0.3, -1.5, -2.1, -0.9]),
-                torch.tensor([-1.1, -0.7])
+                torch.tensor([-1.1, -0.7]),
             ],
-            "attention_mask": [
-                torch.tensor([1, 1, 1]),
-                torch.tensor([1, 1, 1, 1]),
-                torch.tensor([1, 1])
-            ]
+            "attention_mask": [torch.tensor([1, 1, 1]), torch.tensor([1, 1, 1, 1]), torch.tensor([1, 1])],
         },
         batch_size=[],
     )
@@ -405,16 +401,8 @@ def test_put_get_nested_nontensor_single_client(storage_setup):
     local_indexes = [0, 1, 2]
     field_data = TensorDict(
         {
-            "prompt_text": [
-                "Hello world!",
-                "This is a longer sentence for testing",
-                "Test case"
-            ],
-            "response_text": [
-                "Hi there!",
-                "This is the response to the longer sentence",
-                "Test response"
-            ]
+            "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
+            "response_text": ["Hi there!", "This is the response to the longer sentence", "Test response"],
         },
         batch_size=[],
     )
