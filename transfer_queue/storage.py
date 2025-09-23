@@ -11,9 +11,7 @@ import zmq
 from ray.util import get_node_ip_address
 from tensordict import NonTensorStack, TensorDict
 
-from transfer_queue.utils.utils import (
-    TransferQueueRole,
-)
+from transfer_queue.utils.utils import TransferQueueRole
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -130,7 +128,6 @@ class StorageUnitData:
                 self.field_data[f][idx] = None
 
 
-# TODO(hz): Abstract TransferStorage base class to facilitate support for backends such as redis
 @ray.remote(num_cpus=1)
 class TransferQueueStorageSimpleUnit:
     def __init__(self, storage_size: int):
@@ -476,6 +473,8 @@ class TransferQueueStorageSimpleUnit:
 
         param:
             data_parts: ZMQMessage from client, including target local_indexes.
+        return:
+            Clear data success response ZMQMessage.
         """
         try:
             local_indexes = data_parts.body["local_indexes"]
