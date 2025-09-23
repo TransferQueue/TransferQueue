@@ -197,7 +197,7 @@ class TestTransferQueueController:
         assert ray.get(tq_controller.get_data_consumption_status.remote()) == init_data_consumption_status
 
         task_name = "test_task1"
-        ray.get(tq_controller._get_consumer_status.remote(task_name))
+        ray.get(tq_controller._get_consumption_status.remote(task_name))
         new_data_consumption_status = ray.get(tq_controller.get_data_consumption_status.remote())
         assert torch.equal(new_data_consumption_status[task_name], torch.zeros(total_storage_size, dtype=torch.int8))
 
