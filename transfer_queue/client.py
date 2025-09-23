@@ -9,7 +9,7 @@ import ray
 import torch
 import zmq
 import zmq.asyncio
-from tensordict import TensorDict
+from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.controller import TransferQueueController
 from transfer_queue.metadata import (
@@ -257,7 +257,15 @@ class AsyncTransferQueueClient:
         global_indexes = storage_unit_data["global_indexes"]
         local_indexes = storage_unit_data["local_indexes"]
         field_data = TensorDict(
-            {field: torch.stack(storage_unit_data["field_data"][field]) for field in storage_unit_data["field_data"]}
+            {
+                field: (
+                    torch.nested.as_nested_tensor(storage_unit_data["field_data"][field])
+                    if storage_unit_data["field_data"][field]
+                    and all(isinstance(x, torch.Tensor) for x in storage_unit_data["field_data"][field])
+                    else NonTensorStack(*storage_unit_data["field_data"][field])
+                )
+                for field in storage_unit_data["field_data"]
+            }
         )
 
         request_msg = ZMQMessage.create(
@@ -363,7 +371,20 @@ class AsyncTransferQueueClient:
             for field in metadata.fields:
                 ordered_data[field].append(storage_data[global_idx][field])
 
-        tensor_data = {field: torch.stack(v) for field, v in ordered_data.items()}
+        tensor_data = {
+            field: (
+                torch.stack(torch.nested.as_nested_tensor(v).unbind())
+                if v
+                and all(isinstance(item, torch.Tensor) for item in v)
+                and all(item.shape == v[0].shape for item in v)
+                else (
+                    torch.nested.as_nested_tensor(v)
+                    if v and all(isinstance(item, torch.Tensor) for item in v)
+                    else NonTensorStack(*v)
+                )
+            )
+            for field, v in ordered_data.items()
+        }
         tensor_data["global_indexes"] = torch.tensor(metadata.global_indexes)
 
         return TensorDict(tensor_data, batch_size=len(storage_data))
