@@ -21,13 +21,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def ray_setup():
-    import atexit
-    ray.init(ignore_reinit_error=True, runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}})
-    atexit.register(ray.shutdown)
+    if ray.is_initialized():
+        ray.shutdown()
+    ray.init(
+        ignore_reinit_error=True,
+        runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}},
+        log_to_driver=True,
+    )
     yield
-    ray.shutdown()
+    if ray.is_initialized():
+        ray.shutdown()
+        logger.info("Ray has been shut down completely after test")
 
 
 @pytest.fixture(scope="function")
@@ -206,7 +212,7 @@ class TestTransferQueueController:
                 data_fields=data_fields, batch_size=global_batch_size, global_step=global_step, mode="insert"
             )
         )
-        assert [sample.global_index for sample in metadata] == [
+        assert metadata.global_indexes == [
             16,
             17,
             18,
@@ -224,7 +230,7 @@ class TestTransferQueueController:
             30,
             31,
         ]
-        assert [sample.local_index for sample in metadata] == [
+        assert metadata.local_indexes == [
             8,
             9,
             10,
@@ -242,7 +248,7 @@ class TestTransferQueueController:
             14,
             15,
         ]
-        storage_ids = [sample.storage_id for sample in metadata]
+        storage_ids = metadata.storage_ids
         assert len(set(storage_ids[: len(storage_ids) // 2])) == 1
 
     # TODO: Test case where multiple clients concurrently read datameta from a single controller,
