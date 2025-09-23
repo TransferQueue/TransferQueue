@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture(scope="session")
 def ray_setup():
+    import atexit
     ray.init(ignore_reinit_error=True, runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}})
+    atexit.register(ray.shutdown)
     yield
     ray.shutdown()
 
