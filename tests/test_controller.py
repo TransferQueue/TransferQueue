@@ -1,13 +1,21 @@
 import logging
 import math
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 import ray
 import torch
 
-from transfer_queue.controller import TQ_INIT_FIELD_NUM, TransferQueueController
-from transfer_queue.storage import TransferQueueStorageSimpleUnit
+parent_dir = Path(__file__).resolve().parent.parent
+sys.path.append(str(parent_dir))
+
+try:
+    from transfer_queue.controller import TQ_INIT_FIELD_NUM, TransferQueueController
+    from transfer_queue.storage import TransferQueueStorageSimpleUnit
+except ImportError as e:
+    raise ImportError(e)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -67,7 +75,6 @@ def setup_teardown_register_controller_info(setup_teardown_transfer_queue_contro
 
 
 class TestTransferQueueController:
-
     def test_build_index_storage_mapping(self):
         # Used as the offset for the global index to distinguish which global step the data corresponds to
         global_batch_size = 8
