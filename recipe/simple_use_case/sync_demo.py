@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 import ray
 import torch
 from omegaconf import OmegaConf
-from tensordict import TensorDict
+from tensordict import NonTensorData, TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
@@ -25,7 +26,9 @@ from transfer_queue.utils.utils import (  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-ray.init(runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}})
+os.environ["RAY_DEDUP_LOGS"] = "0"
+os.environ["RAY_DEBUG"] = "1"
+ray.init()
 
 
 def initialize_data_system(config):
@@ -99,7 +102,14 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
 
     output = generate_sequences(data["input_ids"])
 
-    output = TensorDict({"generate_sequences_ids": output}, batch_size=output.size(0))
+    output = TensorDict(
+        {
+            "generate_sequences_ids": output,
+            "non_tensor_data": torch.stack([NonTensorData("test_str") for _ in output.size(0)]),
+            "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in output.size(0)]),
+        },
+        batch_size=output.size(0),
+    )
 
     # 2. 根据data_meta将结果写回storage unit
     data_system_client.put(data=output, metadata=data_meta)

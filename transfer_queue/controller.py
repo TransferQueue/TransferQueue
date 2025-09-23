@@ -31,9 +31,8 @@ from transfer_queue.utils.zmq_utils import (
     get_free_port,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.INFO))
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 TQ_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_GET_METADATA_TIMEOUT", 300))
 TQ_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_GET_METADATA_CHECK_INTERVAL", 1))
