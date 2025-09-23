@@ -42,28 +42,37 @@ TQ_INIT_FIELD_NUM = os.environ.get("TQ_INIT_FIELD_NUM", 10)
 @ray.remote(num_cpus=1)
 class TransferQueueController:
     def __init__(
-        self,
-        num_storage_units: int,
-        global_batch_size: int,
-        num_global_batch: int = 1,
-        num_n_samples: int = 1,
+            self,
+            num_storage_units: int,
+            global_batch_size: int,
+            num_global_batch: int = 1,
+            num_n_samples: int = 1,
     ) -> None:
+        """Initialize the TransferQueueController.
+
+        Args:
+            num_storage_units: Number of storage units in the system
+            global_batch_size: Size of each global batch
+            num_global_batch: Number of global batches to maintain in storage
+            num_n_samples: For each prompt, sample n response
+        """
         self.controller_id = f"TQ_CONTROLLER_{uuid4()}"
 
-        self._init_zmq_socket()  # 通过ZMQ实现数据通信
+        self._init_zmq_socket()  # Initialize ZMQ sockets for data communication
 
         self.num_storage_units = num_storage_units
-        self.global_batch_size = global_batch_size  # 用作global index的offset，区分是哪个global step对应的数据
+        self.global_batch_size = global_batch_size  # Used as offset for global index to identify corresponding global step
         self.num_global_batch = num_global_batch
         self.num_n_samples = num_n_samples
         self.total_storage_size = self.global_batch_size * self.num_global_batch * self.num_n_samples
 
         self.data_production_status = torch.zeros(
             self.total_storage_size, TQ_INIT_FIELD_NUM, dtype=torch.int8
-        )  # 默认初始化20个字段，可动态扩展
-        # task_name -> consumption_status
+        )  # Initialize with default number of fields, dynamically extensible
+        # task_name -> consumption_status mapping
         self.data_consumption_status: dict[str, torch.Tensor] = {}
-        self.field_name_mapping: dict[str, int] = {}  # 一个data_field和data_status列index的映射表
+        self.field_name_mapping: dict[
+            str, int] = {}  # Mapping table for column indices between data_field and data_production_status tables
         # Per-sample dtype and shape storage: {global_index: {field_name: {'dtype': dtype, 'shape': shape}}}
         self.per_tensor_dtype_mapping: dict[int, dict[str, torch.dtype]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, torch.Size]] = {}
@@ -75,54 +84,97 @@ class TransferQueueController:
         self._start_process_request()
 
     def _get_consumer_status(self, task_name: str) -> torch.Tensor:
-        # 获取或创建指定消费者的消费状态张量
+        """Get or create consumption status tensor for a specific task.
+
+        Args:
+            task_name: Name of the consumer task
+
+        Returns:
+            Consumption status tensor for the specified task
+        """
+        # Retrieve or create the consumption state tensor for a specified consumer
         if task_name not in self.data_consumption_status:
-            # 为新消费者初始化状态
+            # Initialize state for a new consumer
             self.data_consumption_status[task_name] = torch.zeros(self.total_storage_size, dtype=torch.int8)
         return self.data_consumption_status[task_name]
 
     def _get_per_tensor_dtype(self, global_index: int, field_name: str) -> Optional[torch.dtype]:
-        """Get dtype for a specific sample and field."""
+        """Get dtype for a specific sample and field.
+
+        Args:
+            global_index: Global index of the sample
+            field_name: Name of the field
+
+        Returns:
+            dtype of the specified field for the sample, or None if not found
+        """
         return self.per_tensor_dtype_mapping.get(global_index, {}).get(field_name)
 
     def _get_per_tensor_shape(self, global_index: int, field_name: str) -> Optional[torch.Size]:
-        """Get shape for a specific sample and field."""
+        """Get shape for a specific sample and field.
+
+        Args:
+            global_index: Global index of the sample
+            field_name: Name of the field
+
+        Returns:
+            Shape of the specified field for the sample, or None if not found
+        """
         return self.per_tensor_shape_mapping.get(global_index, {}).get(field_name)
 
     def _step_to_global_index_range(self, global_step: int) -> tuple[int, int]:
+        """Convert global step to corresponding global index range.
+
+        Args:
+            global_step: The global step to convert
+
+        Returns:
+            Tuple of (start_index, end_index) for the given global step
+        """
         start_idx = (global_step % self.num_global_batch) * self.global_batch_size * self.num_n_samples
         end_idx = start_idx + self.global_batch_size * self.num_n_samples
 
         return start_idx, end_idx
 
     def generate_data_status_mask(
-        self, data_fields: list[str], global_step: int, task_name: str
+            self, data_fields: list[str], global_step: int, task_name: str
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        # 该函数在_get_meta中被调用，根据用户指定的字段和当前的step，生成一个mask矩阵
-        # 其中用户指定的字段为入参，当前step对应的行（即global index范围）按照顺序映射即可
-        # 该mask矩阵将self.data_production_status中，用户需要的行列选中，
-        # 同时将self.data_consumption_status反选，从而生成一个子矩阵，
-        # 以便在_get_meta的过程中支持自动向量化操作加速状态查询（直接按行sum判断是否等于shape[1]即可）
+        """
+        Generate mask matrix for filtering data based on field availability and consumption status.
 
-        # 检查所有请求的字段是否已注册
+        This function is called within _get_meta and generates a mask matrix based on
+        user-specified fields and the current step. The mask matrix selects the required
+        rows and columns from self.data_production_status while inversely selecting from
+        self.data_consumption_status to support automated vectorization.
+
+        Args:
+            data_fields: List of field names to include in the mask
+            global_step: Current global step for row selection
+            task_name: Name of the consumer task for consumption status
+
+        Returns:
+            Tuple of (row_mask, col_mask) tensors for filtering data status matrices
+        """
+
+        # Check if all requested fields are registered
         for col in data_fields:
             if col not in self.field_name_mapping:
-                # 如果有未注册的列，返回空掩码表示没有可用数据
+                # Return empty mask indicating no available data for unregistered columns
                 empty_row_mask = torch.zeros(self.data_production_status.shape[0], dtype=torch.bool)
                 empty_col_mask = torch.zeros(self.data_production_status.shape[1], dtype=torch.bool)
                 return empty_row_mask, empty_col_mask
 
-        # step映射到global index
+        # Map steps to global indices
         start_idx, end_idx = self._step_to_global_index_range(global_step)
         row_mask = torch.zeros(self.data_production_status.shape[0], dtype=torch.bool)
         row_mask[start_idx:end_idx] = True
 
-        # 按消费状态反选
+        # Invert selection based on consumption status
         consumer_status = self._get_consumer_status(task_name)
         unconsumed_mask = consumer_status == 0
         row_mask &= unconsumed_mask
 
-        # 选中指定的字段
+        # Select the specified fields
         col_mask = torch.zeros(self.data_production_status.shape[1], dtype=torch.bool)
         valid_fields = [self.field_name_mapping[col] for col in data_fields]
         if valid_fields:
@@ -131,21 +183,24 @@ class TransferQueueController:
         return row_mask, col_mask
 
     def _build_index_storage_mapping(self):
-        # 根据数据系统总空间与StorageUnit数量，划分每个Sample应该存储的位置，
-        # 并维护global index和每个存储内local index的映射
+        """
+        Build mappings between global indices and storage locations.
 
-        # 为每条样本分配存储节点；注意我们应该将每个GBS数据打散在不同存储节点上。
-        # 这里和generate_data_status_mask一样，默认按照顺序排列样本
+        Distributes samples across storage units based on total storage space and
+        maintains mappings between global index and local index within each storage.
+        """
+        # Assign each sample to a storage node; ensure GBS data is distributed across different storage nodes
+        # Samples are arranged sequentially, similar to generate_data_status_mask
         real_global_batch_size = self.global_batch_size * self.num_n_samples
         global_batch_per_storage_unit = math.ceil(real_global_batch_size / self.num_storage_units)
 
-        # 构建global index与storage unit之间的映射，用于查找每条数据对应的存储节点位置
+        # Build mapping between global index and storage unit for locating each data sample
         batch_storage_indices = np.repeat(np.arange(self.num_storage_units), global_batch_per_storage_unit)[
             :real_global_batch_size
         ]
         self._global_index_storage_rank_mapping = np.tile(batch_storage_indices, self.num_global_batch)
 
-        # 构建global index与每个storage unit之间local index之间的映射
+        # Build mapping between global index and local index within each storage unit
         indices = np.arange(self.total_storage_size)
         pos_in_batch = indices % real_global_batch_size
         g = indices // real_global_batch_size
@@ -153,36 +208,72 @@ class TransferQueueController:
         self.global_index_local_index_mapping = g * global_batch_per_storage_unit + pos_in_block
 
     def get_data_production_status(self) -> torch.Tensor:
+        """Get the current data production status matrix.
+
+        Returns:
+            Tensor representing production status of all data fields
+        """
         return self.data_production_status
 
     def get_field_name_mapping(self) -> dict[str, Any]:
+        """Get the field name to column index mapping.
+
+        Returns:
+            Dictionary mapping field names to their column indices
+        """
         return self.field_name_mapping
 
     def get_data_consumption_status(self) -> dict[str, torch.Tensor]:
+        """Get consumption status for all tasks.
+
+        Returns:
+            Dictionary mapping task names to their consumption status tensors
+        """
         return self.data_consumption_status
 
     def get_global_index_mapping(self):
+        """Get global index to storage mapping information.
+
+        Returns:
+            Tuple containing storage rank mapping and local index mapping
+        """
         return self._global_index_storage_rank_mapping, self.global_index_local_index_mapping
 
     def _get_metadata(
-        self,
-        data_fields: list[str],
-        batch_size: int,
-        mode: str = "fetch",
-        global_step=0,
-        task_name: str | None = None,
-        get_n_samples=False,
-        *args,
-        **kwargs,
+            self,
+            data_fields: list[str],
+            batch_size: int,
+            mode: str = "fetch",
+            global_step=0,
+            task_name: str | None = None,
+            get_n_samples=False,
+            *args,
+            **kwargs,
     ) -> BatchMeta:
         """
-        获取元数据，支持两种模式：
-        - mode="insert": 插入新行的元数据（不检查数据状态）
-        - mode="fetch": 获取已就绪的元数据（检查数据状态并采样）
-        - mode="force_fetch": 直接返回元数据（不检查数据状态）
+        Retrieve metadata with support for three modes.
+
+        Args:
+            data_fields: List of field names to include in metadata
+            batch_size: Number of samples to retrieve
+            mode: Operation mode - 'insert', 'fetch', or 'force_fetch'
+                - mode="insert": Insert metadata for new rows (without checking data status)
+                - mode="fetch": Retrieve metadata for ready data (check data status and sample)
+                - mode="force_fetch": Directly return metadata (without checking data status)
+            global_step: Global step for which to retrieve metadata
+            task_name: Name of the consumer task (required for fetch modes)
+            get_n_samples: Whether to retrieve n_samples as groups
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+
+        Returns:
+            BatchMeta object containing the requested metadata
+
+        Raises:
+            TimeoutError: If waiting for sufficient data times out in fetch mode
         """
         if mode == "insert":
-            # TODO 当前仅支持put整个gbs的数据，后续待扩展支持多次put到同一step
+            # TODO: Currently only supports putting entire GBS data, need to extend to support multiple puts to same step
             assert batch_size == self.global_batch_size
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             batch_global_indexes = list(range(start_idx, end_idx))
@@ -190,9 +281,9 @@ class TransferQueueController:
 
         assert task_name is not None
         if mode == "fetch":
-            # 向TransferQueue读数据时，查找当前batch内可被消费的样本，并打包返回BatchMeta
+            # Find consumable samples within current batch and package into BatchMeta when reading from TransferQueue
 
-            # 循环检查可被消费的数据
+            # Continuously check for consumable data
             start_time = time.time()
             while True:
                 ready_for_consume_idx = self._scan_data_status(data_fields, global_step, task_name, get_n_samples)
@@ -221,47 +312,56 @@ class TransferQueueController:
             not_consumed_idx = [i for i in range(start_idx, end_idx) if consumer_status[i] == 0]
             batch_global_indexes = random_sampler(not_consumed_idx, batch_size, get_n_samples, self.num_n_samples)
 
-        # 标记这批数据状态为已消费
+        # Mark this batch of data as consumed
         consumer_status = self._get_consumer_status(task_name)
         consumer_status[batch_global_indexes] = 1
-        # 打包为metadata
+        # Package into metadata
         metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
-        # 6. 如果是方式2，则将metadata进行缓存
-        # if dp_rank and dp_size and rank_id:
-        #     pass
         logger.debug(f"_get_metadata: {metadata}")
 
         return metadata
 
     def _scan_data_status(
-        self, data_fields: list[str], global_step: int, task_name: str, get_n_samples: bool
+            self, data_fields: list[str], global_step: int, task_name: str, get_n_samples: bool
     ) -> list[int]:
-        # 获取行和列掩码
+        """
+        Scan data status to find samples ready for consumption.
+
+        Args:
+            data_fields: List of field names to check
+            global_step: Global step to scan
+            task_name: Name of the consumer task
+            get_n_samples: Whether to return n_samples as groups
+
+        Returns:
+            List of global indices that are ready for consumption
+        """
+        # Get row and column masks
         row_mask, col_mask = self.generate_data_status_mask(data_fields, global_step, task_name)
         logger.debug(f"row_mask, col_mask: {row_mask, col_mask}")
 
         if not row_mask.any() or not col_mask.any():
             return []
 
-        # 提取关注的数据状态子集
+        # Extract subset of data status for relevant fields
         logger.debug(f"self.data_production_status: {self.data_production_status}")
         data_status_of_interest = self.data_production_status[:, col_mask]
         logger.debug(f"data_status_of_interest: {data_status_of_interest}")
 
-        # 使用torch.all向量化检查替代求和比较
+        # Use torch.all for vectorized check instead of sum comparison
         all_fields_ready = torch.all(data_status_of_interest, dim=1)
 
-        # 结合行掩码筛选符合条件的样本
+        # Filter samples that meet criteria combined with row mask
         ready_mask = all_fields_ready & row_mask
 
         if get_n_samples and self.num_n_samples > 1:
-            # 重塑为组视图并检查组完整性
+            # Reshape to group view and check group completeness
             group_all_ready = torch.all(ready_mask.view(-1, self.num_n_samples), dim=1)
 
-            # 获取完整就绪的组索引
+            # Get indices of fully ready groups
             ready_group_indices = group_all_ready.nonzero(as_tuple=False).flatten()
 
-            # 计算所有样本索引
+            # Calculate all sample indices
             sample_offset = torch.arange(self.num_n_samples)
             ready_for_consume_idx = (
                 (ready_group_indices.unsqueeze(1) * self.num_n_samples + sample_offset).flatten().tolist()
@@ -275,10 +375,24 @@ class TransferQueueController:
             return ready_for_consume_idx
 
     def _generate_batch_meta(
-        self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
+            self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
     ) -> BatchMeta:
-        # 根据给定的global index，查找self.global_index_local_index_mapping
-        # 和self._global_index_storage_id_mapping，确定对应存储节点的地址，并构建BatchMeta
+        """
+        Generate BatchMeta by resolving storage locations for given global indexes.
+
+        For each global index, looks up the corresponding storage node address using:
+        - global_index_local_index_mapping: Maps to local index within storage
+        - _global_index_storage_id_mapping: Maps to storage node identifier
+
+        Args:
+            global_step: Current global step
+            global_indexes: List of global indexes to process
+            data_fields: List of data field names
+            mode: Operation mode ('fetch', 'insert', or 'force_fetch')
+
+        Returns:
+            BatchMeta object containing sample metadata with resolved storage locations
+        """
         global_arr = np.array(global_indexes)
         storage_ids = self.global_index_storage_id_mapping[global_arr]
         local_indexes = self.global_index_local_index_mapping[global_arr]
@@ -286,7 +400,7 @@ class TransferQueueController:
         samples = []
 
         # Create samples from the flattened BatchMeta data
-        # TODO: 待优化
+        # TODO: Optimize this
         for i, global_index in enumerate(global_indexes):
             local_index = local_indexes[i]
             storage_id = storage_ids[i]
@@ -333,13 +447,20 @@ class TransferQueueController:
         return BatchMeta(samples=samples)
 
     def _update_production_status(self, indexes: list[int], fields: list[str]) -> None:
-        # TODO replace the self.data_production_status == 0 or ==1 operation by using ProductionStatus
-        # 更新数据生产状态矩阵
+        """
+        Update production status for specified indexes and fields.
+
+        Args:
+            indexes: List of global indexes to update
+            fields: List of field names to update
+        """
+        # TODO: Replace self.data_production_status == 0 or ==1 operations with ProductionStatus enum
+        # Update data production status matrix
         new_fields = [field for field in fields if field not in self.field_name_mapping]
         if new_fields:
             needed_fields = len(new_fields)
             current_fields = self.data_production_status.shape[1]
-            # 扩容数据状态矩阵
+            # Expand data status matrix if needed
             if len(self.field_name_mapping) + needed_fields > current_fields:
                 add_fields = max(TQ_INIT_FIELD_NUM, needed_fields + 1)
                 new_matrix = torch.zeros((self.total_storage_size, add_fields), dtype=torch.int8)
@@ -353,11 +474,11 @@ class TransferQueueController:
         ] = 1
 
     def _update_field_info(
-        self,
-        fields: list[str],
-        per_tensor_dtypes: dict[int, dict[str, Any]],
-        per_tensor_shapes: dict[int, dict[str, Any]],
-        global_indexes: list[int],
+            self,
+            fields: list[str],
+            per_tensor_dtypes: dict[int, dict[str, Any]],
+            per_tensor_shapes: dict[int, dict[str, Any]],
+            global_indexes: list[int],
     ) -> None:
         """
         Store per-tensor dtype and shape information.
@@ -381,7 +502,14 @@ class TransferQueueController:
                     self.per_tensor_shape_mapping[global_idx][field] = per_tensor_shapes[global_idx][field]
 
     def _init_zmq_socket(self):
-        # 建立3个ZMQ服务端口，分别用于 ①注册发现 ② 接收Client的数据读写请求 ③ 接收Storage发送的状态更新信号
+        """
+        Initialize ZMQ sockets for communication.
+
+        Sets up three ZMQ service ports for:
+        1. Receiving handshake requests from storage
+        2. Handling client data read/write requests
+        3. Receiving status update signals from storage
+        """
         self.zmq_context = zmq.Context()
 
         self._node_ip = get_node_ip_address()
@@ -419,9 +547,12 @@ class TransferQueueController:
         )
 
     def _wait_connection(self):
-        # 等待所有存储实例握手;client无需握手以支持动态扩缩容
-        # 参考zmq_communication.py中的实现
-        # TODO(zjj): 考虑是否需要重传（假设存在Storage没有收到ACK的情况）
+        """Wait for all storage instances to complete handshake.
+
+        Clients don't need handshake to support dynamic scaling. Continuously
+        listens for handshake messages until all expected storage units connect.
+        """
+        # TODO(zjj): Consider if retransmission is needed (assuming cases where Storage doesn't receive ACK)
         connected_storage_units = set()
         while len(connected_storage_units) < self.num_storage_units:
             identity, serialized_msg = self.handshake_socket.recv_multipart()
@@ -434,13 +565,14 @@ class TransferQueueController:
                     body={},
                 ).serialize()
                 self.handshake_socket.send_multipart([identity, response_msg])
-                logger.info("Controller send handshake ack successful!")
+                logger.info("Controller sent handshake ack successfully!")
         self.global_index_storage_id_mapping = np.array(list(connected_storage_units))[
             self._global_index_storage_rank_mapping
         ]
         self.handshake_done.set()
 
     def _start_process_handshake(self):
+        """Start the handshake process thread."""
         self.handshake_done = threading.Event()
         self.wait_connection_thread = Thread(
             target=self._wait_connection, name="TransferQueueControllerWaitConnectionThread", daemon=True
@@ -448,28 +580,34 @@ class TransferQueueController:
         self.wait_connection_thread.start()
 
     def _start_process_update_data_status(self):
+        """Start the data status update processing thread."""
         self.process_update_data_status_thread = Thread(
             target=self._update_data_status, name="TransferQueueControllerProcessUpdateDataStatusThread", daemon=True
         )
         self.process_update_data_status_thread.start()
 
     def _start_process_request(self):
+        """Start the request processing thread."""
         self.process_request_thread = Thread(
             target=self._process_request, name="TransferQueueControllerProcessRequestThread", daemon=True
         )
         self.process_request_thread.start()
 
     def _process_request(self):
-        # 包含_get_meta、查询当前iteration是否消费完毕等
+        """Main request processing loop.
+
+        Handles various request types including metadata retrieval,
+        consumption status checks, and clear operations.
+        """
         self.handshake_done.wait()
         while True:
-            # ROUTER套接字接收多部分消息
+            # ROUTER socket receives multi-part messages
             identity, serialized_msg = self.request_handle_socket.recv_multipart()
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.GET_META:
                 params = request_msg.body
-                logger.info("Controller prepare get metadata...")
+                logger.info("Controller preparing to get metadata...")
                 metadata = self._get_metadata(
                     data_fields=params["data_fields"],
                     batch_size=params["batch_size"],
@@ -508,7 +646,7 @@ class TransferQueueController:
                     body={"message": f"Clear operation completed by controller {self.controller_id}"},
                 )
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
-                # 消费状态检查
+                # Check consumption status
                 params = request_msg.body
                 global_step = params["global_step"]
 
@@ -517,7 +655,7 @@ class TransferQueueController:
                 batch_status = consumer_status[start_idx:end_idx]
                 consumed = torch.all(batch_status == 1).item()
 
-                # 构建响应消息
+                # Build response message
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.CONSUMPTION_RESPONSE,
                     sender_id=self.controller_id,
@@ -528,16 +666,21 @@ class TransferQueueController:
                     },
                 )
             self.request_handle_socket.send_multipart([identity, response_msg.serialize()])
-            logger.debug("Controller request_handle_socket send_multipart successful!")
+            logger.debug("Controller request_handle_socket sent multipart successfully!")
 
     def _update_data_status(self):
-        # 用于接受来自storage的数据状态更新信息
+        """Process data status update messages from storage units.
+
+        Continuously listens for data update notifications and updates
+        internal production status and field information accordingly.
+        """
+        # Receive data status update information from storage
         while True:
-            logger.debug("Prepare _update_data_status...")
+            logger.debug("Preparing _update_data_status...")
             identity, serialized_msg = self.data_status_update_socket.recv_multipart()
-            logger.debug("Controller recv update_data_status request!")
+            logger.debug("Controller received update_data_status request!")
             request_msg = ZMQMessage.deserialize(serialized_msg)
-            logger.debug(f"[{self.controller_id}]: Controller recv update_data_status request_msg: {request_msg}")
+            logger.debug(f"[{self.controller_id}]: Controller received update_data_status request_msg: {request_msg}")
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
                 message_data = request_msg.body
@@ -546,13 +689,13 @@ class TransferQueueController:
                 global_indexes = message_data.get("global_indexes", [])
                 per_tensor_dtypes = message_data.get("dtypes", {})  # Now a dict of lists
                 per_tensor_shapes = message_data.get("shapes", {})  # Now a dict of lists
-                # 更新数据生产状态
+                # Update data production status
                 logger.debug(f"global_indexes, fields: {global_indexes, fields}")
                 self._update_production_status(global_indexes, fields)
                 self._update_field_info(fields, per_tensor_dtypes, per_tensor_shapes, global_indexes)
-                logger.info("Controller update production status successful!")
+                logger.info("Controller updated production status successfully!")
 
-                # 发送确认响应
+                # Send acknowledgment response
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ACK,
                     sender_id=self.controller_id,
@@ -562,13 +705,13 @@ class TransferQueueController:
                     },
                 )
                 self.data_status_update_socket.send_multipart([identity, response_msg.serialize()])
-                logger.info("Controller send DATA_UPDATE_ACK successful!")
+                logger.info("Controller sent DATA_UPDATE_ACK successfully!")
             elif request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE_ERROR:
-                # 处理数据更新错误
+                # Handle data update errors
                 error_msg = request_msg.body.get("message", "Unknown error")
                 print(f"Data update error from storage: {error_msg}")
 
-                # 发送错误确认响应
+                # Send error acknowledgment response
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ACK,
                     sender_id=self.controller_id,
@@ -580,11 +723,22 @@ class TransferQueueController:
                 self.data_status_update_socket.send_multipart([identity, response_msg.serialize()])
 
     def get_zmq_server_info(self) -> ZMQServerInfo:
+        """Get ZMQ server connection information.
+
+        Returns:
+            ZMQServerInfo object containing connection details
+        """
         return self.zmq_server_info
 
     def clear(self, global_step: int):
-        # 清空对应global batch的数据，当前仅实现单个gbs
+        """Clear data for a specific global batch.
 
+        Resets production and consumption status for all data in the specified
+        global step. Currently only supports clearing single GBS at a time.
+
+        Args:
+            global_step: The global step to clear data for
+        """
         start_idx, end_idx = self._step_to_global_index_range(global_step)
 
         self.data_production_status[start_idx:end_idx, :] = 0
