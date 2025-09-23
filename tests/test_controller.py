@@ -214,7 +214,7 @@ class TestTransferQueueController:
                 data_fields=data_fields, batch_size=global_batch_size, global_step=global_step, mode="insert"
             )
         )
-        assert [sample.global_index for sample in metadata] == [
+        assert [sample.global_indexes for sample in metadata] == [
             16,
             17,
             18,
