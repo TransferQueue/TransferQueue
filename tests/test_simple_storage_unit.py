@@ -347,6 +347,7 @@ def test_performance_basic(storage_setup):
 
     client.close()
 
+
 def test_put_get_nested_tensor_single_client(storage_setup):
     """Test basic put and get operations with a single client using TensorDict and nested tensors."""
     _, put_get_address, _ = storage_setup
@@ -389,6 +390,7 @@ def test_put_get_nested_tensor_single_client(storage_setup):
     torch.testing.assert_close(retrieved_data["attention_mask"][1], torch.tensor([1, 1]))
 
     client.close()
+
 
 def test_put_get_nested_nontensor_single_client(storage_setup):
     """Test basic put and get operations with a single client using non-tensor data (strings)."""
