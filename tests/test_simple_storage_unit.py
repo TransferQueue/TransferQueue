@@ -346,3 +346,89 @@ def test_performance_basic(storage_setup):
     assert avg_get_latency < 5000, f"Avg GET latency {avg_get_latency}ms exceeds threshold"
 
     client.close()
+
+
+def test_put_get_nested_tensor_single_client(storage_setup):
+    """Test basic put and get operations with a single client using TensorDict and nested tensors."""
+    _, put_get_address, _ = storage_setup
+
+    client = MockClient(put_get_address)
+
+    # PUT data
+    global_indexes = [0, 1, 2]
+    local_indexes = [0, 1, 2]
+
+    field_data = TensorDict(
+        {
+            "variable_length_sequences": [
+                torch.tensor([-0.5, -1.2, -0.8]),
+                torch.tensor([-0.3, -1.5, -2.1, -0.9]),
+                torch.tensor([-1.1, -0.7]),
+            ],
+            "attention_mask": [torch.tensor([1, 1, 1]), torch.tensor([1, 1, 1, 1]), torch.tensor([1, 1])],
+        },
+        batch_size=[],
+    )
+
+    response = client.send_put(0, global_indexes, local_indexes, field_data)
+    assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
+
+    # GET data
+    response = client.send_get(0, [0, 2], ["variable_length_sequences", "attention_mask"])
+    assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
+
+    retrieved_data = response.body["data"]
+    assert "variable_length_sequences" in retrieved_data
+    assert "attention_mask" in retrieved_data
+    assert retrieved_data["variable_length_sequences"].size(0) == 2
+    assert retrieved_data["attention_mask"].size(0) == 2
+
+    # Verify data correctness
+    torch.testing.assert_close(retrieved_data["variable_length_sequences"][0], torch.tensor([-0.5, -1.2, -0.8]))
+    torch.testing.assert_close(retrieved_data["variable_length_sequences"][1], torch.tensor([-1.1, -0.7]))
+    torch.testing.assert_close(retrieved_data["attention_mask"][0], torch.tensor([1, 1, 1]))
+    torch.testing.assert_close(retrieved_data["attention_mask"][1], torch.tensor([1, 1]))
+
+    client.close()
+
+
+def test_put_get_nested_nontensor_single_client(storage_setup):
+    """Test basic put and get operations with a single client using non-tensor data (strings)."""
+    _, put_get_address, _ = storage_setup
+
+    client = MockClient(put_get_address)
+
+    # PUT data
+    global_indexes = [0, 1, 2]
+    local_indexes = [0, 1, 2]
+    field_data = TensorDict(
+        {
+            "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
+            "response_text": ["Hi there!", "This is the response to the longer sentence", "Test response"],
+        },
+        batch_size=[],
+    )
+
+    response = client.send_put(0, global_indexes, local_indexes, field_data)
+    assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
+
+    # GET data
+    response = client.send_get(0, [0, 1, 2], ["prompt_text", "response_text"])
+    assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
+
+    retrieved_data = response.body["data"]
+    assert "prompt_text" in retrieved_data
+    assert "response_text" in retrieved_data
+
+    # Verify data correctness
+    assert isinstance(retrieved_data["prompt_text"][0], str)
+    assert isinstance(retrieved_data["response_text"][0], str)
+
+    assert retrieved_data["prompt_text"][0] == "Hello world!"
+    assert retrieved_data["prompt_text"][1] == "This is a longer sentence for testing"
+    assert retrieved_data["prompt_text"][2] == "Test case"
+    assert retrieved_data["response_text"][0] == "Hi there!"
+    assert retrieved_data["response_text"][1] == "This is the response to the longer sentence"
+    assert retrieved_data["response_text"][2] == "Test response"
+
+    client.close()
