@@ -1,6 +1,6 @@
 import dataclasses
 from dataclasses import dataclass
-from typing import Any, Iterator, Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -95,25 +95,40 @@ class SampleMeta:
         field = self.fields.get(field_name)
         return field.is_ready if field else False
 
-    def add_fields(self, names: list[str], dtypes: list[torch.dtype], shapes: list[torch.Size]) -> None:
+    def add_fields(self, names: list[str], **kwargs) -> "SampleMeta":
         """
-        Add new fields to this sample. New fields will be initialized with default FieldMeta.
+        Add new fields to this sample. New fields will be initialized with given dtype and shape (if provided).
         This modifies the sample in-place to include the new fields.
         """
-        # TODO: support nested tensors & non tensors, and use **kwargs to pass more field meta info
-        for field_name, dtype, shape in zip(names, dtypes, shapes, strict=False):
+        dtypes = kwargs.get("dtypes", [])
+        shapes = kwargs.get("shapes", [])
+
+        if not dtypes:
+            dtypes = [None] * len(names)
+        if not shapes:
+            shapes = [None] * len(names)
+
+        if len(dtypes) != len(names):
+            raise ValueError("Length of dtypes must match length of names.")
+        if len(shapes) != len(names):
+            raise ValueError("Length of shapes must match length of names.")
+
+        for field_name, dtype, shape in zip(names, dtypes, shapes, strict=True):
             assert field_name not in self.fields, f"Field '{field_name}' already exists in SampleMeta."
             self.fields[field_name] = FieldMeta(name=field_name, dtype=dtype, shape=shape)
         # Update is_ready property
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
+        return self
 
     def union(self, other: "SampleMeta", validate: bool = True) -> "SampleMeta":
         """
         Create a union of this sample's fields with another sample's fields.
         Assume both samples have the same global index, and if fields overlap, they must be identical.
+
         Args:
             other: Another SampleMeta to union with
             validate: Whether to validate union conditions
+
         Returns:
             New SampleMeta with unioned fields (None if validation fails)
         """
@@ -146,14 +161,7 @@ class SampleMeta:
 class StorageMetaGroup:
     """
     Represents a group of samples stored in the same storage unit.
-
-    This is an optimized implementation that only stores SampleMeta objects,
-    eliminating the need for separate global_indexes, local_indexes, and field_names
-    fields since all this information is already available in the SampleMeta objects.
-
-    This approach reduces memory usage and improves performance by avoiding data
-    duplication while providing all necessary functionality for AsyncTransferQueueClient
-    operations.
+    Used to organize samples by their storage_id for efficient client operations.
     """
 
     storage_id: str
@@ -220,11 +228,6 @@ class StorageMetaGroup:
 class BatchMeta:
     """
     Records the metadata of a batch of data samples.
-
-    Supports iteration and indexing:
-    - Iteration: for sample in batch:
-    - Length: count = len(batch)
-    - Indexing: first_sample = batch[0]
     """
 
     samples: list[SampleMeta]
@@ -246,7 +249,7 @@ class BatchMeta:
             object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
             # assume all samples have the same fields.
-            object.__setattr__(self, "_fields", self.samples[0].field_names)
+            object.__setattr__(self, "_fields", sorted(self.samples[0].field_names))
 
             # Initialize storage groups for efficient client operations
             storage_meta_groups = self._build_storage_meta_groups()
@@ -351,18 +354,14 @@ class BatchMeta:
         Add new fields to all samples in this batch. New fields will be initialized with default FieldMeta.
         This modifies each sample in-place to include the new fields.
         """
+        # TODO: support nested tensors & non tensors
         for sample in self.samples:
             sample.add_fields(names, **kwargs)
 
         # Update batch-level fields cache
         updated_fields = set(self.fields)
         updated_fields.update(names)
-        object.__setattr__(self, "_fields", list(updated_fields))
-
-    def __iter__(self) -> Iterator[SampleMeta]:
-        """Iterate over samples in this batch."""
-        # TODO：考虑返回SampleMeta是否合适？还是返回一个只有一个SampleMeta的BatchMeta
-        return iter(self.samples)
+        object.__setattr__(self, "_fields", sorted(list(updated_fields)))
 
     def __len__(self) -> int:
         """Return the number of samples in this batch."""
@@ -384,7 +383,6 @@ class BatchMeta:
 
         Return:
             List of smaller BatchMeta chunks
-
         """
         chunk_list = []
         n = len(self.samples)
@@ -414,7 +412,10 @@ class BatchMeta:
             validate: Whether to validate concatenation conditions
 
         Returns:
-            Concatenated BatchMeta (None if validation fails)
+            Concatenated BatchMeta
+
+        Raises:
+            ValueError: If validation fails (e.g., field names do not match)
         """
         if not data:
             return None
@@ -430,24 +431,22 @@ class BatchMeta:
         all_samples = []
         for chunk in data:
             all_samples.extend(chunk.samples)
-
-        # Combine extra info (later chunks overwrite earlier ones on key conflicts)
-        all_extra_info = {}
-        for chunk in data:
-            all_extra_info.update(chunk.extra_info)
-
-        # TODO: can return extra_info=data[0].extra_info directly
-        return BatchMeta(samples=all_samples, extra_info=all_extra_info)
+        return BatchMeta(samples=all_samples, extra_info=data[0].extra_info)
 
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
         """
         Create a union of this batch's fields with another batch's fields.
         Assume both batches have the same global indices.
+
         Args:
             other: Another BatchMeta to union with
             validate: Whether to validate union conditions
+
         Returns:
-            New BatchMeta with unioned fields (None if validation fails)
+            New BatchMeta with unioned fields
+
+        Raises:
+            ValueError: If validation fails (e.g., batch sizes or global indexes do not match
         """
         if validate:
             if self.size != other.size:
