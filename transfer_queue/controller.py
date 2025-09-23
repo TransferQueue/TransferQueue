@@ -35,8 +35,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.INFO))
 
-TQ_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_GET_METADATA_TIMEOUT", 300))
-TQ_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_GET_METADATA_CHECK_INTERVAL", 1))
+TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 300))
+TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))
 TQ_INIT_FIELD_NUM = os.environ.get("TQ_INIT_FIELD_NUM", 10)
 
 
@@ -201,7 +201,7 @@ class TransferQueueController:
                 if len(ready_for_consume_idx) >= batch_size:
                     break
 
-                if time.time() - start_time > TQ_GET_METADATA_TIMEOUT:
+                if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
                     raise TimeoutError(
                         f"Timeout while waiting for sufficient data. "
                         f"Required: {batch_size}, Available: {len(ready_for_consume_idx)}"
@@ -209,9 +209,9 @@ class TransferQueueController:
 
                 logger.warning(
                     f"Insufficient data available. Required: {batch_size}, "
-                    f"Available: {len(ready_for_consume_idx)}. Retrying in {TQ_GET_METADATA_CHECK_INTERVAL}s..."
+                    f"Available: {len(ready_for_consume_idx)}. Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
                 )
-                time.sleep(TQ_GET_METADATA_CHECK_INTERVAL)
+                time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
             batch_global_indexes = random_sampler(ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples)
