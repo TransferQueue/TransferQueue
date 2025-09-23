@@ -75,7 +75,7 @@ class TransferQueueController:
         self.data_consumption_status: dict[str, torch.Tensor] = {}
         self.field_name_mapping: dict[
             str, int
-        ] = {}  # Mapping table for column indices between data_field and data_production_status tables
+        ] = {}  # Mapping table from field_name to the column indices in self.data_production_status tables
         # Per-sample dtype and shape storage: {global_index: {field_name: {'dtype': dtype, 'shape': shape}}}
         self.per_tensor_dtype_mapping: dict[int, dict[str, torch.dtype]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, torch.Size]] = {}
@@ -86,8 +86,11 @@ class TransferQueueController:
         self._start_process_update_data_status()
         self._start_process_request()
 
-    def _get_consumer_status(self, task_name: str) -> torch.Tensor:
-        """Get or create consumption status tensor for a specific task.
+    def _get_consumption_status(self, task_name: str) -> torch.Tensor:
+        """
+        Get or create the consumption status tensor for a specific task.
+        The consumption status is a binary, 1D tensor that records whether the corresponding sample has been consumed
+        by the task.
 
         Args:
             task_name: Name of the consumer task
@@ -173,7 +176,7 @@ class TransferQueueController:
         row_mask[start_idx:end_idx] = True
 
         # Invert selection based on consumption status
-        consumer_status = self._get_consumer_status(task_name)
+        consumer_status = self._get_consumption_status(task_name)
         unconsumed_mask = consumer_status == 0
         row_mask &= unconsumed_mask
 
@@ -192,7 +195,7 @@ class TransferQueueController:
         Distributes samples across storage units based on total storage space and
         maintains mappings between global index and local index within each storage.
         """
-        # Assign each sample to a storage node; ensure GBS data is distributed across different storage nodes
+        # Assign each sample to a storage node. Here we scatter the samples in each GBS to different storage nodes
         # Samples are arranged sequentially, similar to generate_data_status_mask
         real_global_batch_size = self.global_batch_size * self.num_n_samples
         global_batch_per_storage_unit = math.ceil(real_global_batch_size / self.num_storage_units)
@@ -211,7 +214,9 @@ class TransferQueueController:
         self.global_index_local_index_mapping = g * global_batch_per_storage_unit + pos_in_block
 
     def get_data_production_status(self) -> torch.Tensor:
-        """Get the current data production status matrix.
+        """
+        Get the current data production status matrix. The data production status is a 2D matrix that records whether
+        the corresponding data is ready for each field of each sample.
 
         Returns:
             Tensor representing production status of all data fields
@@ -285,9 +290,8 @@ class TransferQueueController:
 
         assert task_name is not None
         if mode == "fetch":
-            # Find consumable samples within current batch and package into BatchMeta when reading from TransferQueue
+            # Find consumable samples within current batch and package into BatchMeta when reading
 
-            # Continuously check for consumable data
             start_time = time.time()
             while True:
                 ready_for_consume_idx = self._scan_data_status(data_fields, global_step, task_name, get_n_samples)
@@ -312,12 +316,12 @@ class TransferQueueController:
             batch_global_indexes = random_sampler(ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples)
         elif mode == "force_fetch":
             start_idx, end_idx = self._step_to_global_index_range(global_step)
-            consumer_status = self._get_consumer_status(task_name)
+            consumer_status = self._get_consumption_status(task_name)
             not_consumed_idx = [i for i in range(start_idx, end_idx) if consumer_status[i] == 0]
             batch_global_indexes = random_sampler(not_consumed_idx, batch_size, get_n_samples, self.num_n_samples)
 
         # Mark this batch of data as consumed
-        consumer_status = self._get_consumer_status(task_name)
+        consumer_status = self._get_consumption_status(task_name)
         consumer_status[batch_global_indexes] = 1
         # Package into metadata
         metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
@@ -654,7 +658,7 @@ class TransferQueueController:
                 params = request_msg.body
                 global_step = params["global_step"]
 
-                consumer_status = self._get_consumer_status(params["task_name"])
+                consumer_status = self._get_consumption_status(params["task_name"])
                 start_idx, end_idx = self._step_to_global_index_range(global_step)
                 batch_status = consumer_status[start_idx:end_idx]
                 consumed = torch.all(batch_status == 1).item()
