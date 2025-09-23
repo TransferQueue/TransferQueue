@@ -574,7 +574,7 @@ class TransferQueueController:
                 ).serialize()
                 self.handshake_socket.send_multipart([identity, response_msg])
                 logger.info("Controller sent handshake ack successfully!")
-        self.global_index_storage_id_mapping = np.array(list(connected_storage_units))[
+        self.global_index_storage_id_mapping = np.array(sorted(list(connected_storage_units)))[
             self._global_index_storage_rank_mapping
         ]
         self.handshake_done.set()

@@ -31,10 +31,13 @@ class ProductionStatus(ExplicitEnum):
 
 
 def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
-    """Create a placement group for Ray actors.
+    """
+    Create a placement group with SPREAD strategy for Ray actors.
+
     Args:
         num_ray_actors (int): Number of Ray actors to create.
         num_cpus_per_actor (int): Number of CPUs to allocate per actor.
+
     Returns:
         placement_group: The created placement group.
     """
