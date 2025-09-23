@@ -39,3 +39,7 @@ jobs:
     - name: Test with pytest
       run: |
         pytest
+    - name: Run demo
+      run: |
+        python recipe/simple_use_case/async_demo.py
+        python recipe/simple_use_case/sync_demo.py
