@@ -27,9 +27,8 @@ from transfer_queue.utils.zmq_utils import (
     create_zmq_socket,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.INFO))
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 
 class AsyncTransferQueueClient:

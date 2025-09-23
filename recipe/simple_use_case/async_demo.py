@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import ray
 import torch
 from omegaconf import OmegaConf
-from tensordict import TensorDict
+from tensordict import NonTensorData, TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
@@ -28,7 +29,9 @@ from transfer_queue.utils.utils import (  # noqa: E402
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-ray.init(runtime_env={"env_vars": {"RAY_DEBUG": "1", "RAY_DEDUP_LOGS": "0"}})
+os.environ["RAY_DEDUP_LOGS"] = "0"
+os.environ["RAY_DEBUG"] = "1"
+ray.init()
 
 
 def compute_old_log_prob(data1, data2):
@@ -49,7 +52,14 @@ class ActorRolloutRefWorker:
 
         output = generate_sequences(data["input_ids"])
 
-        output = TensorDict({"generate_sequences_ids": output}, batch_size=output.size(0))
+        output = TensorDict(
+            {
+                "generate_sequences_ids": output,
+                "non_tensor_data": torch.stack([NonTensorData("test_str") for _ in range(output.size(0))]),
+                "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(output.size(0))]),
+            },
+            batch_size=output.size(0),
+        )
 
         # 2. 根据data_meta将结果写回storage unit
         asyncio.run(data_system_client.async_put(data=output, metadata=data_meta))
@@ -88,7 +98,14 @@ class AsyncvLLMServer:
         data += 1
         await asyncio.sleep(3)
 
-        output = TensorDict({"generate_sequences_ids": data}, batch_size=data.size(0))
+        output = TensorDict(
+            {
+                "generate_sequences_ids": data,
+                "non_tensor_data": torch.stack([NonTensorData("test_str") for _ in range(data.size(0))]),
+                "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(data.size(0))]),
+            },
+            batch_size=data.size(0),
+        )
 
         await self.data_system_client.async_put(data=output, metadata=data_meta)
         logger.info("demo Async Server put data to storages done")
@@ -253,6 +270,9 @@ class Trainer:
 
 
 if __name__ == "__main__":
+    # NOTE: you may choose to set async_rollout_mode=True to test the async rollout mode that mimics
+    # AgentLoopManager in verl
+
     config_str = """
       global_batch_size: 6
       num_global_batch: 1 
@@ -266,3 +286,5 @@ if __name__ == "__main__":
 
     trainer = Trainer(dict_conf)
     trainer.fit()
+
+    ray.shutdown()

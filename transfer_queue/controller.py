@@ -31,9 +31,8 @@ from transfer_queue.utils.zmq_utils import (
     get_free_port,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.INFO))
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 300))
 TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))
@@ -209,7 +208,8 @@ class TransferQueueController:
 
                 logger.warning(
                     f"Insufficient data available. Required: {batch_size}, "
-                    f"Available: {len(ready_for_consume_idx)}. Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
+                    f"Available: {len(ready_for_consume_idx)}. Retrying in "
+                    f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
                 )
                 time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")

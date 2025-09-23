@@ -38,7 +38,8 @@ class FieldMeta:
 
     def equals(self, other: "FieldMeta") -> bool:
         """Check if two FieldMeta are equal (based on name, dtype, shape)"""
-        return self.name == other.name and self.dtype == other.dtype and self.shape == other.shape
+        # TODO: support nested tensors & non tensors
+        return self.name == other.name  # and self.dtype == other.dtype and self.shape == other.shape
 
 
 @dataclass
@@ -99,6 +100,7 @@ class SampleMeta:
         Add new fields to this sample. New fields will be initialized with default FieldMeta.
         This modifies the sample in-place to include the new fields.
         """
+        # TODO: support nested tensors & non tensors, and use **kwargs to pass more field meta info
         for field_name, dtype, shape in zip(names, dtypes, shapes, strict=False):
             assert field_name not in self.fields, f"Field '{field_name}' already exists in SampleMeta."
             self.fields[field_name] = FieldMeta(name=field_name, dtype=dtype, shape=shape)

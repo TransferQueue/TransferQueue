@@ -86,6 +86,8 @@ def extract_field_info(tensor_dict: TensorDict) -> dict:
     field_info: dict[str, list] = {"names": [], "dtypes": [], "shapes": []}
     for key, value in tensor_dict.items():
         field_info["names"].append(key)
-        field_info["dtypes"].append(value.dtype)
-        field_info["shapes"].append(value.shape[1:])  # exclude batch dimension
+
+        # TODO: support nested tensors & non tensors
+        # field_info["dtypes"].append(value.dtype)
+        # field_info["shapes"].append(value.shape[1:])  # exclude batch dimension
     return field_info
