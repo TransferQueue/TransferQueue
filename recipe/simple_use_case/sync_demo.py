@@ -206,3 +206,5 @@ if __name__ == "__main__":
     dict_conf = OmegaConf.create(config_str)
 
     main(dict_conf)
+
+    ray.shutdown()

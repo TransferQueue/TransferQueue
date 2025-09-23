@@ -98,7 +98,14 @@ class AsyncvLLMServer:
         data += 1
         await asyncio.sleep(3)
 
-        output = TensorDict({"generate_sequences_ids": data}, batch_size=data.size(0))
+        output = TensorDict(
+            {
+                "generate_sequences_ids": data,
+                "non_tensor_data": torch.stack([NonTensorData("test_str") for _ in range(data.size(0))]),
+                "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(data.size(0))]),
+            },
+            batch_size=data.size(0),
+        )
 
         await self.data_system_client.async_put(data=output, metadata=data_meta)
         logger.info("demo Async Server put data to storages done")
@@ -263,6 +270,9 @@ class Trainer:
 
 
 if __name__ == "__main__":
+    # NOTE: you may choose to set async_rollout_mode=True to test the async rollout mode that mimics
+    # AgentLoopManager in verl
+
     config_str = """
       global_batch_size: 6
       num_global_batch: 1 
@@ -276,3 +286,5 @@ if __name__ == "__main__":
 
     trainer = Trainer(dict_conf)
     trainer.fit()
+
+    ray.shutdown()
