@@ -15,7 +15,7 @@ try:
     from transfer_queue.controller import TQ_INIT_FIELD_NUM, TransferQueueController
     from transfer_queue.storage import TransferQueueStorageSimpleUnit
 except ImportError as e:
-    raise ImportError(e)
+    raise ImportError from e
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
