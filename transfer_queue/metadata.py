@@ -431,7 +431,11 @@ class BatchMeta:
         all_samples = []
         for chunk in data:
             all_samples.extend(chunk.samples)
-        return BatchMeta(samples=all_samples, extra_info=data[0].extra_info)
+        # Merge all extra_info dictionaries from the chunks
+        merged_extra_info = {}
+        for chunk in data:
+            merged_extra_info.update(chunk.extra_info)
+        return BatchMeta(samples=all_samples, extra_info=merged_extra_info)
 
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
         """
