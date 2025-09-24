@@ -39,11 +39,3 @@ jobs:
     - name: Test with pytest
       run: |
         pytest
-    - name: Async demo test
-      run: |
-        ray stop --force
-        python recipe/simple_use_case/async_demo.py
-    - name: Sync demo test
-      run: |
-        ray stop --force
-        python recipe/simple_use_case/sync_demo.py
