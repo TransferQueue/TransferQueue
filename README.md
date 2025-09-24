@@ -56,7 +56,7 @@ For consumption status, we record the consumption records for each computational
 </p>
 
 
-> In the future, we plan to support **load-balancing** and **dynamic batching** capabilities in the control plane. Besides, we will support data management for disaggregated frameworks where each rank manages the data retrival by itself, rather than coordicated by a single controller.
+> In the future, we plan to support **load-balancing** and **dynamic batching** capabilities in the control plane. Besides, we will support data management for disaggregated frameworks where each rank manages the data retrieval by itself, rather than coordinated by a single controller.
 
 ### Data Plane: Distributed Data Storage
 
