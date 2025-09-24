@@ -57,7 +57,7 @@ class AsyncTransferQueueClient:
 
         for info in server_infos.values():
             if not isinstance(info, ZMQServerInfo):
-                raise ValueError(f"Invalid server info for {role} {id}")
+                raise ValueError(f"Invalid server info for {role} {info.id}")
 
             if info.id not in mapping:
                 mapping[info.id] = info
@@ -306,7 +306,7 @@ class AsyncTransferQueueClient:
             logger.info(f"[{self.client_id}]: get data response from storage unit {target_storage}: {response_msg}")
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:
-                # 返回该存储单元的数据和索引信息
+                # Return data and index information from this storage unit
                 su_data = response_msg.body["data"]
                 return global_indexes, fields, su_data
             else:
