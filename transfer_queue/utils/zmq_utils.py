@@ -16,13 +16,11 @@ from transfer_queue.utils.utils import (
 
 
 class ZMQRequestType(ExplicitEnum):
-    # TODO @jianjun: 添加注释，说明每个Request type可能对应的通信过程
-
-    # 握手相关
+    # HANDSHAKE
     HANDSHAKE = "HANDSHAKE"  # TransferQueueStorageUnit -> TransferQueueController
     HANDSHAKE_ACK = "HANDSHAKE_ACK"  # TransferQueueController  -> TransferQueueStorageUnit
 
-    # 数据操作相关
+    # DATA_OPERATION
     GET_DATA = "GET"
     PUT_DATA = "PUT"
     GET_DATA_RESPONSE = "GET_DATA_RESPONSE"
@@ -36,7 +34,7 @@ class ZMQRequestType(ExplicitEnum):
     GET_ERROR = "GET_ERROR"
     CLEAR_DATA_ERROR = "CLEAR_DATA_ERROR"
 
-    # 元数据相关
+    # META_OPERATION
     GET_META = "GET_META"
     GET_META_RESPONSE = "GET_META_RESPONSE"
     GET_CLEAR_META = "GET_CLEAR_META"
@@ -44,11 +42,11 @@ class ZMQRequestType(ExplicitEnum):
     CLEAR_META = "CLEAR_META"
     CLEAR_META_RESPONSE = "CLEAR_META_RESPONSE"
 
-    # 消费状态相关
+    # CHECK_CONSUMPTION
     CHECK_CONSUMPTION = "CHECK_CONSUMPTION"
     CONSUMPTION_RESPONSE = "CONSUMPTION_RESPONSE"
 
-    # 数据更新通知相关
+    # NOTIFY_DATA_UPDATE
     NOTIFY_DATA_UPDATE = "NOTIFY_DATA_UPDATE"
     NOTIFY_DATA_UPDATE_ACK = "NOTIFY_DATA_UPDATE_ACK"
     NOTIFY_DATA_UPDATE_ERROR = "NOTIFY_DATA_UPDATE_ERROR"
@@ -107,22 +105,20 @@ class ZMQMessage:
         )
 
     def serialize(self) -> bytes:
-        """使用pickle序列化ZMQMessage对象"""
+        """Using pickle to serialize ZMQMessage objects"""
         return pickle.dumps(self)
 
     @classmethod
     def deserialize(cls, data: bytes | list[bytes]):
-        """
-        使用pickle反序列化ZMQMessage
-        """
+        """Using pickle to deserialize ZMQMessage objects"""
         if isinstance(data, list):
-            # 处理多个字节流的情况，按顺序反序列化每个字节流
+            # Process multiple byte streams by deserializing each in sequence
             result = []
             for d in data:
                 result.append(pickle.loads(d))
             return result
         else:
-            # 单个字节流的情况
+            # Single byte stream case
             return pickle.loads(data)
 
 
