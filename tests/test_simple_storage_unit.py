@@ -432,3 +432,34 @@ def test_put_get_nested_nontensor_single_client(storage_setup):
     assert retrieved_data["response_text"][2] == "Test response"
 
     client.close()
+
+
+def test_put_get_single_item_single_client(storage_setup):
+    """Test put and get operations for a single item with a single client."""
+    _, put_get_address, _ = storage_setup
+
+    client = MockClient(put_get_address)
+
+    # PUT data
+    field_data = TensorDict(
+        {
+            "prompt_text": ["Hello world!"],
+            "attention_mask": [torch.tensor([1, 1, 1])],
+        },
+        batch_size=[],
+    )
+
+    response = client.send_put(0, [0], [0], field_data)
+    assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
+
+    # GET data
+    response = client.send_get(0, [0], ["prompt_text", "attention_mask"])
+    assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
+
+    retrieved_data = response.body["data"]
+    assert "prompt_text" in retrieved_data
+    assert "attention_mask" in retrieved_data
+
+    assert retrieved_data["prompt_text"][0] == "Hello world!"
+    assert retrieved_data["attention_mask"].shape == (1, 3)
+    torch.testing.assert_close(retrieved_data["attention_mask"][0], torch.tensor([1, 1, 1]))

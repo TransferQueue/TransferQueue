@@ -6,7 +6,7 @@ from threading import Thread
 import pytest
 import torch
 import zmq
-from tensordict import TensorDict
+from tensordict import NonTensorStack, TensorDict
 
 # Import your classes here
 parent_dir = Path(__file__).resolve().parent.parent
@@ -22,6 +22,21 @@ from transfer_queue.utils.zmq_utils import (  # noqa: E402
     ZMQMessage,
     ZMQRequestType,
     ZMQServerInfo,
+)
+
+TEST_DATA = TensorDict(
+    {
+        "log_probs": [torch.tensor([1.0, 2.0, 3.0]), torch.tensor([4.0, 5.0, 6.0]), torch.tensor([7.0, 8.0, 9.0])],
+        "variable_length_sequences": torch.nested.as_nested_tensor(
+            [
+                torch.tensor([-0.5, -1.2, -0.8]),
+                torch.tensor([-0.3, -1.5, -2.1, -0.9]),
+                torch.tensor([-1.1, -0.7]),
+            ]
+        ),
+        "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
+    },
+    batch_size=[3],
 )
 
 
@@ -190,10 +205,18 @@ class MockStorage:
         local_indexes = request_body.get("local_indexes", [])
         fields = request_body.get("fields", [])
 
-        # Retrieve the data (simulated with zeros)
-        result_data = TensorDict({field: torch.zeros(len(local_indexes)) for field in fields})
+        result: dict[str, list] = {}
+        for field in fields:
+            gathered_items = [TEST_DATA[field][i] for i in local_indexes]
 
-        return {"data": result_data}
+            if gathered_items:
+                all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
+                if all_tensors:
+                    result[field] = torch.nested.as_nested_tensor(gathered_items)
+                else:
+                    result[field] = NonTensorStack(*gathered_items)
+
+        return {"data": TensorDict(result)}
 
     def stop(self):
         self.running = False
@@ -248,24 +271,28 @@ def test_put_and_get_data(client_setup):
     """Test basic put and get operations"""
     client, _, _ = client_setup
 
-    # Create test data
-    test_data = TensorDict(
-        {"tokens": torch.randint(0, 100, (5, 128)), "labels": torch.randint(0, 100, (5, 128))}, batch_size=5
-    )
-
     # Test put operation
-    client.put(data=test_data, global_step=0)
+    client.put(data=TEST_DATA, global_step=0)
 
     # Get metadata for retrieving data
-    metadata = client.get_meta(data_fields=["tokens", "labels"], batch_size=5, global_step=0)
+    metadata = client.get_meta(
+        data_fields=["log_probs", "variable_length_sequences", "prompt_text"], batch_size=2, global_step=0
+    )
 
     # Test get operation
     result = client.get_data(metadata)
 
     # Verify result structure
-    assert "tokens" in result
-    assert "labels" in result
-    assert result.batch_size[0] == 5
+    assert "log_probs" in result
+    assert "variable_length_sequences" in result
+    assert "prompt_text" in result
+
+    torch.testing.assert_close(result["log_probs"][0], torch.tensor([1.0, 2.0, 3.0]))
+    torch.testing.assert_close(result["log_probs"][1], torch.tensor([4.0, 5.0, 6.0]))
+    torch.testing.assert_close(result["variable_length_sequences"][0], torch.tensor([-0.5, -1.2, -0.8]))
+    torch.testing.assert_close(result["variable_length_sequences"][1], torch.tensor([-0.3, -1.5, -2.1, -0.9]))
+    assert result["prompt_text"][0] == "Hello world!"
+    assert result["prompt_text"][1] == "This is a longer sentence for testing"
 
 
 def test_get_meta(client_setup):
@@ -338,6 +365,6 @@ def test_put_without_required_params(client_setup):
     # Create test data
     test_data = TensorDict({"tokens": torch.randint(0, 100, (5, 128))}, batch_size=5)
 
-    # Test put without data_fields and global_step (should fail)
+    # Test put without global_step (should fail)
     with pytest.raises(AssertionError):
         client.put(data=test_data)
