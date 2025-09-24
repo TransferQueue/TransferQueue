@@ -46,7 +46,7 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 
 ### Control Plane: Panoramic Data Management  
 
-In the control plane, `TransferQueueController` track the **production status** and **consumption status** of each training sample as metadata. When all the required data fields are ready (i.e., writen to the `TransferQueueStorage`), we know that this data sample can be consumed by downstream tasks. 
+In the control plane, `TransferQueueController` tracks the **production status** and **consumption status** of each training sample as metadata. When all the required data fields are ready (i.e., written to the `TransferQueueStorage`), we know that this data sample can be consumed by downstream tasks. 
 
 For consumption status, we record the consumption records for each computational task (e.g., `generate_sequences`, `compute_log_prob`, etc.). Therefore, even different computation tasks require the same data field, they can consume the data independently without interfering with each other.
 
