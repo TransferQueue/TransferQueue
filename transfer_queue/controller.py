@@ -36,7 +36,7 @@ logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 300))
 TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))
-TQ_INIT_FIELD_NUM = os.environ.get("TQ_INIT_FIELD_NUM", 10)
+TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
 
 
 @ray.remote(num_cpus=1)
@@ -251,8 +251,8 @@ class TransferQueueController:
         self,
         data_fields: list[str],
         batch_size: int,
+        global_step: int,
         mode: str = "fetch",
-        global_step=0,
         task_name: str | None = None,
         get_n_samples=False,
         *args,
@@ -264,11 +264,11 @@ class TransferQueueController:
         Args:
             data_fields: List of field names to include in metadata
             batch_size: Number of samples to retrieve
+            global_step: Global step for which to retrieve metadata
             mode: Operation mode - 'insert', 'fetch', or 'force_fetch'
                 - mode="insert": Insert metadata for new rows (without checking data status)
                 - mode="fetch": Retrieve metadata for ready data (check data status and sample)
                 - mode="force_fetch": Directly return metadata (without checking data status)
-            global_step: Global step for which to retrieve metadata
             task_name: Name of the consumer task (required for fetch modes)
             get_n_samples: Whether to retrieve n_samples as groups
             *args: Additional positional arguments
@@ -283,7 +283,9 @@ class TransferQueueController:
         if mode == "insert":
             # TODO: Currently only supports putting entire GBS data, need to extend to support multiple puts to same
             #  step
-            assert batch_size == self.global_batch_size
+            assert batch_size == self.global_batch_size, (
+                f"batch_size {batch_size} must equal global_batch_size {self.global_batch_size}"
+            )
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             batch_global_indexes = list(range(start_idx, end_idx))
             return self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
@@ -717,7 +719,7 @@ class TransferQueueController:
             elif request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE_ERROR:
                 # Handle data update errors
                 error_msg = request_msg.body.get("message", "Unknown error")
-                print(f"Data update error from storage: {error_msg}")
+                logger.error(f"Data update error from storage: {error_msg}")
 
                 # Send error acknowledgment response
                 response_msg = ZMQMessage.create(
