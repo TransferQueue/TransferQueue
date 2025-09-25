@@ -165,8 +165,10 @@ class AsyncTransferQueueClient:
             data_fields (list[str]): List of fields to retrieve metadata for
             batch_size (int): Processing batch size
             global_step (int): Current training/processing step
-            mode (str): Data fetch mode (TODO(hz): more details to be added)
-            get_n_samples (bool): TODO(hz): more details to be added
+            mode (str): Data fetch mode. 'fetch' to get ready data, 'force_fetch' to get data regardless of readiness.
+                        'insert' IS AN INTERNAL USAGE THAT SHOULD NOT BE USED BY USERS.
+            get_n_samples (bool): If True, we arrange the samples of the same prompt in contiguous order. In 'fetch'
+                                  mode, only the samples of the same prompt that are all ready will be returned.
             task_name (str): Optional task name associated with the request
             target_controller (str): ID of the target controller to send the request to
             socket (zmq.asyncio.Socket): ZMQ async socket for message transmission
@@ -183,6 +185,7 @@ class AsyncTransferQueueClient:
             >>>                                                task_name="generate_sequences",
             >>>                                                ))
             >>> print(batch_meta.is_ready)   # you should get a batch_meta with is_ready=True
+            >>> print([sample_meta.is_ready for sample_meta in batch_meta.samples])  # [True, True, True, True]
             >>>
             >>> # Example 2: "force_fetch" a batch of metadata, ignoring their production status (but we still make
             >>> # sure the corresponding data has not been consumed)
@@ -194,11 +197,7 @@ class AsyncTransferQueueClient:
             >>>                                                task_name="generate_sequences",
             >>>                                                ))
             >>> print(batch_meta.is_ready)   # you may get a batch_meta with is_ready=False
-            >>> print([sample_meta.is_ready for sample_meta in batch_meta.samples])
-            >>>
-            >>> # Example 3: "insert" a batch of metadata into the system.
-            >>> # THIS IS AN INTERNAL USAGE THAT SHOULD NOT BE USED BY USERS.
-            >>> # refer to the async_put example for details
+            >>> print([sample_meta.is_ready for sample_meta in batch_meta.samples])  # [True, False, False, True]
 
         Returns:
             BatchMeta: Metadata object containing data structure, sample info, etc.
