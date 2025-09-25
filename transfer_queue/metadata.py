@@ -89,38 +89,14 @@ class SampleMeta:
         field = self.fields.get(field_name)
         return field.is_ready if field else False
 
-    def add_fields(self, names: list[str], **kwargs) -> "SampleMeta":
+    def add_fields(self, fields: dict[str, FieldMeta]) -> "SampleMeta":
         """
         Add new fields to this sample. New fields will be initialized with given dtype, shape
         and production_status (if provided). If not provided, default values (None, None, READY_FOR_CONSUME)
         will be used.
         This modifies the sample in-place to include the new fields.
         """
-        dtypes = kwargs.get("dtypes", {})
-        shapes = kwargs.get("shapes", {})
-        production_status = kwargs.get("production_status", {})
-
-        if not dtypes:
-            dtypes = {name: None for name in names}
-        if not shapes:
-            shapes = {name: None for name in names}
-        if not production_status:
-            production_status = {name: ProductionStatus.READY_FOR_CONSUME for name in names}
-
-        if len(dtypes) != len(names):
-            raise ValueError("Length of dtypes must match length of names.")
-        if len(shapes) != len(names):
-            raise ValueError("Length of shapes must match length of names.")
-        if len(production_status) != len(names):
-            raise ValueError("Length of production_status must match length of names.")
-
-        for field_name in names:
-            if field_name in self.fields:
-                raise ValueError(f"Field '{field_name}' already exists in SampleMeta.")
-            dtype = dtypes.get(field_name)
-            shape = shapes.get(field_name)
-            ps = production_status.get(field_name, ProductionStatus.READY_FOR_CONSUME)
-            self.fields[field_name] = FieldMeta(name=field_name, dtype=dtype, shape=shape, production_status=ps)
+        self.fields = _union_fields(self.fields, fields)
         # Update is_ready property
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
         return self
@@ -145,8 +121,7 @@ class SampleMeta:
                 )
 
         # Merge fields
-        merged_fields = _union_fields(self.fields, other.fields)
-        self.fields = merged_fields
+        self.fields = _union_fields(self.fields, other.fields)
 
         # Update is_ready property
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
@@ -255,7 +230,7 @@ class BatchMeta:
             object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
             # assume all samples have the same fields.
-            object.__setattr__(self, "_fields", sorted(self.samples[0].field_names))
+            object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
 
             # Initialize storage groups for efficient client operations
             storage_meta_groups = self._build_storage_meta_groups()
@@ -264,7 +239,7 @@ class BatchMeta:
             object.__setattr__(self, "_global_indexes", [])
             object.__setattr__(self, "_local_indexes", [])
             object.__setattr__(self, "_storage_ids", [])
-            object.__setattr__(self, "_fields", [])
+            object.__setattr__(self, "_field_names", [])
             object.__setattr__(self, "_storage_meta_groups", {})
 
     @property
@@ -278,9 +253,9 @@ class BatchMeta:
         return getattr(self, "_global_indexes", [])
 
     @property
-    def fields(self) -> list[str]:
+    def field_names(self) -> list[str]:
         """Get all unique field names in this batch"""
-        return getattr(self, "_fields", [])
+        return getattr(self, "_field_names", [])
 
     @property
     def local_indexes(self) -> list[int]:
@@ -355,25 +330,23 @@ class BatchMeta:
         """Get all extra info as a dictionary"""
         return self.extra_info.copy()
 
-    def add_fields(self, names: list[str], **kwargs) -> None:
+    def add_fields(self, tensor_dict: TensorDict, set_all_ready: bool = True) -> "BatchMeta":
         """
-        Add new fields to all samples in this batch. New fields will be initialized with given dtype, shape
-        and production_status (if provided). If not provided, default values (None, None, READY_FOR_CONSUME)
-        will be used. This modifies each sample in-place to include the new fields.
+        Add new fields from a TensorDict to all samples in this batch.
+        This modifies each sample in-place to include the new fields.
+
+        Args:
+            tensor_dict (TensorDict): The input TensorDict containing new fields.
+            set_all_ready (bool): If True, set all production_status to READY_FOR_CONSUME. Default is True.
         """
+        fields = _extract_field_metas(tensor_dict, set_all_ready)
         for idx, sample in enumerate(self.samples):
-            sample_fields_info = {
-                "names": names,
-                "dtypes": kwargs.get("dtypes")[idx] if kwargs.get("dtypes") else {},
-                "shapes": kwargs.get("shapes")[idx] if kwargs.get("shapes") else {},
-                "production_status": kwargs.get("production_status")[idx] if kwargs.get("production_status") else {},
-            }
-            sample.add_fields(**sample_fields_info)
+            sample.add_fields(fields=fields[idx])
 
         # Update batch-level fields cache
-        updated_fields = set(self.fields)
-        updated_fields.update(names)
-        object.__setattr__(self, "_fields", sorted(list(updated_fields)))
+        object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
+        object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
+        return self
 
     def __len__(self) -> int:
         """Return the number of samples in this batch."""
@@ -433,10 +406,10 @@ class BatchMeta:
             return None
 
         if validate:
-            base_fields = data[0].fields
+            base_fields = data[0].field_names
 
             for chunk in data:
-                if chunk.fields != base_fields:
+                if chunk.field_names != base_fields:
                     raise ValueError("Error: Field names do not match for concatenation.")
 
         # Combine all samples
@@ -545,3 +518,35 @@ def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) 
     for name in fields2.keys():
         fields1[name] = fields2[name]
     return fields1
+
+
+def _extract_field_metas(tensor_dict: TensorDict, set_all_ready: bool = True) -> list[dict[str, FieldMeta]]:
+    """
+    Extract field metas from a TensorDict. If data in tensor_dict does not have dtype or shape attribute,
+    the corresponding dtype or shape will be set to None.
+
+    Args:
+        tensor_dict (TensorDict): The input TensorDict.
+        set_all_ready (bool): If True, set all production_status to READY_FOR_CONSUME.
+                              Otherwise, set to NOT_PRODUCED. Default is True.
+
+    Returns:
+        all_fields (list[dict[FieldMeta]]): A list of dictionaries containing field metadata.
+    """
+    all_fields = []
+    batch_size = tensor_dict.batch_size[0]
+    for idx in range(batch_size):
+        fields = {}
+        sample = tensor_dict[idx]
+        for name, value in sample.items():
+            fields[name] = FieldMeta(
+                name=name,
+                dtype=value.dtype if hasattr(value, "dtype") else None,
+                shape=value.shape if hasattr(value, "shape") else None,
+                production_status=ProductionStatus.READY_FOR_CONSUME
+                if set_all_ready
+                else ProductionStatus.NOT_PRODUCED,
+            )
+        all_fields.append(fields)
+
+    return all_fields

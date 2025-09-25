@@ -2,7 +2,6 @@ from enum import Enum
 
 import ray
 import torch
-from tensordict import TensorDict
 
 
 class ExplicitEnum(str, Enum):
@@ -78,48 +77,3 @@ def random_sampler(
         sampled_indexes_idx = torch.multinomial(weights, batch_size, replacement=False).tolist()
         sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
     return sampled_indexes
-
-
-def extract_field_info(tensor_dict: TensorDict, set_all_ready: bool = True) -> dict:
-    """
-    Extract field information from a TensorDict. If data in tensor_dict does not have dtype or shape attribute,
-    the corresponding dtype or shape will be set to None.
-
-    Args:
-        tensor_dict (TensorDict): The input TensorDict.
-        set_all_ready (bool): If True, set all production_status to READY_FOR_CONSUME. Default is True.
-
-    Returns:
-        dict: A dictionary containing field names, dtypes, shapes, and production_status. Example:
-            {
-                "names": ["field1", "field2"],
-                "dtypes": [
-                    {"field1": torch.float32, "field2": torch.int64},
-                    {"field1": torch.float32, "field2": torch.int64}
-                ],
-                "shapes": [
-                    {"field1": torch.Size([10]), "field2": torch.Size([5, 5])},
-                    {"field1": torch.Size([10]), "field2": torch.Size([5, 5])}
-                ],
-                "production_status": [
-                    {"field1": ProductionStatus.READY_FOR_CONSUME, "field2": ProductionStatus.READY_FOR_CONSUME},
-                    {"field1": ProductionStatus.READY_FOR_CONSUME, "field2": ProductionStatus.READY_FOR_CONSUME}
-                ]
-            }
-    """
-    field_info: dict[str, list] = {"names": [], "dtypes": [], "shapes": [], "production_status": []}
-    batch_size = tensor_dict.batch_size[0]
-    field_info["names"] = list(tensor_dict.keys())
-
-    for sample in range(batch_size):
-        field_info["dtypes"].append({})
-        field_info["shapes"].append({})
-        field_info["production_status"].append({})
-        for field_name in field_info["names"]:
-            value = tensor_dict[field_name][sample]
-            field_info["dtypes"][sample][field_name] = value.dtype if hasattr(value, "dtype") else None
-            field_info["shapes"][sample][field_name] = value.shape if hasattr(value, "shape") else None
-            field_info["production_status"][sample][field_name] = (
-                ProductionStatus.READY_FOR_CONSUME if set_all_ready else ProductionStatus.NOT_PRODUCED
-            )
-    return field_info
