@@ -279,7 +279,7 @@ class AsyncTransferQueueClient:
             >>> prompts_repeated = torch.repeat_interleave(original_prompts, n_samples, dim=0)
             >>> prompts_repeated_batch = TensorDict({"prompts": prompts_repeated})
             >>> # This will create metadata in "insert" mode internally.
-            >>> asyncio.run(client.async_put(data=prompt_batch, global_step=current_step))
+            >>> asyncio.run(client.async_put(data=prompts_repeated_batch, global_step=current_step))
 
         """
         if metadata is None:
