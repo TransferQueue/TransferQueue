@@ -112,7 +112,7 @@ class AsyncvLLMServer:
         return data_meta
 
 
-@ray.remote(max_concurrency=50, num_cpus=1)
+@ray.remote(num_cpus=1)
 class AsyncRolloutWorker:
     def __init__(self, data_system_client):
         self.async_vllm_server = AsyncvLLMServer.remote(data_system_client)
@@ -267,6 +267,7 @@ class Trainer:
                 asyncio.run(self.data_system_client.async_clear(global_step=step))
                 logger.info("clear ok! ")
         logger.info("demo done!")
+        return batch_meta
 
 
 if __name__ == "__main__":
