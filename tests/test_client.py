@@ -305,7 +305,7 @@ def test_get_meta(client_setup):
     # Verify metadata structure
     assert hasattr(metadata, "storage_meta_groups")
     assert hasattr(metadata, "global_indexes")
-    assert hasattr(metadata, "fields")
+    assert hasattr(metadata, "field_names")
     assert hasattr(metadata, "size")
     assert len(metadata.global_indexes) == 10
 

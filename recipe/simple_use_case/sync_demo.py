@@ -18,10 +18,7 @@ from transfer_queue import (  # noqa: E402
     TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
 )
-from transfer_queue.utils.utils import (  # noqa: E402
-    extract_field_info,
-    get_placement_group,
-)
+from transfer_queue.utils.utils import get_placement_group  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -113,7 +110,7 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
 
     # 2. 根据data_meta将结果写回storage unit
     data_system_client.put(data=output, metadata=data_meta)
-    data_meta.add_fields(**extract_field_info(output))
+    data_meta.add_fields(output)
     logger.info("demo put data to storages done")
 
     return data_meta
@@ -130,7 +127,7 @@ def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
 
     # 2. 根据data_meta将结果写回storage unit
     data_system_client.put(data=output, metadata=data_meta)
-    data_meta.add_fields(**extract_field_info(output))
+    data_meta.add_fields(output)
     logger.info("demo put data to storages done")
 
     return data_meta

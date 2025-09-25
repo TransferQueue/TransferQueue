@@ -2,7 +2,6 @@ from enum import Enum
 
 import ray
 import torch
-from tensordict import TensorDict
 
 
 class ExplicitEnum(str, Enum):
@@ -78,19 +77,3 @@ def random_sampler(
         sampled_indexes_idx = torch.multinomial(weights, batch_size, replacement=False).tolist()
         sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
     return sampled_indexes
-
-
-def extract_field_info(tensor_dict: TensorDict) -> dict:
-    """
-    Extract field names, dtypes, and shapes from a TensorDict.
-    Assumes all tensors in the same field have the same dtype and shape (excluding batch dimension).
-    Returns a dictionary with keys: 'names', 'dtypes', 'shapes'.
-    """
-    field_info: dict[str, list] = {"names": [], "dtypes": [], "shapes": []}
-    for key, value in tensor_dict.items():
-        field_info["names"].append(key)
-
-        # TODO: support nested tensors & non tensors
-        # field_info["dtypes"].append(value.dtype)
-        # field_info["shapes"].append(value.shape[1:])  # exclude batch dimension
-    return field_info
