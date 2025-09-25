@@ -387,7 +387,7 @@ class AsyncTransferQueueClient:
             >>> batch_size = 4
             >>> seq_len = 16
             >>> current_step = 0
-            >>> batch_meta = asyncio.run(client.async_get_data(data_fields=["prompts", "attention_mask"],
+            >>> batch_meta = asyncio.run(client.async_get_meta(data_fields=["prompts", "attention_mask"],
             >>>                                   batch_size=batch_size,
             >>>                                   global_step=current_step,
             >>>                                   mode="fetch",
