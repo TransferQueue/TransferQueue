@@ -36,11 +36,6 @@ class FieldMeta:
         """Check if this field is ready for consumption"""
         return self.production_status == ProductionStatus.READY_FOR_CONSUME
 
-    def equals(self, other: "FieldMeta") -> bool:
-        """Check if two FieldMeta are equal (based on name, dtype, shape)"""
-        # TODO: support nested tensors & non tensors
-        return self.name == other.name  # and self.dtype == other.dtype and self.shape == other.shape
-
 
 @dataclass
 class SampleMeta:
