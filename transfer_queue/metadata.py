@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import numpy as np
-import torch
 from tensordict import TensorDict
 
 from transfer_queue.utils.utils import ProductionStatus
@@ -19,8 +18,8 @@ class FieldMeta:
     name: str
 
     # data schema info
-    dtype: Optional[torch.dtype]  # e.g., torch.float32, torch.int64, etc.
-    shape: Optional[torch.Size]  # e.g., torch.Size([seq_len]), torch.Size([seq_len, feature_dim]), etc.
+    dtype: Optional[Any]  # e.g., torch.float32, np, etc.
+    shape: Optional[Any]  # e.g., torch.Size([seq_len]), torch.Size([seq_len, feature_dim]), etc.
 
     # data status info
     production_status: ProductionStatus = ProductionStatus.NOT_PRODUCED  # production status for this field
@@ -92,25 +91,36 @@ class SampleMeta:
 
     def add_fields(self, names: list[str], **kwargs) -> "SampleMeta":
         """
-        Add new fields to this sample. New fields will be initialized with given dtype and shape (if provided).
+        Add new fields to this sample. New fields will be initialized with given dtype, shape
+        and production_status (if provided). If not provided, default values (None, None, READY_FOR_CONSUME)
+        will be used.
         This modifies the sample in-place to include the new fields.
         """
-        dtypes = kwargs.get("dtypes", [])
-        shapes = kwargs.get("shapes", [])
+        dtypes = kwargs.get("dtypes", {})
+        shapes = kwargs.get("shapes", {})
+        production_status = kwargs.get("production_status", {})
 
         if not dtypes:
-            dtypes = [None] * len(names)
+            dtypes = {name: None for name in names}
         if not shapes:
-            shapes = [None] * len(names)
+            shapes = {name: None for name in names}
+        if not production_status:
+            production_status = {name: ProductionStatus.READY_FOR_CONSUME for name in names}
 
         if len(dtypes) != len(names):
             raise ValueError("Length of dtypes must match length of names.")
         if len(shapes) != len(names):
             raise ValueError("Length of shapes must match length of names.")
+        if len(production_status) != len(names):
+            raise ValueError("Length of production_status must match length of names.")
 
-        for field_name, dtype, shape in zip(names, dtypes, shapes, strict=True):
-            assert field_name not in self.fields, f"Field '{field_name}' already exists in SampleMeta."
-            self.fields[field_name] = FieldMeta(name=field_name, dtype=dtype, shape=shape)
+        for field_name in names:
+            if field_name in self.fields:
+                raise ValueError(f"Field '{field_name}' already exists in SampleMeta.")
+            dtype = dtypes.get(field_name)
+            shape = shapes.get(field_name)
+            ps = production_status.get(field_name, ProductionStatus.READY_FOR_CONSUME)
+            self.fields[field_name] = FieldMeta(name=field_name, dtype=dtype, shape=shape, production_status=ps)
         # Update is_ready property
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
         return self
@@ -347,12 +357,18 @@ class BatchMeta:
 
     def add_fields(self, names: list[str], **kwargs) -> None:
         """
-        Add new fields to all samples in this batch. New fields will be initialized with default FieldMeta.
-        This modifies each sample in-place to include the new fields.
+        Add new fields to all samples in this batch. New fields will be initialized with given dtype, shape
+        and production_status (if provided). If not provided, default values (None, None, READY_FOR_CONSUME)
+        will be used. This modifies each sample in-place to include the new fields.
         """
-        # TODO: support nested tensors & non tensors
-        for sample in self.samples:
-            sample.add_fields(names, **kwargs)
+        for idx, sample in enumerate(self.samples):
+            sample_fields_info = {
+                "names": names,
+                "dtypes": kwargs.get("dtypes")[idx] if kwargs.get("dtypes") else {},
+                "shapes": kwargs.get("shapes")[idx] if kwargs.get("shapes") else {},
+                "production_status": kwargs.get("production_status")[idx] if kwargs.get("production_status") else {},
+            }
+            sample.add_fields(**sample_fields_info)
 
         # Update batch-level fields cache
         updated_fields = set(self.fields)

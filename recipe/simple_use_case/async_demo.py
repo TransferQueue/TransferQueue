@@ -109,6 +109,7 @@ class AsyncvLLMServer:
 
         await self.data_system_client.async_put(data=output, metadata=data_meta)
         logger.info("demo Async Server put data to storages done")
+
         return data_meta
 
 
