@@ -359,8 +359,8 @@ class AsyncTransferQueueClient:
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:
                 # Return data and index information from this storage unit
-                su_data = response_msg.body["data"]
-                return global_indexes, fields, su_data
+                storage_unit_data = response_msg.body["data"]
+                return global_indexes, fields, storage_unit_data
             else:
                 raise RuntimeError(
                     f"Failed to get data from storage unit {target_storage}: "
