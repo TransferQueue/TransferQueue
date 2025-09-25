@@ -163,7 +163,7 @@ class Trainer:
 
     def _initialize_data_system(self):
         # 1. 初始化TransferQueueStorage
-        total_storage_size = self.config.global_batch_size * self.config.num_global_batch
+        total_storage_size = self.config.global_batch_size * self.config.num_global_batch * self.config.num_n_samples
         self.data_system_storage_units = {}
         storage_placement_group = get_placement_group(self.config.num_data_storage_units, num_cpus_per_actor=1)
         for storage_unit_rank in range(self.config.num_data_storage_units):
@@ -185,7 +185,7 @@ class Trainer:
                 num_storage_units=self.config.num_data_storage_units,
                 global_batch_size=self.config.global_batch_size,
                 num_global_batch=self.config.num_global_batch,
-                num_n_samples=1,
+                num_n_samples=self.config.num_n_samples,
             )
             logger.info(f"TransferQueueController #{controller_rank} has been created.")
 
@@ -205,7 +205,6 @@ class Trainer:
         self.data_system_client = AsyncTransferQueueClient(
             client_id="Trainer",
             controller_infos=self.data_system_controller_infos[0],
-            # TODO: 主控Client感知所有controller，WorkerGroup和Worker的Client感知一个controller
             storage_infos=self.data_system_storage_unit_infos,
         )
 
@@ -215,9 +214,13 @@ class Trainer:
         for epoch in range(1):
             train_dataloader = 1
             for step in range(train_dataloader):
-                input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111]])) * (step + 1)
+                input_ids = (
+                    torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111], [200, 222], [300, 333]])
+                ) * (step + 1)
+                input_ids_repeated = torch.repeat_interleave(input_ids, self.config.num_n_samples, dim=0)
                 prompt_batch = TensorDict(
-                    {"input_ids": input_ids, "attention_mask": input_ids}, batch_size=input_ids.size(0)
+                    {"input_ids": input_ids_repeated, "attention_mask": input_ids_repeated},
+                    batch_size=input_ids_repeated.size(0),
                 )
 
                 asyncio.run(self.data_system_client.async_put(data=prompt_batch, global_step=step))
@@ -228,7 +231,7 @@ class Trainer:
                 batch_meta = asyncio.run(
                     self.data_system_client.async_get_meta(
                         data_fields=["input_ids", "attention_mask"],
-                        batch_size=self.config.global_batch_size,
+                        batch_size=self.config.global_batch_size * self.config.num_n_samples,
                         global_step=step,
                         get_n_samples=False,
                         task_name="generate_sequences",
@@ -246,7 +249,7 @@ class Trainer:
                 log_prob_meta = asyncio.run(
                     self.data_system_client.async_get_meta(
                         data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
-                        batch_size=self.config.global_batch_size,
+                        batch_size=self.config.global_batch_size * self.config.num_n_samples,
                         global_step=step,
                         get_n_samples=False,
                         task_name="compute_old_log_prob",
@@ -275,12 +278,13 @@ if __name__ == "__main__":
     # AgentLoopManager in verl
 
     config_str = """
-      global_batch_size: 6
+      global_batch_size: 8
       num_global_batch: 1 
       num_data_storage_units: 2
       num_data_controllers: 1
       async_rollout_mode: True
       rollout_agent_num_workers: 2
+      num_n_samples: 2
 
     """
     dict_conf = OmegaConf.create(config_str)

@@ -33,7 +33,7 @@ ray.init()
 
 def initialize_data_system(config):
     # 1. 初始化TransferQueueStorage
-    total_storage_size = config.global_batch_size * config.num_global_batch
+    total_storage_size = config.global_batch_size * config.num_global_batch * config.num_n_samples
     data_system_storage_units = {}
     storage_placement_group = get_placement_group(config.num_data_storage_units, num_cpus_per_actor=1)
     for storage_unit_rank in range(config.num_data_storage_units):
@@ -55,7 +55,7 @@ def initialize_data_system(config):
             num_storage_units=config.num_data_storage_units,
             global_batch_size=config.global_batch_size,
             num_global_batch=config.num_global_batch,
-            num_n_samples=1,
+            num_n_samples=config.num_n_samples,
         )
         logger.info(f"TransferQueueController #{controller_rank} has been created.")
 
@@ -138,12 +138,14 @@ def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
 
 # Simulate the fit function of the trainer
 def fit(config, data_system_client):
-    for epoch in range(2):
-        train_dataloader = 2
+    for epoch in range(1):
+        train_dataloader = 1
         for step in range(train_dataloader):
             input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111]])) * (step + 1)
+            input_ids_repeated = torch.repeat_interleave(input_ids, config.num_n_samples, dim=0)
             prompt_batch = TensorDict(
-                {"input_ids": input_ids, "attention_mask": input_ids}, batch_size=input_ids.size(0)
+                {"input_ids": input_ids_repeated, "attention_mask": input_ids_repeated},
+                batch_size=input_ids_repeated.size(0),
             )
 
             data_system_client.put(data=prompt_batch, global_step=step)
@@ -201,7 +203,7 @@ if __name__ == "__main__":
       num_global_batch: 1 
       num_data_storage_units: 2
       num_data_controllers: 1
-
+      num_n_samples: 2
     """
     dict_conf = OmegaConf.create(config_str)
 
