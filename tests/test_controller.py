@@ -79,7 +79,7 @@ def setup_teardown_register_controller_info(setup_teardown_transfer_queue_contro
         ]
     )
 
-    yield tq_controller, global_batch_size, data_system_storage_units
+    yield tq_controller, global_batch_size, num_n_samples, data_system_storage_units
 
 
 class TestTransferQueueController:
@@ -202,14 +202,17 @@ class TestTransferQueueController:
         assert torch.equal(new_data_consumption_status[task_name], torch.zeros(total_storage_size, dtype=torch.int8))
 
     def test_get_prompt_metadata(self, setup_teardown_register_controller_info):
-        tq_controller, global_batch_size, _ = setup_teardown_register_controller_info
+        tq_controller, global_batch_size, n_samples, _ = setup_teardown_register_controller_info
 
         data_fields = ["test_prompts"]
         global_step = 5
 
         metadata = ray.get(
             tq_controller._get_metadata.remote(
-                data_fields=data_fields, batch_size=global_batch_size, global_step=global_step, mode="insert"
+                data_fields=data_fields,
+                batch_size=global_batch_size * n_samples,
+                global_step=global_step,
+                mode="insert",
             )
         )
         assert metadata.global_indexes == [
