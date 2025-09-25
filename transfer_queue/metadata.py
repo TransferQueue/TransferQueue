@@ -36,11 +36,6 @@ class FieldMeta:
         """Check if this field is ready for consumption"""
         return self.production_status == ProductionStatus.READY_FOR_CONSUME
 
-    def equals(self, other: "FieldMeta") -> bool:
-        """Check if two FieldMeta are equal (based on name, dtype, shape)"""
-        # TODO: support nested tensors & non tensors
-        return self.name == other.name  # and self.dtype == other.dtype and self.shape == other.shape
-
 
 @dataclass
 class SampleMeta:
@@ -123,7 +118,8 @@ class SampleMeta:
     def union(self, other: "SampleMeta", validate: bool = True) -> "SampleMeta":
         """
         Create a union of this sample's fields with another sample's fields.
-        Assume both samples have the same global index, and if fields overlap, they must be identical.
+        Assume both samples have the same global index. If fields overlap, the
+        fields in this sample will be replaced by the other sample's fields.
 
         Args:
             other: Another SampleMeta to union with
@@ -440,7 +436,8 @@ class BatchMeta:
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
         """
         Create a union of this batch's fields with another batch's fields.
-        Assume both batches have the same global indices.
+        Assume both batches have the same global indices. If fields overlap, the
+        fields in this batch will be replaced by the other batch's fields.
 
         Args:
             other: Another BatchMeta to union with
@@ -528,11 +525,7 @@ class BatchMeta:
 
 
 def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) -> TensorDict:
-    """Union two sample's fields."""
+    """Union two sample's fields. If fields overlap, the fields in fields1 will be replaced by fields2."""
     for name in fields2.keys():
-        if name not in fields1:
-            fields1[name] = fields2[name]
-        else:
-            assert fields1[name].equals(fields2[name]), f"{name} in fields1 and fields2 are not the same object"
-
+        fields1[name] = fields2[name]
     return fields1
