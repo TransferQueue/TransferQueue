@@ -197,7 +197,7 @@ class AsyncTransferQueueClient:
             >>> print([sample_meta.is_ready for sample_meta in batch_meta.samples])
             >>>
             >>> # Example 3: "insert" a batch of metadata into the system.
-            >>> # THIS IS A INNER USAGE THAT SHOULD NOT BE USED BY USERS.
+            >>> # THIS IS AN INTERNAL USAGE THAT SHOULD NOT BE USED BY USERS.
             >>> # refer to the async_put example for details
 
         Returns:
