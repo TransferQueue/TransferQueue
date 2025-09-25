@@ -93,7 +93,7 @@ class ZMQMessage:
         request_type: ZMQRequestType,
         sender_id: str,
         body: dict[str, Any],
-        receiver_id: Optional[str | None] = None,
+        receiver_id: Optional[str] = None,
     ) -> "ZMQMessage":
         return cls(
             request_type=request_type,
