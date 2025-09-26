@@ -513,7 +513,7 @@ class BatchMeta:
         return cls(samples=[], extra_info=extra_info)
 
 
-def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) -> TensorDict:
+def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) -> dict[str, FieldMeta]:
     """Union two sample's fields. If fields overlap, the fields in fields1 will be replaced by fields2."""
     for name in fields2.keys():
         fields1[name] = fields2[name]
