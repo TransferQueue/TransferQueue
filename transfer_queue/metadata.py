@@ -1,5 +1,6 @@
 import dataclasses
 from dataclasses import dataclass
+from operator import itemgetter
 from typing import Any, Optional
 
 import numpy as np
@@ -464,6 +465,36 @@ class BatchMeta:
         merged_extra_info = {**self.extra_info, **other.extra_info}
 
         return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
+
+    def reorder(self, indices: list[int]) -> "BatchMeta":
+        """
+        Reorder the samples in the batch according to the given indices.
+
+        This method rearranges the samples in the current batch based on the specified
+        index sequence. The operation is performed in-place, modifying the current
+        BatchMeta's SampleMeta order.
+
+        Args:
+            indices : list[int]
+                A list of integers specifying the new order of samples. Each integer
+                represents the current index of the sample in the batch. For example,
+                indices [2, 0, 1] would move the third sample to the first position,
+                the first sample to the second position, and the second sample to the
+                third position.
+
+        Returns:
+            BatchMeta
+                A new BatchMeta instance with the reordered SampleMeta and the original
+                extra_info. The current batch is also modified in-place.
+
+        Raises:
+            IndexError
+                If any index in indices is out of bounds for the current SampleMeta list.
+            ValueError
+                If the length of indices doesn't match the number of SampleMeta.
+        """
+        self.samples = list(itemgetter(*indices)(self.samples))
+        return BatchMeta(samples=self.samples, extra_info=self.extra_info)
 
     @classmethod
     def from_samples(
