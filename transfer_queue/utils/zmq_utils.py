@@ -1,12 +1,13 @@
-import time
-import socket
-from typing import Any, Optional, Dict, List, Union
-from typing_extensions import Self
-import psutil
-import uuid
-import zmq
 import pickle
+import socket
+import time
+import uuid
 from dataclasses import dataclass
+from typing import Any, Optional
+
+import psutil
+import zmq
+from typing_extensions import Self
 
 from transfer_queue.utils.utils import (
     ExplicitEnum,
@@ -14,15 +15,12 @@ from transfer_queue.utils.utils import (
 )
 
 
-
 class ZMQRequestType(ExplicitEnum):
-    # TODO @jianjun: 添加注释，说明每个Request type可能对应的通信过程
+    # HANDSHAKE
+    HANDSHAKE = "HANDSHAKE"  # TransferQueueStorageUnit -> TransferQueueController
+    HANDSHAKE_ACK = "HANDSHAKE_ACK"  # TransferQueueController  -> TransferQueueStorageUnit
 
-    # 握手相关
-    HANDSHAKE = "HANDSHAKE"               # TransferQueueStorageUnit -> TransferQueueController
-    HANDSHAKE_ACK = "HANDSHAKE_ACK"       # TransferQueueController  -> TransferQueueStorageUnit
-
-    # 数据操作相关
+    # DATA_OPERATION
     GET_DATA = "GET"
     PUT_DATA = "PUT"
     GET_DATA_RESPONSE = "GET_DATA_RESPONSE"
@@ -36,7 +34,7 @@ class ZMQRequestType(ExplicitEnum):
     GET_ERROR = "GET_ERROR"
     CLEAR_DATA_ERROR = "CLEAR_DATA_ERROR"
 
-    # 元数据相关
+    # META_OPERATION
     GET_META = "GET_META"
     GET_META_RESPONSE = "GET_META_RESPONSE"
     GET_CLEAR_META = "GET_CLEAR_META"
@@ -44,11 +42,11 @@ class ZMQRequestType(ExplicitEnum):
     CLEAR_META = "CLEAR_META"
     CLEAR_META_RESPONSE = "CLEAR_META_RESPONSE"
 
-    # 消费状态相关
+    # CHECK_CONSUMPTION
     CHECK_CONSUMPTION = "CHECK_CONSUMPTION"
     CONSUMPTION_RESPONSE = "CONSUMPTION_RESPONSE"
 
-    # 数据更新通知相关
+    # NOTIFY_DATA_UPDATE
     NOTIFY_DATA_UPDATE = "NOTIFY_DATA_UPDATE"
     NOTIFY_DATA_UPDATE_ACK = "NOTIFY_DATA_UPDATE_ACK"
     NOTIFY_DATA_UPDATE_ERROR = "NOTIFY_DATA_UPDATE_ERROR"
@@ -59,16 +57,11 @@ class ZMQServerInfo:
     role: TransferQueueRole
     id: str
     ip: str
-    ports: Dict[str, str]
+    ports: dict[str, str]
 
     @classmethod
-    def create(cls, role: TransferQueueRole, id: str, ip: str, ports:  Dict[str, str]) -> Self:
-        return cls(
-            role=role,
-            id=id,
-            ip=ip,
-            ports=ports
-        )
+    def create(cls, role: TransferQueueRole, id: str, ip: str, ports: dict[str, str]) -> Self:
+        return cls(role=role, id=id, ip=ip, ports=ports)
 
     def to_addr(self, port_name: str) -> str:
         return f"tcp://{self.ip}:{self.ports[port_name]}"
@@ -84,17 +77,24 @@ class ZMQServerInfo:
     def __str__(self) -> str:
         return f"ZMQSocketInfo(role={self.role}, id={self.id}, ip={self.ip}, ports={self.ports})"
 
+
 @dataclass
 class ZMQMessage:
     request_type: ZMQRequestType
     sender_id: str
-    receiver_id: Union[str, None]
-    body: Dict[str, Any]
+    receiver_id: str | None
+    body: dict[str, Any]
     request_id: str
     timestamp: float
 
     @classmethod
-    def create(cls, request_type: ZMQRequestType, sender_id: str, body: Dict[str, Any], receiver_id: Optional[Union[str, None]] = None) -> "ZMQMessage":
+    def create(
+        cls,
+        request_type: ZMQRequestType,
+        sender_id: str,
+        body: dict[str, Any],
+        receiver_id: Optional[str] = None,
+    ) -> "ZMQMessage":
         return cls(
             request_type=request_type,
             sender_id=sender_id,
@@ -105,22 +105,20 @@ class ZMQMessage:
         )
 
     def serialize(self) -> bytes:
-        """使用pickle序列化ZMQMessage对象"""
+        """Using pickle to serialize ZMQMessage objects"""
         return pickle.dumps(self)
 
     @classmethod
-    def deserialize(cls, data: Union[bytes, List[bytes]]):
-        """
-        使用pickle反序列化ZMQMessage
-        """
+    def deserialize(cls, data: bytes | list[bytes]):
+        """Using pickle to deserialize ZMQMessage objects"""
         if isinstance(data, list):
-            # 处理多个字节流的情况，按顺序反序列化每个字节流
+            # Process multiple byte streams by deserializing each in sequence
             result = []
             for d in data:
-                result = result.append(pickle.loads(d))
+                result.append(pickle.loads(d))
             return result
         else:
-            # 单个字节流的情况
+            # Single byte stream case
             return pickle.loads(data)
 
 

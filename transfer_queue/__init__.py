@@ -1,16 +1,24 @@
 import os
-version_folder = os.path.dirname(os.path.join(os.path.abspath(__file__)))
 
-with open(os.path.join(version_folder, "version/version")) as f:
-    __version__ = f.read().strip()
-
-from .data_system import TransferQueueClient, AsyncTransferQueueClient, TransferQueueController, TransferQueueStorageSimpleUnit
-from .data_system import process_zmq_server_info
+from .client import (
+    AsyncTransferQueueClient,
+    TransferQueueClient,
+    process_zmq_server_info,
+)
+from .controller import TransferQueueController
+from .metadata import BatchMeta
+from .storage import TransferQueueStorageSimpleUnit
 
 __all__ = [
-    "TransferQueueClient",
     "AsyncTransferQueueClient",
+    "BatchMeta",
+    "TransferQueueClient",
     "TransferQueueController",
     "TransferQueueStorageSimpleUnit",
     "process_zmq_server_info",
 ]
+
+version_folder = os.path.dirname(os.path.join(os.path.abspath(__file__)))
+
+with open(os.path.join(version_folder, "version/version")) as f:
+    __version__ = f.read().strip()

@@ -3,7 +3,7 @@ import pickle
 from collections.abc import Sequence
 from inspect import isclass
 from types import FunctionType
-from typing import Any, Optional, Union
+from typing import Any, Optional, TypeAlias
 
 import cloudpickle
 import torch
@@ -16,8 +16,8 @@ CUSTOM_TYPE_PICKLE = 1
 CUSTOM_TYPE_CLOUDPICKLE = 2
 CUSTOM_TYPE_RAW_VIEW = 3
 
-bytestr = Union[bytes, bytearray, memoryview, zmq.Frame]
-tensorenc = tuple[str, tuple[int, ...], Union[int, memoryview]]
+bytestr: TypeAlias = bytes | bytearray | memoryview | zmq.Frame
+tensorenc = tuple[str, tuple[int, ...], int | memoryview]
 
 
 class MsgpackEncoder:
@@ -42,7 +42,7 @@ class MsgpackEncoder:
 
     def encode(self, obj: Any) -> Sequence[bytestr]:
         try:
-            self.aux_buffers = bufs = [b'']
+            self.aux_buffers = bufs = [b""]
             bufs[0] = self.encoder.encode(obj)
             # This `bufs` list allows us to collect direct pointers to backing
             # buffers of tensors and np arrays, and return them along with the
@@ -73,12 +73,10 @@ class MsgpackEncoder:
             # problems serializing methods.
             return msgpack.Ext(CUSTOM_TYPE_CLOUDPICKLE, cloudpickle.dumps(obj))
 
-        return msgpack.Ext(CUSTOM_TYPE_PICKLE,
-                           pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL))
+        return msgpack.Ext(CUSTOM_TYPE_PICKLE, pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL))
 
-    def _encode_tensordict(
-            self, obj: TensorDict
-    ) -> tuple[tuple[int, ...], Optional[str], dict[str, tuple[str, Any]]]:
+    def _encode_tensordict(self, obj: TensorDict) -> tuple[tuple[int, ...], Optional[str], dict[str, tuple[str, Any]]]:
+        assert self.aux_buffers is not None
         encoded_items: dict[str, tuple[str, Any]] = {}
         for k, v in obj.items():
             if isinstance(v, torch.Tensor):
@@ -95,9 +93,7 @@ class MsgpackEncoder:
         device = str(obj.device) if obj.device is not None else None
         return batch_size, device, encoded_items
 
-    def _encode_tensor(
-            self, obj: torch.Tensor
-    ) -> Union[tuple[str, list[tensorenc]], tensorenc]:
+    def _encode_tensor(self, obj: torch.Tensor) -> tuple[str, list[tensorenc]] | tensorenc:
         if not obj.is_nested:
             return self._encode_single_tensor(obj)
         else:
@@ -105,9 +101,7 @@ class MsgpackEncoder:
             data = [self._encode_single_tensor(tensor) for tensor in obj.unbind()]
             return layout, data
 
-    def _encode_single_tensor(
-            self, obj: torch.Tensor
-    ) -> tensorenc:
+    def _encode_single_tensor(self, obj: torch.Tensor) -> tensorenc:
         assert self.aux_buffers is not None
         # view the tensor as a contiguous 1D array of bytes
         arr = obj.flatten().contiguous().view(torch.uint8).numpy()
@@ -121,9 +115,8 @@ class MsgpackEncoder:
         dtype = str(obj.dtype).removeprefix("torch.")
         return dtype, obj.shape, data
 
-    def _encode_non_tensor_data(
-            self, obj: NonTensorData
-    ) -> tuple[tuple[int, ...], Optional[str], int]:
+    def _encode_non_tensor_data(self, obj: NonTensorData) -> tuple[tuple[int, ...], Optional[str], int]:
+        assert self.aux_buffers is not None
         batch_size = tuple(obj.batch_size)
         device = str(obj.device) if obj.device is not None else None
         data = len(self.aux_buffers)
@@ -140,18 +133,16 @@ class MsgpackDecoder:
 
     def __init__(self, t: Optional[Any] = None):
         args = () if t is None else (t,)
-        self.decoder = msgpack.Decoder(*args,
-                                       ext_hook=self.ext_hook,
-                                       dec_hook=self.dec_hook)
+        self.decoder = msgpack.Decoder(*args, ext_hook=self.ext_hook, dec_hook=self.dec_hook)
         self.aux_buffers: Sequence[bytestr] = ()
 
-    def decode(self, bufs: Union[bytestr, Sequence[bytestr]]) -> Any:
+    def decode(self, bufs: bytestr | Sequence[bytestr]) -> Any:
         if isinstance(bufs, bytestr):
             return self.decoder.decode(bufs)
 
         self.aux_buffers = bufs
         try:
-            return self.decoder.decode(bufs[0])
+            return self.decoder.decode(bufs[0])  # type: ignore[index]
         finally:
             self.aux_buffers = ()
 
@@ -192,8 +183,7 @@ class MsgpackDecoder:
             layout, data = arr
             torch_layout = getattr(torch, layout)
             return torch.nested.as_nested_tensor(
-                [self._decode_single_tensor(tensor) for tensor in data],
-                layout=torch_layout
+                [self._decode_single_tensor(tensor) for tensor in data], layout=torch_layout
             )
         else:
             raise ValueError(f"Invalid tensor encoding format, expected length 2 or 3, got {len(arr)}")
@@ -203,8 +193,7 @@ class MsgpackDecoder:
         # Copy from inline representation, to decouple the memory storage
         # of the message from the original buffer. And also make Torch
         # not complain about a readonly memoryview.
-        buffer = self.aux_buffers[data] if isinstance(data, int) \
-            else bytearray(data)
+        buffer = self.aux_buffers[data] if isinstance(data, int) else bytearray(data)
         torch_dtype = getattr(torch, dtype)
         assert isinstance(torch_dtype, torch.dtype)
         if not buffer:  # torch.frombuffer doesn't like empty buffers
@@ -231,5 +220,4 @@ class MsgpackDecoder:
         if code == CUSTOM_TYPE_CLOUDPICKLE:
             return cloudpickle.loads(data)
 
-        raise NotImplementedError(
-            f"Extension type code {code} is not supported")
+        raise NotImplementedError(f"Extension type code {code} is not supported")

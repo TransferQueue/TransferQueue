@@ -1,16 +1,15 @@
-import ray
-import zmq
+import sys
 import time
 import uuid
-import pytest
-import torch
-import tensordict
+from pathlib import Path
 from threading import Thread
 from unittest.mock import MagicMock
-from pathlib import Path
-import sys
-import numpy as np
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import pytest
+import ray
+import tensordict
+import torch
+import zmq
 from tensordict import TensorDict
 
 # Import your classes here
@@ -18,8 +17,8 @@ parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
 try:
-    from transfer_queue.data_system import TransferQueueStorageSimpleUnit
-    from transfer_queue.utils.zmq_utils import ZMQServerInfo, ZMQRequestType, ZMQMessage
+    from transfer_queue import TransferQueueStorageSimpleUnit
+    from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo
 except ImportError:
     # For testing purposes if imports are not available
     TransferQueueStorageSimpleUnit = MagicMock()
@@ -54,10 +53,7 @@ class MockController:
             role="CONTROLLER",
             id=controller_id,
             ip="127.0.0.1",
-            ports={
-                "handshake_socket": self.handshake_port,
-                "data_status_update_socket": self.data_update_port
-            }
+            ports={"handshake_socket": self.handshake_port, "data_status_update_socket": self.data_update_port},
         )
 
         self.running = True
@@ -79,13 +75,13 @@ class MockController:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.handshake_socket in socks:
                     identity, msg_bytes = self.handshake_socket.recv_multipart()
-                    msg = ZMQMessage.deserialize(msg_bytes)
+                    ZMQMessage.deserialize(msg_bytes)
 
                     # Send handshake ack
                     ack_msg = ZMQMessage.create(
                         request_type=ZMQRequestType.HANDSHAKE_ACK,
                         sender_id=self.controller_id,
-                        body={"message": "Handshake successful"}
+                        body={"message": "Handshake successful"},
                     )
                     self.handshake_socket.send_multipart([identity, ack_msg.serialize()])
             except zmq.Again:
@@ -103,13 +99,13 @@ class MockController:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.data_update_socket in socks:
                     identity, msg_bytes = self.data_update_socket.recv_multipart()
-                    msg = ZMQMessage.deserialize(msg_bytes)
+                    ZMQMessage.deserialize(msg_bytes)
 
                     # Send data update ack
                     ack_msg = ZMQMessage.create(
                         request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ACK,
                         sender_id=self.controller_id,
-                        body={"message": "Data update received"}
+                        body={"message": "Data update received"},
                     )
                     self.data_update_socket.send_multipart([identity, ack_msg.serialize()])
             except zmq.Again:
@@ -137,11 +133,7 @@ class MockClient:
         msg = ZMQMessage.create(
             request_type=ZMQRequestType.PUT_DATA,
             sender_id=f"mock_client_{client_id}",
-            body={
-                "global_indexes": global_indexes,
-                "local_indexes": local_indexes,
-                "field_data": field_data
-            }
+            body={"global_indexes": global_indexes, "local_indexes": local_indexes, "field_data": field_data},
         )
         self.socket.send(msg.serialize())
         return ZMQMessage.deserialize(self.socket.recv())
@@ -150,10 +142,7 @@ class MockClient:
         msg = ZMQMessage.create(
             request_type=ZMQRequestType.GET_DATA,
             sender_id=f"mock_client_{client_id}",
-            body={
-                "local_indexes": local_indexes,
-                "fields": fields
-            }
+            body={"local_indexes": local_indexes, "fields": fields},
         )
         self.socket.send(msg.serialize())
         return ZMQMessage.deserialize(self.socket.recv())
@@ -206,10 +195,13 @@ def test_put_get_single_client(storage_setup):
     # PUT data
     global_indexes = [0, 1, 2]
     local_indexes = [0, 1, 2]
-    field_data = TensorDict({
-        "log_probs": [torch.tensor([1.0, 2.0, 3.0]), torch.tensor([4.0, 5.0, 6.0]), torch.tensor([7.0, 8.0, 9.0])],
-        "rewards": [torch.tensor([10.0]), torch.tensor([20.0]), torch.tensor([30.0])]
-    }, batch_size=[])
+    field_data = TensorDict(
+        {
+            "log_probs": [torch.tensor([1.0, 2.0, 3.0]), torch.tensor([4.0, 5.0, 6.0]), torch.tensor([7.0, 8.0, 9.0])],
+            "rewards": [torch.tensor([10.0]), torch.tensor([20.0]), torch.tensor([30.0])],
+        },
+        batch_size=[],
+    )
 
     response = client.send_put(0, global_indexes, local_indexes, field_data)
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
@@ -221,8 +213,8 @@ def test_put_get_single_client(storage_setup):
     retrieved_data = response.body["data"]
     assert "log_probs" in retrieved_data
     assert "rewards" in retrieved_data
-    assert len(retrieved_data["log_probs"]) == 2
-    assert len(retrieved_data["rewards"]) == 2
+    assert retrieved_data["log_probs"].size(0) == 2
+    assert retrieved_data["rewards"].size(0) == 2
 
     # Verify data correctness
     torch.testing.assert_close(retrieved_data["log_probs"][0], torch.tensor([1.0, 2.0, 3.0]))
@@ -244,11 +236,16 @@ def test_put_get_multiple_clients(storage_setup):
     for i, client in enumerate(clients):
         global_indexes = [i * 10 + 0, i * 10 + 1, i * 10 + 2]
         local_indexes = [i * 10 + 0, i * 10 + 1, i * 10 + 2]
-        field_data = TensorDict({
-            "log_probs": [torch.tensor([i, i + 1, i + 2]), torch.tensor([i + 3, i + 4, i + 5]),
-                          torch.tensor([i + 6, i + 7, i + 8])],
-            "rewards": [torch.tensor([i * 10]), torch.tensor([i * 10 + 10]), torch.tensor([i * 10 + 20])]
-        })
+        field_data = TensorDict(
+            {
+                "log_probs": [
+                    torch.tensor([i, i + 1, i + 2]),
+                    torch.tensor([i + 3, i + 4, i + 5]),
+                    torch.tensor([i + 6, i + 7, i + 8]),
+                ],
+                "rewards": [torch.tensor([i * 10]), torch.tensor([i * 10 + 10]), torch.tensor([i * 10 + 20])],
+            }
+        )
 
         response = client.send_put(i, global_indexes, local_indexes, field_data)
         assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
@@ -256,15 +253,9 @@ def test_put_get_multiple_clients(storage_setup):
     # Now simulate a third client that writes to overlapping local_indexes (e.g., index 0)
     overlapping_client = MockClient(put_get_address)
     overlap_local_indexes = [0]  # Overlaps with first client's index 0
-    overlap_field_data = TensorDict({
-        "log_probs": [torch.tensor([999, 999, 999])],
-        "rewards": [torch.tensor([999])]
-    })
+    overlap_field_data = TensorDict({"log_probs": [torch.tensor([999, 999, 999])], "rewards": [torch.tensor([999])]})
     response = overlapping_client.send_put(
-        client_id=99,
-        global_indexes=[0],
-        local_indexes=overlap_local_indexes,
-        field_data=overlap_field_data
+        client_id=99, global_indexes=[0], local_indexes=overlap_local_indexes, field_data=overlap_field_data
     )
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
 
@@ -274,8 +265,8 @@ def test_put_get_multiple_clients(storage_setup):
         assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
 
         retrieved_data = response.body["data"]
-        assert len(retrieved_data["log_probs"]) == 2
-        assert len(retrieved_data["rewards"]) == 2
+        assert retrieved_data["log_probs"].size(0) == 2
+        assert retrieved_data["rewards"].size(0) == 2
 
         # For index 0, expect data from overlapping_client; others from original client
         if i == 0:
@@ -327,13 +318,7 @@ def test_performance_basic(storage_setup):
             log_probs_data.append(log_probs_tensor)
             rewards_data.append(rewards_tensor)
 
-        field_data = TensorDict(
-            {
-                "log_probs": log_probs_data,
-                "rewards": rewards_data
-            },
-            batch_size=[batch_size]
-        )
+        field_data = TensorDict({"log_probs": log_probs_data, "rewards": rewards_data}, batch_size=[batch_size])
 
         response = client.send_put(0, global_indexes, local_indexes, field_data)
         latency = time.time() - start
@@ -361,3 +346,120 @@ def test_performance_basic(storage_setup):
     assert avg_get_latency < 5000, f"Avg GET latency {avg_get_latency}ms exceeds threshold"
 
     client.close()
+
+
+def test_put_get_nested_tensor_single_client(storage_setup):
+    """Test basic put and get operations with a single client using TensorDict and nested tensors."""
+    _, put_get_address, _ = storage_setup
+
+    client = MockClient(put_get_address)
+
+    # PUT data
+    global_indexes = [0, 1, 2]
+    local_indexes = [0, 1, 2]
+
+    field_data = TensorDict(
+        {
+            "variable_length_sequences": [
+                torch.tensor([-0.5, -1.2, -0.8]),
+                torch.tensor([-0.3, -1.5, -2.1, -0.9]),
+                torch.tensor([-1.1, -0.7]),
+            ],
+            "attention_mask": [torch.tensor([1, 1, 1]), torch.tensor([1, 1, 1, 1]), torch.tensor([1, 1])],
+        },
+        batch_size=[],
+    )
+
+    response = client.send_put(0, global_indexes, local_indexes, field_data)
+    assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
+
+    # GET data
+    response = client.send_get(0, [0, 2], ["variable_length_sequences", "attention_mask"])
+    assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
+
+    retrieved_data = response.body["data"]
+    assert "variable_length_sequences" in retrieved_data
+    assert "attention_mask" in retrieved_data
+    assert retrieved_data["variable_length_sequences"].size(0) == 2
+    assert retrieved_data["attention_mask"].size(0) == 2
+
+    # Verify data correctness
+    torch.testing.assert_close(retrieved_data["variable_length_sequences"][0], torch.tensor([-0.5, -1.2, -0.8]))
+    torch.testing.assert_close(retrieved_data["variable_length_sequences"][1], torch.tensor([-1.1, -0.7]))
+    torch.testing.assert_close(retrieved_data["attention_mask"][0], torch.tensor([1, 1, 1]))
+    torch.testing.assert_close(retrieved_data["attention_mask"][1], torch.tensor([1, 1]))
+
+    client.close()
+
+
+def test_put_get_nested_nontensor_single_client(storage_setup):
+    """Test basic put and get operations with a single client using non-tensor data (strings)."""
+    _, put_get_address, _ = storage_setup
+
+    client = MockClient(put_get_address)
+
+    # PUT data
+    global_indexes = [0, 1, 2]
+    local_indexes = [0, 1, 2]
+    field_data = TensorDict(
+        {
+            "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
+            "response_text": ["Hi there!", "This is the response to the longer sentence", "Test response"],
+        },
+        batch_size=[],
+    )
+
+    response = client.send_put(0, global_indexes, local_indexes, field_data)
+    assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
+
+    # GET data
+    response = client.send_get(0, [0, 1, 2], ["prompt_text", "response_text"])
+    assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
+
+    retrieved_data = response.body["data"]
+    assert "prompt_text" in retrieved_data
+    assert "response_text" in retrieved_data
+
+    # Verify data correctness
+    assert isinstance(retrieved_data["prompt_text"][0], str)
+    assert isinstance(retrieved_data["response_text"][0], str)
+
+    assert retrieved_data["prompt_text"][0] == "Hello world!"
+    assert retrieved_data["prompt_text"][1] == "This is a longer sentence for testing"
+    assert retrieved_data["prompt_text"][2] == "Test case"
+    assert retrieved_data["response_text"][0] == "Hi there!"
+    assert retrieved_data["response_text"][1] == "This is the response to the longer sentence"
+    assert retrieved_data["response_text"][2] == "Test response"
+
+    client.close()
+
+
+def test_put_get_single_item_single_client(storage_setup):
+    """Test put and get operations for a single item with a single client."""
+    _, put_get_address, _ = storage_setup
+
+    client = MockClient(put_get_address)
+
+    # PUT data
+    field_data = TensorDict(
+        {
+            "prompt_text": ["Hello world!"],
+            "attention_mask": [torch.tensor([1, 1, 1])],
+        },
+        batch_size=[],
+    )
+
+    response = client.send_put(0, [0], [0], field_data)
+    assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
+
+    # GET data
+    response = client.send_get(0, [0], ["prompt_text", "attention_mask"])
+    assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
+
+    retrieved_data = response.body["data"]
+    assert "prompt_text" in retrieved_data
+    assert "attention_mask" in retrieved_data
+
+    assert retrieved_data["prompt_text"][0] == "Hello world!"
+    assert retrieved_data["attention_mask"].shape == (1, 3)
+    torch.testing.assert_close(retrieved_data["attention_mask"][0], torch.tensor([1, 1, 1]))
