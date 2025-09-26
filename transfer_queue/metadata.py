@@ -468,33 +468,43 @@ class BatchMeta:
 
     def reorder(self, indices: list[int]) -> "BatchMeta":
         """
-        Reorder the samples in the batch according to the given indices.
+        Reorder the SampleMeta in the BatchMeta according to the given indices.
 
-        This method rearranges the samples in the current batch based on the specified
-        index sequence. The operation is performed in-place, modifying the current
-        BatchMeta's SampleMeta order.
+        The operation is performed in-place, modifying the current BatchMeta's SampleMeta order.
 
         Args:
             indices : list[int]
-                A list of integers specifying the new order of samples. Each integer
-                represents the current index of the sample in the batch. For example,
-                indices [2, 0, 1] would move the third sample to the first position,
-                the first sample to the second position, and the second sample to the
-                third position.
+                A list of integers specifying the new order of SampleMeta. Each integer
+                represents the current index of the SampleMeta in the BatchMeta.
 
         Returns:
-            BatchMeta
-                A new BatchMeta instance with the reordered SampleMeta and the original
-                extra_info. The current batch is also modified in-place.
-
-        Raises:
-            IndexError
-                If any index in indices is out of bounds for the current SampleMeta list.
-            ValueError
-                If the length of indices doesn't match the number of SampleMeta.
+            BatchMeta: Returns self for method chaining
         """
-        self.samples = list(itemgetter(*indices)(self.samples))
-        return BatchMeta(samples=self.samples, extra_info=self.extra_info)
+        # Reorder the samples
+        reordered_samples = [self.samples[i] for i in indices]
+        object.__setattr__(self, "samples", reordered_samples)
+
+        # Update necessary attributes
+        self._update_after_reorder()
+        return self
+
+    def _update_after_reorder(self) -> None:
+        """Update related attributes specifically for the reorder operation"""
+        # Update batch_index for each sample
+        for idx, sample in enumerate(self.samples):
+            object.__setattr__(sample, "_batch_index", idx)
+
+        # Update cached index lists
+        if self.samples:
+            object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
+            object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
+            object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
+
+            # Rebuild storage groups (because the order has changed)
+            storage_meta_groups = self._build_storage_meta_groups()
+            object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
+
+        # Note: No need to update _size, _field_names, _is_ready, etc., as these remain unchanged after reorder
 
     @classmethod
     def from_samples(

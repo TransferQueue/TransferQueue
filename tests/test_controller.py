@@ -210,8 +210,8 @@ class TestTransferQueueController:
                 mode="insert",
             )
         )
-        metadata_reordered = metadata.reorder([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
-        assert metadata_reordered.global_indexes == [
+        metadata.reorder([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
+        assert metadata.global_indexes == [
             31,
             30,
             29,
@@ -229,7 +229,7 @@ class TestTransferQueueController:
             17,
             16,
         ]
-        assert metadata_reordered.local_indexes == [
+        assert metadata.local_indexes == [
             15,
             14,
             13,
@@ -247,7 +247,7 @@ class TestTransferQueueController:
             9,
             8,
         ]
-        storage_ids = metadata_reordered.storage_ids
+        storage_ids = metadata.storage_ids
         assert len(set(storage_ids[: len(storage_ids) // 2])) == 1
 
     # TODO: Test case where multiple clients concurrently read datameta from a single controller,
