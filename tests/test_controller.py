@@ -11,11 +11,8 @@ import torch
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
-try:
-    from transfer_queue.controller import TQ_INIT_FIELD_NUM, TransferQueueController
-    from transfer_queue.storage import TransferQueueStorageSimpleUnit
-except ImportError as e:
-    raise ImportError from e
+from transfer_queue.controller import TQ_INIT_FIELD_NUM, TransferQueueController  # noqa: E402
+from transfer_queue.storage import TransferQueueStorageSimpleUnit  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -88,8 +85,6 @@ class TestTransferQueueController:
     def test_build_index_storage_mapping(self, num_n_samples, num_global_batch, ray_setup):
         # Used as the offset for the global index to distinguish which global step the data corresponds to
         global_batch_size = 8
-        num_global_batch = num_global_batch
-        num_n_samples = num_n_samples
         num_data_storage_units = 2
 
         self.tq_controller = TransferQueueController.remote(

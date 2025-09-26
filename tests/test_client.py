@@ -99,9 +99,12 @@ class MockController:
                     self.request_socket.send_multipart([identity, response_msg.serialize()])
             except zmq.Again:
                 continue
-            except Exception:
-                if self.running:
-                    pass
+            except Exception as e:
+                if self.is_running:
+                    print(f"MockController running exception: {e}")
+                else:
+                    print(f"MockController ERROR: {e}")
+                    raise
 
     def _mock_batch_meta(self, request_body):
         batch_size = request_body.get("batch_size", 1)
@@ -196,9 +199,12 @@ class MockStorage:
                     self.data_socket.send_multipart([identity, response_msg.serialize()])
             except zmq.Again:
                 continue
-            except Exception:
-                if self.running:
-                    pass
+            except Exception as e:
+                if self.is_running:
+                    print(f"MockStorage running exception: {e}")
+                else:
+                    print(f"MockStorage ERROR: {e}")
+                    raise
 
     def _handle_get_data(self, request_body):
         """Handle GET_DATA request by retrieving stored data"""
