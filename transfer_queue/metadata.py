@@ -1,6 +1,5 @@
 import dataclasses
 from dataclasses import dataclass
-from operator import itemgetter
 from typing import Any, Optional
 
 import numpy as np
