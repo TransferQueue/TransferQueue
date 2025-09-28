@@ -1,3 +1,17 @@
+# Copyright 2025 The TransferQueue Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import math
 import sys
@@ -210,41 +224,42 @@ class TestTransferQueueController:
                 mode="insert",
             )
         )
+        metadata.reorder([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
         assert metadata.global_indexes == [
-            16,
-            17,
-            18,
-            19,
-            20,
-            21,
-            22,
-            23,
-            24,
-            25,
-            26,
-            27,
-            28,
-            29,
-            30,
             31,
+            30,
+            29,
+            28,
+            27,
+            26,
+            25,
+            24,
+            23,
+            22,
+            21,
+            20,
+            19,
+            18,
+            17,
+            16,
         ]
         assert metadata.local_indexes == [
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
-            14,
             15,
-            8,
-            9,
-            10,
-            11,
-            12,
-            13,
             14,
+            13,
+            12,
+            11,
+            10,
+            9,
+            8,
             15,
+            14,
+            13,
+            12,
+            11,
+            10,
+            9,
+            8,
         ]
         storage_ids = metadata.storage_ids
         assert len(set(storage_ids[: len(storage_ids) // 2])) == 1

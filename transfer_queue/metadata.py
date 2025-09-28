@@ -1,3 +1,17 @@
+# Copyright 2025 The TransferQueue Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import dataclasses
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -464,6 +478,41 @@ class BatchMeta:
         merged_extra_info = {**self.extra_info, **other.extra_info}
 
         return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
+
+    def reorder(self, indices: list[int]):
+        """
+        Reorder the SampleMeta in the BatchMeta according to the given indices.
+
+        The operation is performed in-place, modifying the current BatchMeta's SampleMeta order.
+
+        Args:
+            indices : list[int]
+                A list of integers specifying the new order of SampleMeta. Each integer
+                represents the current index of the SampleMeta in the BatchMeta.
+        """
+        # Reorder the samples
+        reordered_samples = [self.samples[i] for i in indices]
+        object.__setattr__(self, "samples", reordered_samples)
+
+        # Update necessary attributes
+        self._update_after_reorder()
+
+    def _update_after_reorder(self) -> None:
+        """Update related attributes specifically for the reorder operation"""
+        # Update batch_index for each sample
+        for idx, sample in enumerate(self.samples):
+            object.__setattr__(sample, "_batch_index", idx)
+
+        # Update cached index lists
+        object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
+        object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
+        object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
+
+        # Rebuild storage groups
+        storage_meta_groups = self._build_storage_meta_groups()
+        object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
+
+        # Note: No need to update _size, _field_names, _is_ready, etc., as these remain unchanged after reorder
 
     @classmethod
     def from_samples(
