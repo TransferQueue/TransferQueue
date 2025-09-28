@@ -485,7 +485,6 @@ class BatchMeta:
 
         # Update necessary attributes
         self._update_after_reorder()
-        return self
 
     def _update_after_reorder(self) -> None:
         """Update related attributes specifically for the reorder operation"""
@@ -494,14 +493,13 @@ class BatchMeta:
             object.__setattr__(sample, "_batch_index", idx)
 
         # Update cached index lists
-        if self.samples:
-            object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
-            object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
-            object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
+        object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
+        object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
+        object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
-            # Rebuild storage groups (because the order has changed)
-            storage_meta_groups = self._build_storage_meta_groups()
-            object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
+        # Rebuild storage groups
+        storage_meta_groups = self._build_storage_meta_groups()
+        object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
 
         # Note: No need to update _size, _field_names, _is_ready, etc., as these remain unchanged after reorder
 
