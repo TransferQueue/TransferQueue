@@ -91,3 +91,33 @@ def random_sampler(
         sampled_indexes_idx = torch.multinomial(weights, batch_size, replacement=False).tolist()
         sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
     return sampled_indexes
+
+
+def sequential_sampler(
+    ready_for_consume_idx: list[int],
+    batch_size: int,
+    get_n_samples: bool,
+    n_samples_per_prompt: int,
+) -> list[int]:
+    """
+    sequential sampling batch_size samples from global indexes ready_for_consume_idx
+    input example:
+        if get_n_samples: (group_num=3, group_size=4)
+            ready_for_consume_idx could look like: [0, 1, 2, 3,   4, 5, 6, 7    8, 9, 10, 11]
+        else:
+            ready_for_consume_idx could look like: [0, 1, 2]
+    """
+    if get_n_samples:
+        assert len(ready_for_consume_idx) % n_samples_per_prompt == 0
+        assert batch_size % n_samples_per_prompt == 0
+        batch_size_n_samples = batch_size // n_samples_per_prompt
+
+        group_ready_for_consume_idx = torch.tensor(ready_for_consume_idx, dtype=torch.int).view(
+            -1, n_samples_per_prompt
+        )
+
+        sampled_indexes = group_ready_for_consume_idx[list(range(batch_size_n_samples))].flatten().tolist()     
+    else:
+        sampled_indexes = [int(ready_for_consume_idx[i]) for i in range(batch_size)]
+    
+    return sampled_indexes

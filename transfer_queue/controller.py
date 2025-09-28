@@ -35,7 +35,7 @@ from transfer_queue.metadata import (
 from transfer_queue.utils.utils import (
     ProductionStatus,
     TransferQueueRole,
-    random_sampler,
+    sequential_sampler,
 )
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
@@ -329,12 +329,12 @@ class TransferQueueController:
                 time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
-            batch_global_indexes = random_sampler(ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples)
+            batch_global_indexes = sequential_sampler(ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples)
         elif mode == "force_fetch":
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             consumer_status = self._get_consumption_status(task_name)
             not_consumed_idx = [i for i in range(start_idx, end_idx) if consumer_status[i] == 0]
-            batch_global_indexes = random_sampler(not_consumed_idx, batch_size, get_n_samples, self.num_n_samples)
+            batch_global_indexes = sequential_sampler(not_consumed_idx, batch_size, get_n_samples, self.num_n_samples)
 
         # Mark this batch of data as consumed
         consumer_status = self._get_consumption_status(task_name)
