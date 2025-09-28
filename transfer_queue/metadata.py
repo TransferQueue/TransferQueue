@@ -465,7 +465,7 @@ class BatchMeta:
 
         return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
 
-    def reorder(self, indices: list[int]) -> "BatchMeta":
+    def reorder(self, indices: list[int]):
         """
         Reorder the SampleMeta in the BatchMeta according to the given indices.
 
@@ -475,9 +475,6 @@ class BatchMeta:
             indices : list[int]
                 A list of integers specifying the new order of SampleMeta. Each integer
                 represents the current index of the SampleMeta in the BatchMeta.
-
-        Returns:
-            BatchMeta: Returns self for method chaining
         """
         # Reorder the samples
         reordered_samples = [self.samples[i] for i in indices]
