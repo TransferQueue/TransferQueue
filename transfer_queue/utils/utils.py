@@ -105,7 +105,7 @@ def sequential_sampler(
         if get_n_samples: (group_num=3, group_size=4)
             ready_for_consume_idx could look like: [0, 1, 2, 3,  8, 9, 10, 11,  12, 13, 14, 15]
         else:
-            ready_for_consume_idx could look like: [0, 1, 2]
+            ready_for_consume_idx could look like: [0, 3, 5, 6, 7, 8]
     """
     if get_n_samples:
         assert len(ready_for_consume_idx) % n_samples_per_prompt == 0
