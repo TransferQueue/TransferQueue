@@ -116,7 +116,7 @@ def sequential_sampler(
             -1, n_samples_per_prompt
         )
 
-        sampled_indexes = group_ready_for_consume_idx[list(range(batch_size_n_samples))].flatten().tolist()     
+        sampled_indexes = group_ready_for_consume_idx[list(range(batch_size_n_samples))].flatten().tolist()
     else:
         sampled_indexes = [int(ready_for_consume_idx[i]) for i in range(batch_size)]
     
