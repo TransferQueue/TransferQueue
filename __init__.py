@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from transfer_queue import (
+from .transfer_queue import (
     AsyncTransferQueueClient,
     BatchMeta,
     TransferQueueClient,
@@ -20,7 +20,7 @@ from transfer_queue import (
     TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
 )
-from transfer_queue.utils import (
+from .transfer_queue.utils import (
     get_placement_group,
 )
 
