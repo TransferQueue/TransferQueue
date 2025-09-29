@@ -659,3 +659,22 @@ def process_zmq_server_info(handlers: dict[Any, Union[TransferQueueController, T
     for name, handler in handlers.items():
         server_info[name] = ray.get(handler.get_zmq_server_info.remote())  # type: ignore[attr-defined]
     return server_info
+
+
+_TRANSFER_QUEUE_CONTROLLER_INFOS = None
+_TRANSFER_QUEUE_STORAGE_INFOS = None
+
+
+def set_transferqueue_server_info(controller_infos: dict[Any, ZMQServerInfo], storage_infos: dict[Any, ZMQServerInfo]):
+    global _TRANSFER_QUEUE_CONTROLLER_INFOS, _TRANSFER_QUEUE_STORAGE_INFOS
+    if _TRANSFER_QUEUE_CONTROLLER_INFOS is not None and _TRANSFER_QUEUE_STORAGE_INFOS is not None:
+        return
+    _TRANSFER_QUEUE_CONTROLLER_INFOS = controller_infos
+    _TRANSFER_QUEUE_STORAGE_INFOS = storage_infos
+
+
+def get_transferqueue_server_info():
+    assert _TRANSFER_QUEUE_CONTROLLER_INFOS is not None and _TRANSFER_QUEUE_STORAGE_INFOS is not None, (
+        "TransferQueue server infos have not been set yet."
+    )
+    return _TRANSFER_QUEUE_CONTROLLER_INFOS, _TRANSFER_QUEUE_STORAGE_INFOS
