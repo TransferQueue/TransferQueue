@@ -25,24 +25,24 @@ import zmq
 import zmq.asyncio
 from tensordict import NonTensorStack, TensorDict
 
-from transfer_queue.controller import TransferQueueController
-from transfer_queue.metadata import (
+from .controller import TransferQueueController
+from .metadata import (
     BatchMeta,
     StorageMetaGroup,
 )
-from transfer_queue.storage import TransferQueueStorageSimpleUnit
-from transfer_queue.utils.utils import (
+from .storage import TransferQueueStorageSimpleUnit
+from .utils.utils import (
     TransferQueueRole,
 )
-from transfer_queue.utils.zmq_utils import (
+from .utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
     ZMQServerInfo,
     create_zmq_socket,
 )
 
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
+logger = logging.getLogger(__file__)
+logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 
 class AsyncTransferQueueClient:

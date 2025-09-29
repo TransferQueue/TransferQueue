@@ -23,7 +23,7 @@ import psutil
 import zmq
 from typing_extensions import Self
 
-from transfer_queue.utils.utils import (
+from .utils import (
     ExplicitEnum,
     TransferQueueRole,
 )

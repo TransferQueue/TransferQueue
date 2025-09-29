@@ -27,17 +27,17 @@ import torch
 import zmq
 from ray.util import get_node_ip_address
 
-from transfer_queue.metadata import (
+from .metadata import (
     BatchMeta,
     FieldMeta,
     SampleMeta,
 )
-from transfer_queue.utils.utils import (
+from .utils.utils import (
     ProductionStatus,
     TransferQueueRole,
     random_sampler,
 )
-from transfer_queue.utils.zmq_utils import (
+from .utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
     ZMQServerInfo,
@@ -45,8 +45,8 @@ from transfer_queue.utils.zmq_utils import (
     get_free_port,
 )
 
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
+logger = logging.getLogger(__file__)
+logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 300))
 TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))

@@ -19,7 +19,7 @@ from typing import Any, Optional
 import numpy as np
 from tensordict import TensorDict
 
-from transfer_queue.utils.utils import ProductionStatus
+from .utils.utils import ProductionStatus
 
 
 @dataclass

@@ -25,8 +25,8 @@ import zmq
 from ray.util import get_node_ip_address
 from tensordict import NonTensorStack, TensorDict
 
-from transfer_queue.utils.utils import TransferQueueRole
-from transfer_queue.utils.zmq_utils import (
+from .utils.utils import TransferQueueRole
+from .utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
     ZMQServerInfo,
@@ -34,8 +34,8 @@ from transfer_queue.utils.zmq_utils import (
     get_free_port,
 )
 
-logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
+logger = logging.getLogger(__file__)
+logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
 TQ_STORAGE_POLLER_TIMEOUT = os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 1000)
 TQ_STORAGE_HANDSHAKE_TIMEOUT = int(os.environ.get("TQ_STORAGE_HANDSHAKE_TIMEOUT", 30))
