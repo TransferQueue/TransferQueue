@@ -329,7 +329,9 @@ class TransferQueueController:
                 time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
-            batch_global_indexes = sequential_sampler(ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples)
+            batch_global_indexes = sequential_sampler(
+                ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples
+            )
         elif mode == "force_fetch":
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             consumer_status = self._get_consumption_status(task_name)
