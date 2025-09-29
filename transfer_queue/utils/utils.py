@@ -103,7 +103,7 @@ def sequential_sampler(
     sequential sampling batch_size samples from global indexes ready_for_consume_idx
     input example:
         if get_n_samples: (group_num=3, group_size=4)
-            ready_for_consume_idx could look like: [0, 1, 2, 3,   4, 5, 6, 7    8, 9, 10, 11]
+            ready_for_consume_idx could look like: [0, 1, 2, 3,  8, 9, 10, 11,  12, 13, 14, 15]
         else:
             ready_for_consume_idx could look like: [0, 1, 2]
     """
