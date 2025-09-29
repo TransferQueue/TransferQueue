@@ -60,19 +60,28 @@ def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
     return placement_group
 
 
-def random_sampler(
+def sequential_sampler(
     ready_for_consume_idx: list[int],
     batch_size: int,
     get_n_samples: bool,
     n_samples_per_prompt: int,
 ) -> list[int]:
     """
-    random sampling batch_size samples from global indexes ready_for_consume_idx
-    input example:
-        if get_n_samples: (group_num=3, group_size=4)
-            ready_for_consume_idx could look like: [0, 1, 2, 3,   8, 9, 10, 11,   16, 17, 18, 19]
-        else:
-            ready_for_consume_idx could look like: [2, 5, 6]
+    Sequentially samples a batch of indices from global indexes ready_for_consume_idx.
+
+    Args:
+        ready_for_consume_idx: A sorted list of available indices for sampling.
+            - When get_n_samples=True:
+                Expected to be grouped by prompts, e.g.,
+                [0,1,2,3, 8,9,10,11, 12,13,14,15] (3 groups of 4 samples each)
+            - When get_n_samples=False:
+                Can be any ordered list, e.g., [0,3,5,6,7,8]
+        batch_size: Total number of samples to return
+        get_n_samples: Flag indicating the sampling mode
+        n_samples_per_prompt: Number of samples per prompt (used when get_n_samples=True)
+
+    Returns:
+        list[int]: Sequentially sampled indices of length batch_size
     """
     if get_n_samples:
         assert len(ready_for_consume_idx) % n_samples_per_prompt == 0
@@ -83,11 +92,7 @@ def random_sampler(
             -1, n_samples_per_prompt
         )
 
-        weights = torch.ones(group_ready_for_consume_idx.size(0))
-        sampled_indexes_idx = torch.multinomial(weights, batch_size_n_samples, replacement=False).tolist()
-        sampled_indexes = group_ready_for_consume_idx[sampled_indexes_idx].flatten().tolist()
+        sampled_indexes = group_ready_for_consume_idx[list(range(batch_size_n_samples))].flatten().tolist()
     else:
-        weights = torch.ones(len(ready_for_consume_idx))
-        sampled_indexes_idx = torch.multinomial(weights, batch_size, replacement=False).tolist()
-        sampled_indexes = [int(ready_for_consume_idx[i]) for i in sampled_indexes_idx]
+        sampled_indexes = [int(ready_for_consume_idx[i]) for i in range(batch_size)]
     return sampled_indexes
