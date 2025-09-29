@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from zmq_utils import *
-
 from .utils import *
+from .zmq_utils import *
 
 __all__ = [
     "get_placement_group",
@@ -22,4 +21,5 @@ __all__ = [
     "ZMQServerInfo",
     "ZMQRequestType",
     "ProductionStatus",
+    "ZMQMessage",
 ]

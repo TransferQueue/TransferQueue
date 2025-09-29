@@ -39,6 +39,7 @@ __all__ = [
     "ZMQServerInfo",
     "ZMQRequestType",
     "ProductionStatus",
+    "ZMQMessage",
 ]
 
 version_folder = os.path.dirname(os.path.join(os.path.abspath(__file__)))

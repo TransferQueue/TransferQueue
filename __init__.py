@@ -27,5 +27,6 @@ __all__ = [
     "TransferQueueRole",
     "ZMQServerInfo",
     "ZMQRequestType",
+    "ZMQMessage",
     "ProductionStatus",
 ]
