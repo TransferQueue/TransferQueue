@@ -20,16 +20,20 @@ from .client import (
     process_zmq_server_info,
 )
 from .controller import TransferQueueController
-from .metadata import BatchMeta
+from .metadata import BatchMeta, FieldMeta, SampleMeta
 from .storage import TransferQueueStorageSimpleUnit
+from .utils.utils import ProductionStatus
 
 __all__ = [
     "AsyncTransferQueueClient",
     "BatchMeta",
+    "SampleMeta",
+    "FieldMeta",
     "TransferQueueClient",
     "TransferQueueController",
     "TransferQueueStorageSimpleUnit",
     "process_zmq_server_info",
+    "ProductionStatus",
 ]
 
 version_folder = os.path.dirname(os.path.join(os.path.abspath(__file__)))

@@ -15,6 +15,9 @@
 from .transfer_queue import (
     AsyncTransferQueueClient,
     BatchMeta,
+    FieldMeta,
+    ProductionStatus,
+    SampleMeta,
     TransferQueueClient,
     TransferQueueController,
     TransferQueueStorageSimpleUnit,
@@ -27,9 +30,12 @@ from .transfer_queue.utils import (
 __all__ = [
     "AsyncTransferQueueClient",
     "BatchMeta",
+    "SampleMeta",
+    "FieldMeta",
     "TransferQueueClient",
     "TransferQueueController",
     "TransferQueueStorageSimpleUnit",
     "process_zmq_server_info",
     "get_placement_group",
+    "ProductionStatus",
 ]
