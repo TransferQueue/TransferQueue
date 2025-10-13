@@ -106,20 +106,20 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        for f in field_data.keys():
+        extracted_data = dict(field_data)
+
+        for f, values in extracted_data.items():
+            if f not in self.field_data:
+                self.field_data[f] = [None] * self.storage_size
+
             for i, idx in enumerate(local_indexes):
-                # Validate local_indexes
                 if idx < 0 or idx >= self.storage_size:
                     raise ValueError(
                         f"StorageUnitData put_data operation receive invalid local_index: {idx} beyond "
                         f"storage_size: {self.storage_size}"
                     )
 
-                if f not in self.field_data:
-                    # Initialize new field value list with None
-                    self.field_data[f] = [None] * self.storage_size
-
-                self.field_data[f][idx] = field_data[f][i]
+                self.field_data[f][idx] = values[i]
 
     def clear(self, local_indexes: list[int]) -> None:
         """
