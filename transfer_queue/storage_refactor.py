@@ -114,7 +114,6 @@ class StorageUnitData:
             local_indexes: Local indexes used for putting data.
         """
 
-        print(f"in PUT DATA, field_data keys is {field_data.keys()}")
         for f in field_data.keys():
             for i, idx in enumerate(local_indexes):
                 # Validate local_indexes
@@ -129,8 +128,6 @@ class StorageUnitData:
                     self.field_data[f] = [None] * self.storage_size
 
                 self.field_data[f][idx] = field_data[f][i]
-
-        print('PUT DATA OK')
 
     def clear(self, local_indexes: list[int]) -> None:
         """
@@ -165,7 +162,6 @@ class TransferQueueStorageManager(ABC):
         self.config = config
 
         self.zmq_context = None
-        print('storage manager start to connect to controllers')
         self.connect_to_controllers(self.controller_infos)
 
     def connect_to_controllers(self, controller_infos: ZMQServerInfo | dict[str, ZMQServerInfo]) -> None:
@@ -454,11 +450,8 @@ class TransferQueueStorageSimpleUnit:
         """
         try:
             local_indexes = data_parts.body["local_indexes"]
-            print(local_indexes)
             field_data = data_parts.body["data"]  # field_data should be in {field_name: [real data]} format.
-            print(field_data)
 
-            print('--######################################---')
             self.storage_data.put_data(field_data, local_indexes)
 
             # After put operation finish, send a message to the client
@@ -549,9 +542,14 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         super().__init__(config)
         self.storage_unit_infos = self._register_servers(storage_unit_infos)
         self.storage_unit_size = config.get("storage_unit_size", 10000)
-        self.global_index_storage_unit_mapping = {}
-        self.global_index_local_index_mapping = {}
-        self.storage_unit_water_level = {storage_id: 0 for storage_id in self.storage_unit_infos.keys()}
+
+        self._build_storage_mapping_functions()
+
+
+    def _build_storage_mapping_functions(self):
+        self.global_index_storage_unit_mapping = lambda x: list(self.storage_unit_infos.keys())[x % len(self.storage_unit_infos)]
+        self.global_index_local_index_mapping = lambda x: x // len(self.storage_unit_infos)
+
 
     def _register_servers(self, server_infos):
         server_infos_transform = {}
@@ -632,41 +630,10 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
 
         return decorator
 
-    def _select_storage_unit(self, global_indexes: list[int], policy: str = "round-robin") -> str:
-        """
-        Select storage units for the given samples.
-        """
-        new_indexes = [idx for idx in global_indexes if idx not in self.global_index_storage_unit_mapping]
-
-        if policy == "round-robin":
-            # Simple round-robin selection.
-            for idx in new_indexes:
-                initial_target_storage_unit = idx % len(self.storage_unit_infos)
-                target_storage_unit = initial_target_storage_unit
-                while (
-                    self.storage_unit_water_level.setdefault(
-                        list(self.storage_unit_infos.keys())[target_storage_unit], 0
-                    )
-                    >= self.storage_unit_size
-                ):
-                    target_storage_unit = (target_storage_unit + 1) % len(self.storage_unit_infos)
-                    if target_storage_unit == initial_target_storage_unit:
-                        raise RuntimeError("All storage units are full. Cannot allocate new data.")
-
-                target_storage_unit = list(self.storage_unit_infos.keys())[target_storage_unit]
-                self.global_index_storage_unit_mapping[idx] = target_storage_unit
-                self.global_index_local_index_mapping[idx] = self.storage_unit_water_level[target_storage_unit]
-                self.storage_unit_water_level[target_storage_unit] += 1
-        else:
-            raise ValueError(f"Unknown selection policy: {policy}")
-
     async def put_data(self, data: TensorDict, metadata: BatchMeta) -> None:
         """
         Send data to remote StorageUnit based on metadata.
         """
-
-        # allocate storage unit for each sample based on global index
-        self._select_storage_unit(metadata.global_indexes)
 
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(metadata, self.global_index_storage_unit_mapping,
@@ -707,13 +674,26 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         Send data to a specific storage unit.
         """
         local_indexes = transfer_data["local_indexes"]
-        
+
+        tensordict_data = TensorDict(
+            {
+                field: (
+                    torch.nested.as_nested_tensor(transfer_data["field_data"][field])
+                    if transfer_data["field_data"][field]
+                    and all(isinstance(x, torch.Tensor) for x in transfer_data["field_data"][field])
+                    else NonTensorStack(*transfer_data["field_data"][field])
+                )
+                for field in transfer_data["field_data"]
+            }
+        )
+
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.PUT_DATA,
             sender_id=self.storage_manager_id,
             receiver_id=target_storage_unit,
-            body={"local_indexes": local_indexes, "data": transfer_data},  # 这里不再需要提供global index
+            body={"local_indexes": local_indexes, "data": tensordict_data},
         )
+
         try:
             await socket.send(request_msg.serialize())
             serialized = await socket.recv()
@@ -725,7 +705,6 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
                     f"{response_msg.body.get('message', 'Unknown error')}"
                 )
         except Exception as e:
-            print(f"Error Detail: {local_indexes}, {transfer_data}")
             raise RuntimeError(f"Error in put to storage unit {target_storage_unit}: {str(e)}") from e
 
     async def get_data(self, metadata: BatchMeta) -> TensorDict:
@@ -924,7 +903,8 @@ class StorageMetaGroup:
     def __str__(self) -> str:
         return f"StorageMetaGroup(storage_id='{self.storage_id}', size={self.size})"
 
-
+# TODO: to be optimized. Now there are too many data dicts.
+# transfer_data, transfer_dict, data, StorageUnitData, field_data...
 def _add_field_data(
     transfer_dict: dict[str, Any], storage_meta_group: StorageMetaGroup, data: TensorDict
 ) -> dict[str, Any]:
@@ -944,9 +924,6 @@ def get_transfer_data(
 ) -> dict[str, Any]:
     """Convert to dictionary format with field data for put operations"""
 
-    print(storage_meta_group)
-    print(data)
-
     result = storage_meta_group.get_transfer_data(field_names=list(data.keys()))
     result = _add_field_data(result, storage_meta_group, data)
     return result
@@ -954,15 +931,15 @@ def get_transfer_data(
 
 def build_storage_meta_groups(
         batch_meta: BatchMeta,
-        global_index_storage_unit_mapping: dict[int, str],
-        global_index_local_index_mapping: dict[int, int]
+        global_index_storage_unit_mapping: Callable,
+        global_index_local_index_mapping: Callable,
 ) -> dict[str, StorageMetaGroup]:
     """Build storage groups from samples during initialization"""
     storage_meta_groups: dict[str, StorageMetaGroup] = {}
 
     for sample in batch_meta.samples:
-        storage_id = global_index_storage_unit_mapping[sample.global_index]
-        local_index = global_index_local_index_mapping[sample.global_index]
+        storage_id = global_index_storage_unit_mapping(sample.global_index)
+        local_index = global_index_local_index_mapping(sample.global_index)
         if storage_id not in storage_meta_groups:
             storage_meta_groups[storage_id] = StorageMetaGroup(storage_id=storage_id)
 

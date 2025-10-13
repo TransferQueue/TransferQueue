@@ -65,7 +65,6 @@ class AsyncTransferQueueClient:
         if not isinstance(server_infos, dict):
             server_infos = {server_infos.id: server_infos}
 
-        print(server_infos)
         for info in server_infos.values():
             if not isinstance(info, ZMQServerInfo):
                 raise ValueError(f"Invalid server info, expecting ZMQServerInfo, but get type {type(info)}")
@@ -195,7 +194,6 @@ class AsyncTransferQueueClient:
         Returns:
             BatchMeta: Metadata object containing data structure, sample info, etc.
         """
-        print("begin async_get_meta")
 
         assert socket is not None
         request_msg = ZMQMessage.create(
@@ -213,12 +211,9 @@ class AsyncTransferQueueClient:
         )
 
         try:
-            print("begin async_get_meta send")
             await socket.send(request_msg.serialize())
-            print("finished async_get_meta send")
             response = await socket.recv()
             response_msg = ZMQMessage.deserialize(response)
-            print("async_get_meta get response")
             logger.debug(
                 f"[{self.client_id}]: Client get datameta response: {response_msg} from controller {target_controller}"
             )
@@ -282,8 +277,6 @@ class AsyncTransferQueueClient:
 
         """
 
-        print("begin async_put")
-
         if metadata is None:
             assert global_step is not None, "global_steps must be provided if metadata is not given"
 
@@ -294,8 +287,6 @@ class AsyncTransferQueueClient:
                 get_n_samples=True,
                 mode="insert",
             )
-
-        print("successfully get metadata in async_put")
 
         if not metadata or metadata.size == 0:
             raise ValueError("metadata cannot be none or empty")

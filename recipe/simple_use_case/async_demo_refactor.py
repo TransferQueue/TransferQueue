@@ -185,8 +185,6 @@ class Trainer:
         self.config = config
         self.data_system_client = self._initialize_data_system()
         self.actor_rollout_wg = ActorRolloutRefWorker()
-        print('xxxxxxxxx')
-        print(self.data_system_storage_unit_infos, self.data_system_controller_infos, self.config['storage_unit_size'])
         self.async_rollout_manager = RolloutManager(self.config, self.data_system_storage_unit_infos, self.data_system_controller_infos, self.config['storage_unit_size'])
 
     def _initialize_data_system(self):
@@ -210,7 +208,6 @@ class Trainer:
             self.data_system_controllers[controller_rank] = TransferQueueController.options(
                 placement_group=controller_placement_group, placement_group_bundle_index=controller_rank
             ).remote(
-                num_storage_units=self.config.num_data_storage_units,
                 global_batch_size=self.config.global_batch_size,
                 num_global_batch=self.config.num_global_batch,
                 num_n_samples=self.config.num_n_samples,

@@ -56,7 +56,6 @@ TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
 class TransferQueueController:
     def __init__(
         self,
-        num_storage_units: int,
         global_batch_size: int,
         num_global_batch: int = 1,
         num_n_samples: int = 1,
@@ -73,7 +72,6 @@ class TransferQueueController:
 
         self._init_zmq_socket()  # Initialize ZMQ sockets for data communication
 
-        self.num_storage_units = num_storage_units
         self.global_batch_size = (
             global_batch_size  # Used as offset for global index to identify corresponding global step
         )
@@ -93,11 +91,8 @@ class TransferQueueController:
         self.per_tensor_dtype_mapping: dict[int, dict[str, Any]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, Any]] = {}
 
-        print("controller start handshake")
         self._start_process_handshake()
-        print("controller end handshake")
         self._start_process_update_data_status()
-        print("controller start process request")
         self._start_process_request()
 
     def _get_consumption_status(self, task_name: str) -> torch.Tensor:
@@ -545,12 +540,10 @@ class TransferQueueController:
         listens for handshake messages until all expected storage units connect.
         """
         # TODO(zjj): Consider if retransmission is needed (assuming cases where Storage doesn't receive ACK)
-        connected_storage_units = set()
-        while len(connected_storage_units) < self.num_storage_units:
+        while True:
             identity, serialized_msg = self.handshake_socket.recv_multipart()
             request_msg = ZMQMessage.deserialize(serialized_msg)
             if request_msg.request_type == ZMQRequestType.HANDSHAKE:
-                connected_storage_units.add(request_msg.sender_id)
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.HANDSHAKE_ACK,
                     sender_id=self.controller_id,
@@ -558,11 +551,9 @@ class TransferQueueController:
                 ).serialize()
                 self.handshake_socket.send_multipart([identity, response_msg])
                 logger.info("Controller sent handshake ack successfully!")
-        self.handshake_done.set()
 
     def _start_process_handshake(self):
         """Start the handshake process thread."""
-        self.handshake_done = threading.Event()
         self.wait_connection_thread = Thread(
             target=self._wait_connection, name="TransferQueueControllerWaitConnectionThread", daemon=True
         )
@@ -588,15 +579,11 @@ class TransferQueueController:
         Handles various request types including metadata retrieval,
         consumption status checks, and clear operations.
         """
-        print("Controller in process_request func...")
-        self.handshake_done.wait()
-        print("Controller trully ends handshake...")
+
         while True:
-            print("Controller start waiting for request...")
             # ROUTER socket receives multi-part messages
             identity, serialized_msg = self.request_handle_socket.recv_multipart()
             request_msg = ZMQMessage.deserialize(serialized_msg)
-            print(f"Controller receive {request_msg} request")
             if request_msg.request_type == ZMQRequestType.GET_META:
                 params = request_msg.body
                 logger.info("Controller preparing to get metadata...")
