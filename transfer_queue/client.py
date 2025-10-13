@@ -438,11 +438,15 @@ class AsyncTransferQueueClient:
         # global_index: {field1: value, field2: value, ...}
         storage_data: dict[int, dict[str, torch.Tensor]] = {}
         for global_indexes, fields, storage_unit_data in results:
+            extracted_data = {}
+            for field in fields:
+                extracted_data[field] = storage_unit_data[field]
+
             for idx, global_idx in enumerate(global_indexes):
                 if global_idx not in storage_data:
                     storage_data[global_idx] = {}
                 for field in fields:
-                    storage_data[global_idx][field] = storage_unit_data[field][idx]
+                    storage_data[global_idx][field] = extracted_data[field][idx]
 
         ordered_data: dict[str, torch.Tensor] = {field: [] for field in metadata.field_names}
         for global_idx in metadata.global_indexes:
