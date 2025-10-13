@@ -61,8 +61,6 @@ class SampleMeta:
 
     # data retrival info
     global_index: int  # global row index, uniquely identifies a data sample
-    storage_id: str  # storage unit id
-    local_index: int  # local row index in the storage unit
 
     # data fields info
     # this fields may not contain all the fields of the sample, but only fields-of-interest
@@ -76,8 +74,8 @@ class SampleMeta:
     def __str__(self) -> str:
         return (
             f"SampleMeta(global_step={self.global_step}, "
-            f"global_index={self.global_index}, storage_id='{self.storage_id}', "
-            f"local_index={self.local_index}, fields={self.fields})"
+            f"global_index={self.global_index}"
+            f", "
         )
 
     @property
@@ -153,73 +151,6 @@ class SampleMeta:
 
 
 @dataclass
-class StorageMetaGroup:
-    """
-    Represents a group of samples stored in the same storage unit.
-    Used to organize samples by their storage_id for efficient client operations.
-    """
-
-    storage_id: str
-    sample_metas: list[SampleMeta] = dataclasses.field(default_factory=list)
-
-    def add_sample_meta(self, sample_meta: SampleMeta) -> None:
-        """Add a SampleMeta object to this storage group"""
-        self.sample_metas.append(sample_meta)
-
-    def get_batch_indexes(self) -> list[int]:
-        """Get all internal indexes from stored SampleMeta objects"""
-        return [meta.batch_index for meta in self.sample_metas]
-
-    def get_global_indexes(self) -> list[int]:
-        """Get all global indexes from stored SampleMeta objects"""
-        return [meta.global_index for meta in self.sample_metas]
-
-    def get_local_indexes(self) -> list[int]:
-        """Get all local indexes from stored SampleMeta objects"""
-        return [meta.local_index for meta in self.sample_metas]
-
-    def get_field_names(self) -> list[str]:
-        """Get all unique field names from stored SampleMeta objects"""
-        all_fields: set[str] = set()
-        for meta in self.sample_metas:
-            all_fields.update(meta.fields.keys())
-        return list(all_fields)
-
-    def get_transfer_info(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
-        """Convert to dictionary format for backward compatibility"""
-        if field_names is None:
-            field_names = self.get_field_names()
-        return {
-            "batch_indexes": self.get_batch_indexes(),
-            "global_indexes": self.get_global_indexes(),
-            "local_indexes": self.get_local_indexes(),
-            "fields": field_names,
-            "field_data": {},  # Placeholder for field data to be filled later
-        }
-
-    @property
-    def size(self) -> int:
-        """Number of samples in this storage meta group"""
-        return len(self.sample_metas)
-
-    @property
-    def is_empty(self) -> bool:
-        """Check if this storage meta group is empty"""
-        return len(self.sample_metas) == 0
-
-    def __len__(self) -> int:
-        """Number of samples in this storage meta group"""
-        return self.size
-
-    def __bool__(self) -> bool:
-        """Truthiness based on whether group has samples"""
-        return not self.is_empty
-
-    def __str__(self) -> str:
-        return f"StorageMetaGroup(storage_id='{self.storage_id}', size={self.size})"
-
-
-@dataclass
 class BatchMeta:
     """
     Records the metadata of a batch of data samples.
@@ -240,21 +171,12 @@ class BatchMeta:
                 object.__setattr__(sample, "_batch_index", idx)  # Ensure batch_index is set correctly
 
             object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
-            object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
-            object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
             # assume all samples have the same fields.
             object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
-
-            # Initialize storage groups for efficient client operations
-            storage_meta_groups = self._build_storage_meta_groups()
-            object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
         else:
             object.__setattr__(self, "_global_indexes", [])
-            object.__setattr__(self, "_local_indexes", [])
-            object.__setattr__(self, "_storage_ids", [])
             object.__setattr__(self, "_field_names", [])
-            object.__setattr__(self, "_storage_meta_groups", {})
 
     @property
     def size(self) -> int:
@@ -272,48 +194,10 @@ class BatchMeta:
         return getattr(self, "_field_names", [])
 
     @property
-    def local_indexes(self) -> list[int]:
-        """Get all local indexes in this batch"""
-        return getattr(self, "_local_indexes", [])
-
-    @property
-    def storage_ids(self) -> list[str]:
-        """Get all storage unit IDs in this batch"""
-        return getattr(self, "_storage_ids", [])
-
-    @property
     def is_ready(self) -> bool:
         """Check if all samples in this batch are ready for consumption"""
         # TODO: get ready status from controller realtime
         return getattr(self, "_is_ready", False)
-
-    def _build_storage_meta_groups(self) -> dict[str, StorageMetaGroup]:
-        """Build storage groups from samples during initialization"""
-        storage_meta_groups: dict[str, StorageMetaGroup] = {}
-
-        for sample in self.samples:
-            storage_id = sample.storage_id
-            if storage_id not in storage_meta_groups:
-                storage_meta_groups[storage_id] = StorageMetaGroup(storage_id=storage_id)
-
-            # Use add_sample_meta to store SampleMeta references directly
-            storage_meta_groups[storage_id].add_sample_meta(sample)
-
-        return storage_meta_groups
-
-    @property
-    def storage_meta_groups(self) -> dict[str, StorageMetaGroup]:
-        """Get storage groups organized by storage_id"""
-        return getattr(self, "_storage_meta_groups", {})
-
-    @property
-    def storage_unit_ids(self) -> list[str]:
-        """Get list of all storage unit IDs"""
-        return list(self.storage_meta_groups.keys())
-
-    def get_storage_meta_groups(self, storage_id: str) -> Optional[StorageMetaGroup]:
-        """Get storage group by storage ID"""
-        return self.storage_meta_groups.get(storage_id)
 
     # Extra info interface methods
     def get_extra_info(self, key: str, default: Any = None) -> Any:
@@ -506,13 +390,6 @@ class BatchMeta:
 
         # Update cached index lists
         object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
-        object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
-        object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
-
-        # Note: No need to rebuild storage_meta_groups as samples' storage_id remain unchanged
-        # and their order does not affect the grouping
-        # storage_meta_groups = self._build_storage_meta_groups()
-        # object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
 
         # Note: No need to update _size, _field_names, _is_ready, etc., as these remain unchanged after reorder
 
