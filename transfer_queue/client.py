@@ -438,9 +438,7 @@ class AsyncTransferQueueClient:
         # global_index: {field1: value, field2: value, ...}
         storage_data: dict[int, dict[str, torch.Tensor]] = {}
         for global_indexes, fields, storage_unit_data in results:
-            extracted_data = {}
-            for field in fields:
-                extracted_data[field] = storage_unit_data[field]
+            extracted_data = {field: storage_unit_data[field] for field in fields}
 
             for idx, global_idx in enumerate(global_indexes):
                 if global_idx not in storage_data:
