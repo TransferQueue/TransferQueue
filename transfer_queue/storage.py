@@ -106,9 +106,7 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        extracted_data = {}
-        for f in field_data.keys():
-            extracted_data[f] = field_data[f]
+        extracted_data = dict(field_data)
 
         for f, values in extracted_data.items():
             if f not in self.field_data:
