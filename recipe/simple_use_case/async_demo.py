@@ -106,7 +106,7 @@ class AsyncvLLMServer:
         )
 
         self.data_system_client.initialize_storage_manager(
-            data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
+            manager_type="AsyncTransferQueueStorageSimpleUnitManager", config=self.config
         )
 
     async def generate(self, data_meta):
@@ -163,7 +163,7 @@ class RolloutManager:
         )
 
         self.data_system_client.initialize_storage_manager(
-            data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
+            manager_type="AsyncTransferQueueStorageSimpleUnitManager", config=self.config
         )
 
         self.async_rollout_workers = []
@@ -228,14 +228,17 @@ class Trainer:
             )
             logger.info(f"TransferQueueController #{controller_rank} has been created.")
 
-        # 3. 将Controller注册至各个Storage
-        # 每个Storage Unit拿到所有Controller的handler，通过Ray拿到对应的IP+端口，之后建立ZMQ Socket进行消息传输
+        # 3. 准备必要信息
         self.data_system_controller_infos = process_zmq_server_info(self.data_system_controllers)
         self.data_system_storage_unit_infos = process_zmq_server_info(self.data_system_storage_units)
 
-        self.config["data_system_controller_infos"] = self.data_system_controller_infos
-        self.config["data_system_storage_unit_infos"] = self.data_system_storage_unit_infos
-        self.config["storage_unit_size"] = math.ceil(total_storage_size / self.config.num_data_storage_units)
+        tq_config = OmegaConf.create({}, flags={"allow_objects": True})  # Note: Need to generate a new DictConfig
+        # with allow_objects=True to maintain ZMQServerInfo instance. Otherwise it will be flattened to dict
+        tq_config.controller_infos = self.data_system_controller_infos
+        tq_config.storage_unit_infos = self.data_system_storage_unit_infos
+        tq_config.storage_unit_size = math.ceil(total_storage_size / self.config.num_data_storage_units)
+        self.config = OmegaConf.merge(tq_config, self.config)
+
         # 4. 创建Client
         self.data_system_client = AsyncTransferQueueClient(
             client_id="Trainer",
@@ -243,7 +246,7 @@ class Trainer:
         )
 
         self.data_system_client.initialize_storage_manager(
-            self.data_system_storage_unit_infos, self.data_system_controller_infos, self.config["storage_unit_size"]
+            manager_type="AsyncTransferQueueStorageSimpleUnitManager", config=self.config
         )
 
         return self.data_system_client

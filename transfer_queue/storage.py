@@ -49,127 +49,35 @@ TQ_STORAGE_HANDSHAKE_TIMEOUT = int(os.environ.get("TQ_STORAGE_HANDSHAKE_TIMEOUT"
 TQ_DATA_UPDATE_RESPONSE_TIMEOUT = int(os.environ.get("TQ_DATA_UPDATE_RESPONSE_TIMEOUT", 600))
 
 
-class StorageUnitData:
-    """
-    Class used for storing several elements, each element is composed of several fields and corresponding data, like:
-    #####################################################
-    # local_index | field_name1 | field_name2 | ...   #
-    # 0           | item1       | item2       | ...   #
-    # 1           | item3       | item4       | ...   #
-    # 2           | item5       | item6       | ...   #
-    #####################################################
-    """
-
-    def __init__(self, storage_size: int):
-        # Dict containing field names and corresponding data in the field, e.g. {"field_name1": [data1, data2, ...]}
-        self.field_data: dict[str, list] = {}
-
-        # Maximum number of elements stored in storage unit
-        self.storage_size = storage_size
-
-    def get_data(self, fields: list[str], local_indexes: list[int]) -> TensorDict[str, list]:
-        """
-        Get data from storage unit according to given fields and local_indexes.
-
-        param:
-            fields: Field names used for getting data.
-            local_indexes: Local indexes used for getting data.
-        return:
-            TensorDict with field names as keys, corresponding data list as values.
-        """
-        result: dict[str, list] = {}
-
-        for field in fields:
-            # Validate field name
-            if field not in self.field_data:
-                raise ValueError(
-                    f"StorageUnitData get_data operation receive invalid field: {field} beyond {self.field_data.keys()}"
-                )
-
-            if len(local_indexes) == 1:
-                # The unsqueeze op make the shape from n to (1, n)
-                gathered_item = self.field_data[field][local_indexes[0]]
-                if not isinstance(gathered_item, torch.Tensor):
-                    result[field] = NonTensorStack(gathered_item)
-                else:
-                    result[field] = gathered_item.unsqueeze(0)
-            else:
-                gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
-
-                if gathered_items:
-                    all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
-                    if all_tensors:
-                        result[field] = torch.nested.as_nested_tensor(gathered_items)
-                    else:
-                        result[field] = NonTensorStack(*gathered_items)
-
-        return TensorDict(result)
-
-    def put_data(self, field_data: TensorDict[str, list], local_indexes: list[int]) -> None:
-        """
-        Put or update data into storage unit according to given field_data and local_indexes.
-
-        param:
-            field_data: Dict with field names as keys, corresponding data in the field as values.
-            local_indexes: Local indexes used for putting data.
-        """
-        extracted_data = dict(field_data)
-
-        for f, values in extracted_data.items():
-            if f not in self.field_data:
-                self.field_data[f] = [None] * self.storage_size
-
-            for i, idx in enumerate(local_indexes):
-                if idx < 0 or idx >= self.storage_size:
-                    raise ValueError(
-                        f"StorageUnitData put_data operation receive invalid local_index: {idx} beyond "
-                        f"storage_size: {self.storage_size}"
-                    )
-
-                self.field_data[f][idx] = values[i]
-
-    def clear(self, local_indexes: list[int]) -> None:
-        """
-        Clear data at specified local_indexes by setting all related fields to None.
-
-        param:
-            local_indexes: local_indexes to clear.
-        """
-        # Validate local_indexes
-        for idx in local_indexes:
-            if idx < 0 or idx >= self.storage_size:
-                raise ValueError(
-                    f"StorageUnitData clear operation receive invalid local_index: {idx} beyond "
-                    f"storage_size: {self.storage_size}"
-                )
-
-        # Clear data at specified local_indexes
-        for f in self.field_data:
-            for idx in local_indexes:
-                self.field_data[f][idx] = None
-
-
 class TransferQueueStorageManager(ABC):
     """Base class for storage layer. It defines the interface for data operation and
     general provide handshake & notification capabilities."""
 
     def __init__(self, config: dict[str, Any]):
         self.storage_manager_id = f"TQ_STORAGE_{uuid4().hex[:8]}"
-        self.controller_infos = {}  # type: dict[str, ZMQServerInfo]
+        self.config = config
+        self.controller_infos = config.get("controller_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
+
         self.data_status_update_sockets = {}
         self.controller_handshake_sockets = {}
-        self.config = config
 
         self.zmq_context = None
-        self.connect_to_controllers(self.controller_infos)
+        self._connect_to_controllers()
 
-    def connect_to_controllers(self, controller_infos: ZMQServerInfo | dict[str, ZMQServerInfo]) -> None:
+    def _connect_to_controllers(self) -> None:
         """Initialize ZMQ sockets between storage unit and controllers for handshake."""
         try:
-            if isinstance(controller_infos, ZMQServerInfo):
-                controller_infos = {controller_infos.id: controller_infos}
-
-            self.controller_infos = controller_infos
+            if isinstance(self.controller_infos, ZMQServerInfo):
+                self.controller_infos = {self.controller_infos.id: self.controller_infos}
+            elif isinstance(self.controller_infos, dict):
+                self.controller_infos = {}
+                for _, v in self.controller_infos.items():
+                    if isinstance(v, ZMQServerInfo):
+                        self.controller_infos[v.id] = v
+                    else:
+                        raise ValueError(
+                            f"controller_infos should be ZMQServerInfo | dict[str, ZMQServerInfo], but got {v}"
+                        )
 
             # create zmq context
             self.zmq_context = zmq.Context()
@@ -360,6 +268,106 @@ class TransferQueueStorageManager(ABC):
         raise NotImplementedError("Subclasses must implement clear_data")
 
 
+class StorageUnitData:
+    """
+    Class used for storing several elements, each element is composed of several fields and corresponding data, like:
+    #####################################################
+    # local_index | field_name1 | field_name2 | ...   #
+    # 0           | item1       | item2       | ...   #
+    # 1           | item3       | item4       | ...   #
+    # 2           | item5       | item6       | ...   #
+    #####################################################
+    """
+
+    def __init__(self, storage_size: int):
+        # Dict containing field names and corresponding data in the field, e.g. {"field_name1": [data1, data2, ...]}
+        self.field_data: dict[str, list] = {}
+
+        # Maximum number of elements stored in storage unit
+        self.storage_size = storage_size
+
+    def get_data(self, fields: list[str], local_indexes: list[int]) -> TensorDict[str, list]:
+        """
+        Get data from storage unit according to given fields and local_indexes.
+
+        param:
+            fields: Field names used for getting data.
+            local_indexes: Local indexes used for getting data.
+        return:
+            TensorDict with field names as keys, corresponding data list as values.
+        """
+        result: dict[str, list] = {}
+
+        for field in fields:
+            # Validate field name
+            if field not in self.field_data:
+                raise ValueError(
+                    f"StorageUnitData get_data operation receive invalid field: {field} beyond {self.field_data.keys()}"
+                )
+
+            if len(local_indexes) == 1:
+                # The unsqueeze op make the shape from n to (1, n)
+                gathered_item = self.field_data[field][local_indexes[0]]
+                if not isinstance(gathered_item, torch.Tensor):
+                    result[field] = NonTensorStack(gathered_item)
+                else:
+                    result[field] = gathered_item.unsqueeze(0)
+            else:
+                gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
+
+                if gathered_items:
+                    all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
+                    if all_tensors:
+                        result[field] = torch.nested.as_nested_tensor(gathered_items)
+                    else:
+                        result[field] = NonTensorStack(*gathered_items)
+
+        return TensorDict(result)
+
+    def put_data(self, field_data: TensorDict[str, list], local_indexes: list[int]) -> None:
+        """
+        Put or update data into storage unit according to given field_data and local_indexes.
+
+        param:
+            field_data: Dict with field names as keys, corresponding data in the field as values.
+            local_indexes: Local indexes used for putting data.
+        """
+        extracted_data = dict(field_data)
+
+        for f, values in extracted_data.items():
+            if f not in self.field_data:
+                self.field_data[f] = [None] * self.storage_size
+
+            for i, idx in enumerate(local_indexes):
+                if idx < 0 or idx >= self.storage_size:
+                    raise ValueError(
+                        f"StorageUnitData put_data operation receive invalid local_index: {idx} beyond "
+                        f"storage_size: {self.storage_size}"
+                    )
+
+                self.field_data[f][idx] = values[i]
+
+    def clear(self, local_indexes: list[int]) -> None:
+        """
+        Clear data at specified local_indexes by setting all related fields to None.
+
+        param:
+            local_indexes: local_indexes to clear.
+        """
+        # Validate local_indexes
+        for idx in local_indexes:
+            if idx < 0 or idx >= self.storage_size:
+                raise ValueError(
+                    f"StorageUnitData clear operation receive invalid local_index: {idx} beyond "
+                    f"storage_size: {self.storage_size}"
+                )
+
+        # Clear data at specified local_indexes
+        for f in self.field_data:
+            for idx in local_indexes:
+                self.field_data[f][idx] = None
+
+
 @ray.remote(num_cpus=1)
 class TransferQueueStorageSimpleUnit:
     def __init__(self, storage_unit_size: int):
@@ -368,7 +376,7 @@ class TransferQueueStorageSimpleUnit:
 
         self.storage_data = StorageUnitData(self.storage_unit_size)
 
-        self.zmq_server_info = ZMQServerInfo.create(
+        self.zmq_server_info = ZMQServerInfo(
             role=TransferQueueRole.STORAGE,
             id=str(self.storage_unit_id),
             ip=get_node_ip_address(),
@@ -536,12 +544,131 @@ class TransferQueueStorageSimpleUnit:
         return self.zmq_server_info
 
 
-class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
-    def __init__(self, storage_unit_infos: ZMQServerInfo | dict[str, ZMQServerInfo], config: dict[str, Any]):
-        super().__init__(config)
-        self.storage_unit_infos = self._register_servers(storage_unit_infos)
-        self.storage_unit_size = config.get("storage_unit_size", 10000)
+@dataclass
+class StorageMetaGroup:
+    """
+    Represents a group of samples stored in the same storage unit.
+    Used to organize samples by their storage_id for efficient client operations.
+    """
 
+    storage_id: str
+    sample_metas: list[SampleMeta] = dataclasses.field(default_factory=list)
+    local_indexes: list[int] = dataclasses.field(default_factory=list)
+
+    def add_sample_meta(self, sample_meta: SampleMeta, local_index: int) -> None:
+        """Add a SampleMeta object to this storage group"""
+        self.sample_metas.append(sample_meta)
+        self.local_indexes.append(local_index)
+
+    def get_batch_indexes(self) -> list[int]:
+        """Get all internal indexes from stored SampleMeta objects"""
+        return [meta.batch_index for meta in self.sample_metas]
+
+    def get_global_indexes(self) -> list[int]:
+        """Get all global indexes from stored SampleMeta objects"""
+        return [meta.global_index for meta in self.sample_metas]
+
+    def get_local_indexes(self) -> list[int]:
+        """Get all local indexes from stored SampleMeta objects"""
+        return self.local_indexes
+
+    def get_field_names(self) -> list[str]:
+        """Get all unique field names from stored SampleMeta objects"""
+        all_fields: set[str] = set()
+        for meta in self.sample_metas:
+            all_fields.update(meta.fields.keys())
+        return list(all_fields)
+
+    def get_transfer_data(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
+        """Convert to dictionary format for backward compatibility"""
+        if field_names is None:
+            field_names = self.get_field_names()
+        return {
+            "batch_indexes": self.get_batch_indexes(),
+            "global_indexes": self.get_global_indexes(),
+            "local_indexes": self.get_local_indexes(),
+            "fields": field_names,
+            "field_data": {},  # Placeholder for field data to be filled later
+        }
+
+    @property
+    def size(self) -> int:
+        """Number of samples in this storage meta group"""
+        return len(self.sample_metas)
+
+    @property
+    def is_empty(self) -> bool:
+        """Check if this storage meta group is empty"""
+        return len(self.sample_metas) == 0
+
+    def __len__(self) -> int:
+        """Number of samples in this storage meta group"""
+        return self.size
+
+    def __bool__(self) -> bool:
+        """Truthiness based on whether group has samples"""
+        return not self.is_empty
+
+    def __str__(self) -> str:
+        return f"StorageMetaGroup(storage_id='{self.storage_id}', size={self.size})"
+
+
+# TODO: to be optimized. Now there are too many data dicts.
+# transfer_data, transfer_dict, data, StorageUnitData, field_data...
+def _add_field_data(
+    transfer_dict: dict[str, Any], storage_meta_group: StorageMetaGroup, data: TensorDict
+) -> dict[str, Any]:
+    """Helper function to add field data to the transfer dictionary"""
+    field_names = transfer_dict["fields"]
+    for fname in field_names:
+        if fname in data.keys():
+            transfer_dict["field_data"][fname] = []
+            for sample_meta in storage_meta_group.sample_metas:
+                transfer_dict["field_data"][fname].append(data[fname][sample_meta.batch_index])
+    return transfer_dict
+
+
+def get_transfer_data(
+    storage_meta_group: StorageMetaGroup,
+    data: TensorDict,
+) -> dict[str, Any]:
+    """Convert to dictionary format with field data for put operations"""
+
+    result = storage_meta_group.get_transfer_data(field_names=list(data.keys()))
+    result = _add_field_data(result, storage_meta_group, data)
+    return result
+
+
+def build_storage_meta_groups(
+    batch_meta: BatchMeta,
+    global_index_storage_unit_mapping: Callable,
+    global_index_local_index_mapping: Callable,
+) -> dict[str, StorageMetaGroup]:
+    """Build storage groups from samples during initialization"""
+    storage_meta_groups: dict[str, StorageMetaGroup] = {}
+
+    for sample in batch_meta.samples:
+        storage_id = global_index_storage_unit_mapping(sample.global_index)
+        local_index = global_index_local_index_mapping(sample.global_index)
+        if storage_id not in storage_meta_groups:
+            storage_meta_groups[storage_id] = StorageMetaGroup(storage_id=storage_id)
+
+        # Use add_sample_meta to store SampleMeta references directly
+        storage_meta_groups[storage_id].add_sample_meta(sample, local_index)
+
+    return storage_meta_groups
+
+
+class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
+    # def __init__(self, storage_unit_infos: ZMQServerInfo | dict[str, ZMQServerInfo], config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
+        super().__init__(config)
+
+        self.config = config
+        self.storage_unit_infos = config.get("storage_unit_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
+        self.storage_unit_size = config.get("storage_unit_size", 10000)  # type: int
+
+        assert self.storage_unit_infos is not None
         self._build_storage_mapping_functions()
 
     def _build_storage_mapping_functions(self):
@@ -844,116 +971,27 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         return self.storage_unit_infos
 
 
-@dataclass
-class StorageMetaGroup:
-    """
-    Represents a group of samples stored in the same storage unit.
-    Used to organize samples by their storage_id for efficient client operations.
-    """
+class TransferQueueStorageManagerFactory:
+    """Factory that creates a StorageManager instance."""
 
-    storage_id: str
-    sample_metas: list[SampleMeta] = dataclasses.field(default_factory=list)
-    local_indexes: list[int] = dataclasses.field(default_factory=list)
+    _registry: dict[str, type[TransferQueueStorageManager]] = {}
 
-    def add_sample_meta(self, sample_meta: SampleMeta, local_index: int) -> None:
-        """Add a SampleMeta object to this storage group"""
-        self.sample_metas.append(sample_meta)
-        self.local_indexes.append(local_index)
+    @classmethod
+    def register(cls, manager_type: str, manager_cls: type[TransferQueueStorageManager]):
+        if not issubclass(manager_cls, TransferQueueStorageManager):
+            raise TypeError(f"manager_cls {type(manager_type)} must be a subclass of TransferQueueStorageManager")
+        cls._registry[manager_type] = manager_cls
 
-    def get_batch_indexes(self) -> list[int]:
-        """Get all internal indexes from stored SampleMeta objects"""
-        return [meta.batch_index for meta in self.sample_metas]
-
-    def get_global_indexes(self) -> list[int]:
-        """Get all global indexes from stored SampleMeta objects"""
-        return [meta.global_index for meta in self.sample_metas]
-
-    def get_local_indexes(self) -> list[int]:
-        """Get all local indexes from stored SampleMeta objects"""
-        return self.local_indexes
-
-    def get_field_names(self) -> list[str]:
-        """Get all unique field names from stored SampleMeta objects"""
-        all_fields: set[str] = set()
-        for meta in self.sample_metas:
-            all_fields.update(meta.fields.keys())
-        return list(all_fields)
-
-    def get_transfer_data(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
-        """Convert to dictionary format for backward compatibility"""
-        if field_names is None:
-            field_names = self.get_field_names()
-        return {
-            "batch_indexes": self.get_batch_indexes(),
-            "global_indexes": self.get_global_indexes(),
-            "local_indexes": self.get_local_indexes(),
-            "fields": field_names,
-            "field_data": {},  # Placeholder for field data to be filled later
-        }
-
-    @property
-    def size(self) -> int:
-        """Number of samples in this storage meta group"""
-        return len(self.sample_metas)
-
-    @property
-    def is_empty(self) -> bool:
-        """Check if this storage meta group is empty"""
-        return len(self.sample_metas) == 0
-
-    def __len__(self) -> int:
-        """Number of samples in this storage meta group"""
-        return self.size
-
-    def __bool__(self) -> bool:
-        """Truthiness based on whether group has samples"""
-        return not self.is_empty
-
-    def __str__(self) -> str:
-        return f"StorageMetaGroup(storage_id='{self.storage_id}', size={self.size})"
+    @classmethod
+    def create(cls, manager_type: str, config: dict[str, Any]) -> TransferQueueStorageManager:
+        if manager_type not in cls._registry:
+            raise ValueError(
+                f"Unknown manager_type: {manager_type}. Supported managers include: {list(cls._registry.keys())}"
+            )
+        return cls._registry[manager_type](config)
 
 
-# TODO: to be optimized. Now there are too many data dicts.
-# transfer_data, transfer_dict, data, StorageUnitData, field_data...
-def _add_field_data(
-    transfer_dict: dict[str, Any], storage_meta_group: StorageMetaGroup, data: TensorDict
-) -> dict[str, Any]:
-    """Helper function to add field data to the transfer dictionary"""
-    field_names = transfer_dict["fields"]
-    for fname in field_names:
-        if fname in data.keys():
-            transfer_dict["field_data"][fname] = []
-            for sample_meta in storage_meta_group.sample_metas:
-                transfer_dict["field_data"][fname].append(data[fname][sample_meta.batch_index])
-    return transfer_dict
-
-
-def get_transfer_data(
-    storage_meta_group: StorageMetaGroup,
-    data: TensorDict,
-) -> dict[str, Any]:
-    """Convert to dictionary format with field data for put operations"""
-
-    result = storage_meta_group.get_transfer_data(field_names=list(data.keys()))
-    result = _add_field_data(result, storage_meta_group, data)
-    return result
-
-
-def build_storage_meta_groups(
-    batch_meta: BatchMeta,
-    global_index_storage_unit_mapping: Callable,
-    global_index_local_index_mapping: Callable,
-) -> dict[str, StorageMetaGroup]:
-    """Build storage groups from samples during initialization"""
-    storage_meta_groups: dict[str, StorageMetaGroup] = {}
-
-    for sample in batch_meta.samples:
-        storage_id = global_index_storage_unit_mapping(sample.global_index)
-        local_index = global_index_local_index_mapping(sample.global_index)
-        if storage_id not in storage_meta_groups:
-            storage_meta_groups[storage_id] = StorageMetaGroup(storage_id=storage_id)
-
-        # Use add_sample_meta to store SampleMeta references directly
-        storage_meta_groups[storage_id].add_sample_meta(sample, local_index)
-
-    return storage_meta_groups
+# Register all the StorageManager
+TransferQueueStorageManagerFactory.register(
+    "AsyncTransferQueueStorageSimpleUnitManager", AsyncTransferQueueStorageSimpleUnitManager
+)

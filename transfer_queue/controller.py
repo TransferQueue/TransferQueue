@@ -518,7 +518,7 @@ class TransferQueueController:
         )
         self.data_status_update_socket.bind(f"tcp://{self._node_ip}:{self._data_status_update_socket_port}")
 
-        self.zmq_server_info = ZMQServerInfo.create(
+        self.zmq_server_info = ZMQServerInfo(
             role=TransferQueueRole.CONTROLLER,
             id=self.controller_id,
             ip=self._node_ip,
@@ -532,7 +532,7 @@ class TransferQueueController:
     def _wait_connection(self):
         """Wait for all storage instances to complete handshake.
 
-        Clients don't need handshake to support dynamic scaling. Continuously
+        Clients don't need to handshake to support dynamic scaling. Continuously
         listens for handshake messages until all expected storage units connect.
         """
         # TODO(zjj): Consider if retransmission is needed (assuming cases where Storage doesn't receive ACK)

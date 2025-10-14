@@ -16,7 +16,7 @@ import asyncio
 import logging
 import os
 from functools import wraps
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 import ray
@@ -28,7 +28,11 @@ from transfer_queue.controller import TransferQueueController
 from transfer_queue.metadata import (
     BatchMeta,
 )
-from transfer_queue.storage import AsyncTransferQueueStorageSimpleUnitManager, TransferQueueStorageSimpleUnit
+from transfer_queue.storage import (
+    TransferQueueStorageManager,
+    TransferQueueStorageManagerFactory,
+    TransferQueueStorageSimpleUnit,
+)
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -52,14 +56,10 @@ class AsyncTransferQueueClient:
 
     def initialize_storage_manager(
         self,
-        storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
-        controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
-        storage_unit_size: int,
+        manager_type: str,
+        config: dict[str, Any],
     ):
-        self.storage_manager = AsyncTransferQueueStorageSimpleUnitManager(
-            storage_unit_infos=storage_infos, config={"storage_unit_size": storage_unit_size}
-        )
-        self.storage_manager.connect_to_controllers(controller_infos)
+        self.storage_manager = TransferQueueStorageManagerFactory.create(manager_type, config)
 
     def _register_controllers(
         self,
@@ -469,7 +469,9 @@ class TransferQueueClient(AsyncTransferQueueClient):
         return asyncio.run(self.async_clear(global_step))
 
 
-def process_zmq_server_info(handlers: dict[Any, Union[TransferQueueController, TransferQueueStorageSimpleUnit]]):  # noqa: UP007
+def process_zmq_server_info(
+    handlers: dict[Any, TransferQueueController | TransferQueueStorageManager | TransferQueueStorageSimpleUnit],
+):  # noqa: UP007
     server_info = {}
     for name, handler in handlers.items():
         server_info[name] = ray.get(handler.get_zmq_server_info.remote())  # type: ignore[attr-defined]

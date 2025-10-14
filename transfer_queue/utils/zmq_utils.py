@@ -21,7 +21,6 @@ from typing import Any, Optional
 
 import psutil
 import zmq
-from typing_extensions import Self
 
 from transfer_queue.utils.utils import (
     ExplicitEnum,
@@ -66,16 +65,12 @@ class ZMQRequestType(ExplicitEnum):
     NOTIFY_DATA_UPDATE_ERROR = "NOTIFY_DATA_UPDATE_ERROR"
 
 
-@dataclass
 class ZMQServerInfo:
-    role: TransferQueueRole
-    id: str
-    ip: str
-    ports: dict[str, str]
-
-    @classmethod
-    def create(cls, role: TransferQueueRole, id: str, ip: str, ports: dict[str, str]) -> Self:
-        return cls(role=role, id=id, ip=ip, ports=ports)
+    def __init__(self, role: TransferQueueRole, id: str, ip: str, ports: dict[str, str]):
+        self.role = role
+        self.id = id
+        self.ip = ip
+        self.ports = ports
 
     def to_addr(self, port_name: str) -> str:
         return f"tcp://{self.ip}:{self.ports[port_name]}"
