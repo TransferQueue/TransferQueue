@@ -727,11 +727,13 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         # post-process data segments to generate a batch of data
         merged_data: dict[int, dict[str, torch.Tensor]] = {}
         for global_indexes, fields, data_from_single_storage_unit in results:
+            extracted_data = {field: data_from_single_storage_unit[field] for field in fields}
+
             for idx, global_idx in enumerate(global_indexes):
                 if global_idx not in merged_data:
                     merged_data[global_idx] = {}
                 for field in fields:
-                    merged_data[global_idx][field] = data_from_single_storage_unit[field][idx]
+                    merged_data[global_idx][field] = extracted_data[field][idx]
 
         ordered_data: dict[str, list[torch.Tensor]] = {field: [] for field in metadata.field_names}
         for global_idx in metadata.global_indexes:
