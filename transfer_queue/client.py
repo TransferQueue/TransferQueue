@@ -50,11 +50,16 @@ class AsyncTransferQueueClient:
         self._controllers: dict[str, ZMQServerInfo] = {}
         self._register_controllers(controller_infos)
 
-    def initialize_storage_manager(self, storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo], controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo], storage_unit_size: int):
-        self.storage_manager = AsyncTransferQueueStorageSimpleUnitManager(storage_unit_infos=storage_infos, config={
-                                                                                  "storage_unit_size": storage_unit_size})
+    def initialize_storage_manager(
+        self,
+        storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        storage_unit_size: int,
+    ):
+        self.storage_manager = AsyncTransferQueueStorageSimpleUnitManager(
+            storage_unit_infos=storage_infos, config={"storage_unit_size": storage_unit_size}
+        )
         self.storage_manager.connect_to_controllers(controller_infos)
-
 
     def _register_controllers(
         self,

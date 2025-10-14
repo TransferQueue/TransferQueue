@@ -13,17 +13,17 @@
 # limitations under the License.
 
 import asyncio
+import dataclasses
 import logging
 import os
 import time
 from abc import ABC, abstractmethod
-import dataclasses
 from dataclasses import dataclass
 from functools import wraps
+from operator import itemgetter
 from threading import Thread
 from typing import Any, Callable, Optional
 from uuid import uuid4
-from operator import itemgetter
 
 import ray
 import torch
@@ -149,14 +149,13 @@ class StorageUnitData:
                 self.field_data[f][idx] = None
 
 
-
 class TransferQueueStorageManager(ABC):
     """Base class for storage layer. It defines the interface for data operation and
     general provide handshake & notification capabilities."""
 
     def __init__(self, config: dict[str, Any]):
         self.storage_manager_id = f"TQ_STORAGE_{uuid4().hex[:8]}"
-        self.controller_infos = {} # type: dict[str, ZMQServerInfo]
+        self.controller_infos = {}  # type: dict[str, ZMQServerInfo]
         self.data_status_update_sockets = {}
         self.controller_handshake_sockets = {}
         self.config = config
@@ -220,8 +219,8 @@ class TransferQueueStorageManager(ABC):
 
             self.controller_handshake_sockets[controller_id].send(request_msg)
             logger.debug(
-                f"[{self.storage_manager_id}]: Send handshake request from storage manager id #{self.storage_manager_id} "
-                f"to controller id #{controller_id} successfully."
+                f"[{self.storage_manager_id}]: Send handshake request from storage manager id "
+                f"{self.storage_manager_id} to controller id #{controller_id} successfully."
             )
 
             poller.register(self.controller_handshake_sockets[controller_id], zmq.POLLIN)
@@ -545,11 +544,11 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
 
         self._build_storage_mapping_functions()
 
-
     def _build_storage_mapping_functions(self):
-        self.global_index_storage_unit_mapping = lambda x: list(self.storage_unit_infos.keys())[x % len(self.storage_unit_infos)]
+        self.global_index_storage_unit_mapping = lambda x: list(self.storage_unit_infos.keys())[
+            x % len(self.storage_unit_infos)
+        ]
         self.global_index_local_index_mapping = lambda x: x // len(self.storage_unit_infos)
-
 
     def _register_servers(self, server_infos):
         server_infos_transform = {}
@@ -622,7 +621,9 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
                             sock.close()
                         sock.close(linger=0)
                     except Exception as e:
-                        logger.warning(f"[{self.storage_manager_id}]: Error closing socket to StorageUnit {server_info.id}: {e}")
+                        logger.warning(
+                            f"[{self.storage_manager_id}]: Error closing socket to StorageUnit {server_info.id}: {e}"
+                        )
 
                     context.term()
 
@@ -636,8 +637,9 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         """
 
         # group samples by storage unit
-        storage_meta_groups = build_storage_meta_groups(metadata, self.global_index_storage_unit_mapping,
-                                                        self.global_index_local_index_mapping)
+        storage_meta_groups = build_storage_meta_groups(
+            metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
+        )
 
         # send data to each storage unit
         tasks = [
@@ -667,9 +669,7 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         await self.notify_data_update(list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes)
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
-    async def _put_to_single_storage_unit(
-        self, transfer_data: dict[str, Any], target_storage_unit=None, socket=None
-    ):
+    async def _put_to_single_storage_unit(self, transfer_data: dict[str, Any], target_storage_unit=None, socket=None):
         """
         Send data to a specific storage unit.
         """
@@ -713,8 +713,9 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         """
 
         # group samples by storage unit
-        storage_meta_groups = build_storage_meta_groups(metadata, self.global_index_storage_unit_mapping,
-                                                        self.global_index_local_index_mapping)
+        storage_meta_groups = build_storage_meta_groups(
+            metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
+        )
 
         # retrive data
         tasks = [
@@ -775,7 +776,10 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
             await socket.send(request_msg.serialize())
             serialized = await socket.recv()
             response_msg = ZMQMessage.deserialize(serialized)
-            logger.info(f"[{self.storage_manager_id}]: get data response from storage unit {target_storage_unit}: {response_msg}")
+            logger.info(
+                f"[{self.storage_manager_id}]: get data response from storage unit "
+                f"{target_storage_unit}: {response_msg}"
+            )
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:
                 # Return data and index information from this storage unit
@@ -793,12 +797,15 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         """Clear data in remote StorageUnit"""
 
         # group samples by storage unit
-        storage_meta_groups = build_storage_meta_groups(metadata, self.global_index_storage_unit_mapping,
-                                                        self.global_index_local_index_mapping)
+        storage_meta_groups = build_storage_meta_groups(
+            metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
+        )
 
         # clear data
         tasks = [
-            self._clear_single_storage_unit(meta_group.get_transfer_data()["local_indexes"], target_storage_unit=storage_id)
+            self._clear_single_storage_unit(
+                meta_group.get_transfer_data()["local_indexes"], target_storage_unit=storage_id
+            )
             for storage_id, meta_group in storage_meta_groups.items()
         ]
 
@@ -807,7 +814,6 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.error(f"[{self.storage_manager_id}]: Error in clear operation task {i}: {result}")
-
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
     async def _clear_single_storage_unit(self, local_indexes, target_storage_unit=None, socket=None):
@@ -825,7 +831,8 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
 
             if response_msg.request_type != ZMQRequestType.CLEAR_DATA_RESPONSE:
                 raise RuntimeError(
-                    f"Failed to clear storage {target_storage_unit}: {response_msg.body.get('message', 'Unknown error')}"
+                    f"Failed to clear storage {target_storage_unit}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
                 )
 
             logger.info(f"[{self.storage_manager_id}]: Successfully clear storage unit {target_storage_unit}")
@@ -905,6 +912,7 @@ class StorageMetaGroup:
     def __str__(self) -> str:
         return f"StorageMetaGroup(storage_id='{self.storage_id}', size={self.size})"
 
+
 # TODO: to be optimized. Now there are too many data dicts.
 # transfer_data, transfer_dict, data, StorageUnitData, field_data...
 def _add_field_data(
@@ -932,9 +940,9 @@ def get_transfer_data(
 
 
 def build_storage_meta_groups(
-        batch_meta: BatchMeta,
-        global_index_storage_unit_mapping: Callable,
-        global_index_local_index_mapping: Callable,
+    batch_meta: BatchMeta,
+    global_index_storage_unit_mapping: Callable,
+    global_index_local_index_mapping: Callable,
 ) -> dict[str, StorageMetaGroup]:
     """Build storage groups from samples during initialization"""
     storage_meta_groups: dict[str, StorageMetaGroup] = {}

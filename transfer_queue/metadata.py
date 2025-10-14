@@ -72,10 +72,7 @@ class SampleMeta:
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
 
     def __str__(self) -> str:
-        return (
-            f"SampleMeta(global_step={self.global_step}, "
-            f"global_index={self.global_index}"
-        )
+        return f"SampleMeta(global_step={self.global_step}, global_index={self.global_index}"
 
     @property
     def field_names(self) -> list[str]:

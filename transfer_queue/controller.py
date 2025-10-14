@@ -14,13 +14,11 @@
 
 import logging
 import os
-import threading
 import time
 from threading import Thread
 from typing import Any, Optional
 from uuid import uuid4
 
-import numpy as np
 import ray
 import torch
 import zmq
@@ -387,8 +385,6 @@ class TransferQueueController:
         Returns:
             BatchMeta object containing sample metadata with resolved storage locations
         """
-        global_arr = np.array(global_indexes)
-
         samples = []
 
         # Create samples from the flattened BatchMeta data

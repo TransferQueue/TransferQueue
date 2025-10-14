@@ -28,10 +28,13 @@ from tensordict import NonTensorData, TensorDict
 parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue.client import AsyncTransferQueueClient, process_zmq_server_info
-from transfer_queue.controller import TransferQueueController
-from transfer_queue.metadata import BatchMeta
-from transfer_queue.storage import TransferQueueStorageSimpleUnit
+from transfer_queue import (  # noqa: E402
+    AsyncTransferQueueClient,
+    BatchMeta,
+    TransferQueueController,
+    TransferQueueStorageSimpleUnit,
+    process_zmq_server_info,
+)
 from transfer_queue.utils.utils import get_placement_group  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -102,9 +105,9 @@ class AsyncvLLMServer:
             controller_infos=data_system_controller_infos[0],
         )
 
-        self.data_system_client.initialize_storage_manager(data_system_storage_unit_infos,
-                                                           data_system_controller_infos,
-                                                           storage_unit_size)
+        self.data_system_client.initialize_storage_manager(
+            data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
+        )
 
     async def generate(self, data_meta):
         data = await self.data_system_client.async_get_data(data_meta)
@@ -132,7 +135,9 @@ class AsyncvLLMServer:
 @ray.remote(num_cpus=1)
 class AsyncRolloutWorker:
     def __init__(self, config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size):
-        self.async_vllm_server = AsyncvLLMServer.remote(config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size)
+        self.async_vllm_server = AsyncvLLMServer.remote(
+            config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
+        )
 
     async def generate_sequences(self, data_meta_chunk):
         tasks = []
@@ -157,14 +162,18 @@ class RolloutManager:
             controller_infos=data_system_controller_infos[0],
         )
 
-        self.data_system_client.initialize_storage_manager(data_system_storage_unit_infos,
-                                                           data_system_controller_infos,
-                                                           storage_unit_size)
+        self.data_system_client.initialize_storage_manager(
+            data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
+        )
 
         self.async_rollout_workers = []
         num_workers = self.config.rollout_agent_num_workers
         for i in range(num_workers):
-            self.async_rollout_workers.append(AsyncRolloutWorker.remote(config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size))
+            self.async_rollout_workers.append(
+                AsyncRolloutWorker.remote(
+                    config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
+                )
+            )
 
     def generate_sequences(self, data_meta):
         data_meta_chunkes = data_meta.chunk(len(self.async_rollout_workers))
@@ -185,7 +194,12 @@ class Trainer:
         self.config = config
         self.data_system_client = self._initialize_data_system()
         self.actor_rollout_wg = ActorRolloutRefWorker()
-        self.async_rollout_manager = RolloutManager(self.config, self.data_system_storage_unit_infos, self.data_system_controller_infos, self.config['storage_unit_size'])
+        self.async_rollout_manager = RolloutManager(
+            self.config,
+            self.data_system_storage_unit_infos,
+            self.data_system_controller_infos,
+            self.config["storage_unit_size"],
+        )
 
     def _initialize_data_system(self):
         # 1. 初始化TransferQueueStorage
@@ -219,16 +233,18 @@ class Trainer:
         self.data_system_controller_infos = process_zmq_server_info(self.data_system_controllers)
         self.data_system_storage_unit_infos = process_zmq_server_info(self.data_system_storage_units)
 
-        self.config['data_system_controller_infos'] = self.data_system_controller_infos
-        self.config['data_system_storage_unit_infos'] = self.data_system_storage_unit_infos
-        self.config['storage_unit_size'] = math.ceil(total_storage_size / self.config.num_data_storage_units)
+        self.config["data_system_controller_infos"] = self.data_system_controller_infos
+        self.config["data_system_storage_unit_infos"] = self.data_system_storage_unit_infos
+        self.config["storage_unit_size"] = math.ceil(total_storage_size / self.config.num_data_storage_units)
         # 4. 创建Client
         self.data_system_client = AsyncTransferQueueClient(
             client_id="Trainer",
             controller_infos=self.data_system_controller_infos[0],
         )
 
-        self.data_system_client.initialize_storage_manager(self.data_system_storage_unit_infos, self.data_system_controller_infos, self.config['storage_unit_size'])
+        self.data_system_client.initialize_storage_manager(
+            self.data_system_storage_unit_infos, self.data_system_controller_infos, self.config["storage_unit_size"]
+        )
 
         return self.data_system_client
 
