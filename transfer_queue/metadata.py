@@ -32,8 +32,8 @@ class FieldMeta:
     name: str
 
     # data schema info
-    dtype: Optional[Any]  # e.g., torch.float32, np, etc.
-    shape: Optional[Any]  # e.g., torch.Size([seq_len]), torch.Size([seq_len, feature_dim]), etc.
+    dtype: Optional[Any]  # if data has dtype attribute, e.g., torch.float32, numpy.float32, etc.
+    shape: Optional[Any]  # if data has shape attribute, e.g., torch.Size([3, 224, 224]), (3, 224, 224), etc.
 
     # data status info
     production_status: ProductionStatus = ProductionStatus.NOT_PRODUCED  # production status for this field
@@ -354,12 +354,13 @@ class BatchMeta:
             set_all_ready (bool): If True, set all production_status to READY_FOR_CONSUME. Default is True.
         """
         fields = _extract_field_metas(tensor_dict, set_all_ready)
-        for idx, sample in enumerate(self.samples):
-            sample.add_fields(fields=fields[idx])
+        if len(fields) > 0:
+            for idx, sample in enumerate(self.samples):
+                sample.add_fields(fields=fields[idx])
 
-        # Update batch-level fields cache
-        object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
-        object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
+            # Update batch-level fields cache
+            object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
+            object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
         return self
 
     def __len__(self) -> int:
@@ -508,9 +509,10 @@ class BatchMeta:
         object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
         object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
-        # Rebuild storage groups
-        storage_meta_groups = self._build_storage_meta_groups()
-        object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
+        # Note: No need to rebuild storage_meta_groups as samples' storage_id remain unchanged
+        # and their order does not affect the grouping
+        # storage_meta_groups = self._build_storage_meta_groups()
+        # object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
 
         # Note: No need to update _size, _field_names, _is_ready, etc., as these remain unchanged after reorder
 
@@ -580,7 +582,7 @@ def _extract_field_metas(tensor_dict: TensorDict, set_all_ready: bool = True) ->
                               Otherwise, set to NOT_PRODUCED. Default is True.
 
     Returns:
-        all_fields (list[dict[FieldMeta]]): A list of dictionaries containing field metadata.
+        all_fields (list[dict[str, FieldMeta]]): A list of dictionaries containing field metadata.
     """
     all_fields = []
     batch_size = tensor_dict.batch_size[0]
