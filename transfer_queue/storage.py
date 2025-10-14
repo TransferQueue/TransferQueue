@@ -152,7 +152,8 @@ class StorageUnitData:
 
 
 class TransferQueueStorageManager(ABC):
-    """存储管理器抽象基类 - 提供通用的Controller通知能力"""
+    """Base class for storage layer. It defines the interface for data operation and
+    general provide handshake & notification capabilities."""
 
     def __init__(self, config: dict[str, Any]):
         self.storage_manager_id = f"TQ_STORAGE_{uuid4().hex[:8]}"
@@ -349,7 +350,7 @@ class TransferQueueStorageManager(ABC):
             )
 
     @abstractmethod
-    async def put_data(self, data: TensorDict, metadata:BatchMeta) -> None:
+    async def put_data(self, data: TensorDict, metadata: BatchMeta) -> None:
         raise NotImplementedError("Subclasses must implement put_data")
 
     @abstractmethod
@@ -556,7 +557,7 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
         if isinstance(server_infos, ZMQServerInfo):
             server_infos_transform[server_infos.id] = server_infos
         elif isinstance(server_infos, dict):
-            for _, v in server_infos.items():
+            for k, v in server_infos.items():
                 if not isinstance(v, ZMQServerInfo):
                     raise ValueError(f"Invalid server info for key {k}: {v}")
                 server_infos_transform[v.id] = v
@@ -831,7 +832,7 @@ class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
             logger.error(f"[{self.storage_manager_id}]: Error clearing storage unit {target_storage_unit}: {str(e)}")
             raise
 
-    def get_zmq_server_info(self) -> dict[str,ZMQServerInfo]:
+    def get_zmq_server_info(self) -> dict[str, ZMQServerInfo]:
         return self.storage_unit_infos
 
 
@@ -846,7 +847,7 @@ class StorageMetaGroup:
     sample_metas: list[SampleMeta] = dataclasses.field(default_factory=list)
     local_indexes: list[int] = dataclasses.field(default_factory=list)
 
-    def add_sample_meta(self, sample_meta: SampleMeta, local_index:int) -> None:
+    def add_sample_meta(self, sample_meta: SampleMeta, local_index: int) -> None:
         """Add a SampleMeta object to this storage group"""
         self.sample_metas.append(sample_meta)
         self.local_indexes.append(local_index)

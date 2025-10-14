@@ -75,7 +75,6 @@ class SampleMeta:
         return (
             f"SampleMeta(global_step={self.global_step}, "
             f"global_index={self.global_index}"
-            f", "
         )
 
     @property
