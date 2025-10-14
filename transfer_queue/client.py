@@ -194,7 +194,6 @@ class AsyncTransferQueueClient:
         Returns:
             BatchMeta: Metadata object containing data structure, sample info, etc.
         """
-
         assert socket is not None
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.GET_META,
@@ -228,7 +227,6 @@ class AsyncTransferQueueClient:
                 )
         except Exception as e:
             raise RuntimeError(f"[{self.client_id}]: Error in get_meta: {str(e)}") from e
-
 
     async def async_put(
         self,
@@ -276,7 +274,6 @@ class AsyncTransferQueueClient:
             >>> asyncio.run(client.async_put(data=prompts_repeated_batch, global_step=current_step))
 
         """
-
         if metadata is None:
             assert global_step is not None, "global_steps must be provided if metadata is not given"
 
