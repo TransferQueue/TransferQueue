@@ -7,8 +7,13 @@
   <br />
   <br />
 
+  <a href="https://deepwiki.com/TransferQueue/TransferQueue"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
+  [![GitHub Repo stars](https://img.shields.io/github/stars/TransferQueue/TransferQueue)](https://github.com/TransferQueue/TransferQueue/stargazers/)
+  [![GitHub commit activity](https://img.shields.io/github/commit-activity/w/TransferQueue/TransferQueue)](https://github.com/TransferQueue/TransferQueue/graphs/commit-activity)
+
 </div>
 <br/>
+
 
 
 <h2 id="overview">🎉 Overview</h2>
@@ -35,7 +40,7 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 <h2 id="updates">🔄 Updates</h2>
 
  - **July 22, 2025**: We present a series of Chinese blogs on <a href="https://zhuanlan.zhihu.com/p/1930244241625449814">Zhihu 1</a>, <a href="https://zhuanlan.zhihu.com/p/1933259599953232589">2</a>.
- - **July 21, 2025**: We start an RFC on verl community [RFC#2662](https://github.com/volcengine/verl/discussions/2662).
+ - **July 21, 2025**: We started an RFC on verl community [RFC#2662](https://github.com/volcengine/verl/discussions/2662).
  - **July 2, 2025**: We publish the paper [AsyncFlow](https://arxiv.org/abs/2507.01663).
 
 
@@ -48,7 +53,7 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 
 In the control plane, `TransferQueueController` tracks the **production status** and **consumption status** of each training sample as metadata. When all the required data fields are ready (i.e., written to the `TransferQueueStorage`), we know that this data sample can be consumed by downstream tasks. 
 
-For consumption status, we record the consumption records for each computational task (e.g., `generate_sequences`, `compute_log_prob`, etc.). Therefore, even different computation tasks require the same data field, they can consume the data independently without interfering with each other.
+For consumption status, we record the consumption records for each computational task (e.g., `generate_sequences`, `compute_log_prob`, etc.). Therefore, even when different computation tasks require the same data field, they can consume the data independently without interfering with each other.
 
 
 <p align="center">
@@ -56,7 +61,7 @@ For consumption status, we record the consumption records for each computational
 </p>
 
 
-> In the future, we plan to support **load-balancing** and **dynamic batching** capabilities in the control plane. Besides, we will support data management for disaggregated frameworks where each rank manages the data retrieval by itself, rather than coordinated by a single controller.
+> In the future, we plan to support **load-balancing** and **dynamic batching** capabilities in the control plane. Additionally, we will support data management for disaggregated frameworks where each rank manages the data retrieval by itself, rather than coordinated by a single controller.
 
 ### Data Plane: Distributed Data Storage
 
@@ -86,13 +91,13 @@ The interaction workflow of TransferQueue system is as follows:
 2. `TransferQueueController` scans the production and consumption metadata for each sample (row), and dynamically assembles a micro-batch metadata according to the load-balancing policy. This mechanism enables sample-level data scheduling.
 3. The process retrieves the actual data from distributed storage units using the metadata provided by the controller.
 
-To simplify the usage of TransferQueue, we have encapsulated this process into `AsyncTransferQueueClient` and `TransferQueueClient`. These clients provide both asynchronous and synchronous interfaces for data transfer, allowing users to easily integrate TransferQueue to their framework.
+To simplify the usage of TransferQueue, we have encapsulated this process into `AsyncTransferQueueClient` and `TransferQueueClient`. These clients provide both asynchronous and synchronous interfaces for data transfer, allowing users to easily integrate TransferQueue into their framework.
 
 
 > In the future, we will provide a `StreamingDataLoader` interface for disaggregated frameworks as discussed in [RFC#2662](https://github.com/volcengine/verl/discussions/2662). Leveraging this abstraction, each rank can automatically get its own data like `DataLoader` in PyTorch. The TransferQueue system will handle the underlying data scheduling and transfer logic caused by different parallelism strategies, significantly simplifying the design of disaggregated frameworks.
 
 
-<h2 id="show-cases">🔥 Show Cases</h2>
+<h2 id="show-cases">🔥 Showcases</h2>
 
 ### General Usage
 
@@ -146,7 +151,7 @@ We will soon release the Python package on PyPI.
 
 ### Build wheel package from source code
 
-The building and installation steps are the following:
+Follow these steps to build and install:
 1. Retrieve source code from GitHub repo
    ```bash
    git clone https://github.com/TransferQueue/TransferQueue/
@@ -167,11 +172,15 @@ The building and installation steps are the following:
 
 <h2 id="milestones"> 🛣️ RoadMap</h2>
 
+- [ ] Support data rewrite for partial rollout & agentic post-training
+- [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR66](https://github.com/TransferQueue/TransferQueue/pull/66))
+- [ ] Provide a `KVStorageManager` to cover all the KV based storage backends
+- [ ] Support topic-based data partitioning to maintain train/val/test data simultaneously
 - [ ] Release the first stable version through PyPI
 - [ ] Support disaggregated framework (each rank retrieves its own data without going through a centralized node)
 - [ ] Provide a `StreamingDataLoader` interface for disaggregated framework
 - [ ] Support load-balancing and dynamic batching
-- [ ] Provide a general storage abstraction layer for different backends (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake))
+- [ ] Support high-performance storage backends for RDMA transmission (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake), [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html)...)
 - [ ] High-performance serialization and deserialization
 - [ ] More documentation, examples and tutorials
 
