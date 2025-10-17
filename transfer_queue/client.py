@@ -29,9 +29,9 @@ from transfer_queue.metadata import (
     BatchMeta,
 )
 from transfer_queue.storage import (
+    SimpleStorageUnit,
     TransferQueueStorageManager,
     TransferQueueStorageManagerFactory,
-    TransferQueueStorageSimpleUnit,
 )
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
@@ -470,7 +470,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
 
 
 def process_zmq_server_info(
-    handlers: dict[Any, TransferQueueController | TransferQueueStorageManager | TransferQueueStorageSimpleUnit],
+    handlers: dict[Any, TransferQueueController | TransferQueueStorageManager | SimpleStorageUnit],
 ):  # noqa: UP007
     server_info = {}
     for name, handler in handlers.items():

@@ -369,7 +369,7 @@ class StorageUnitData:
 
 
 @ray.remote(num_cpus=1)
-class TransferQueueStorageSimpleUnit:
+class SimpleStorageUnit:
     def __init__(self, storage_unit_size: int):
         self.storage_unit_id = f"TQ_STORAGE_UNIT_{uuid4().hex[:8]}"
         self.storage_unit_size = storage_unit_size
@@ -659,7 +659,7 @@ def build_storage_meta_groups(
     return storage_meta_groups
 
 
-class AsyncTransferQueueStorageSimpleUnitManager(TransferQueueStorageManager):
+class AsyncSimpleStorageManager(TransferQueueStorageManager):
     # def __init__(self, storage_unit_infos: ZMQServerInfo | dict[str, ZMQServerInfo], config: dict[str, Any]):
     def __init__(self, config: dict[str, Any]):
         super().__init__(config)
@@ -992,6 +992,4 @@ class TransferQueueStorageManagerFactory:
 
 
 # Register all the StorageManager
-TransferQueueStorageManagerFactory.register(
-    "AsyncTransferQueueStorageSimpleUnitManager", AsyncTransferQueueStorageSimpleUnitManager
-)
+TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager", AsyncSimpleStorageManager)

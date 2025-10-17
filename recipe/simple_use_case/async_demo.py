@@ -31,8 +31,8 @@ sys.path.append(str(parent_dir))
 from transfer_queue import (  # noqa: E402
     AsyncTransferQueueClient,
     BatchMeta,
+    SimpleStorageUnit,
     TransferQueueController,
-    TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
 )
 from transfer_queue.utils.utils import get_placement_group  # noqa: E402
@@ -105,9 +105,7 @@ class AsyncvLLMServer:
             controller_infos=data_system_controller_infos[0],
         )
 
-        self.data_system_client.initialize_storage_manager(
-            manager_type="AsyncTransferQueueStorageSimpleUnitManager", config=self.config
-        )
+        self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
 
     async def generate(self, data_meta):
         data = await self.data_system_client.async_get_data(data_meta)
@@ -162,9 +160,7 @@ class RolloutManager:
             controller_infos=data_system_controller_infos[0],
         )
 
-        self.data_system_client.initialize_storage_manager(
-            manager_type="AsyncTransferQueueStorageSimpleUnitManager", config=self.config
-        )
+        self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
 
         self.async_rollout_workers = []
         num_workers = self.config.rollout_agent_num_workers
@@ -208,7 +204,7 @@ class Trainer:
         storage_placement_group = get_placement_group(self.config.num_data_storage_units, num_cpus_per_actor=1)
         for storage_unit_rank in range(self.config.num_data_storage_units):
             # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
-            storage_node = TransferQueueStorageSimpleUnit.options(
+            storage_node = SimpleStorageUnit.options(
                 placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
             ).remote(storage_unit_size=math.ceil(total_storage_size / self.config.num_data_storage_units))
             self.data_system_storage_units[storage_unit_rank] = storage_node
@@ -245,9 +241,7 @@ class Trainer:
             controller_infos=self.data_system_controller_infos[0],
         )
 
-        self.data_system_client.initialize_storage_manager(
-            manager_type="AsyncTransferQueueStorageSimpleUnitManager", config=self.config
-        )
+        self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
 
         return self.data_system_client
 
