@@ -167,6 +167,7 @@ Follow these steps to build and install:
 
 <h2 id="milestones"> 🛣️ RoadMap</h2>
 
+- [ ] Support data rewrite for partial rollout & agentic post-training
 - [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR66](https://github.com/TransferQueue/TransferQueue/pull/66))
 - [ ] Provide a `KVStorageManager` to cover all the KV based storage backends
 - [ ] Support topic-based data partitioning to maintain train/val/test data simultaneously
