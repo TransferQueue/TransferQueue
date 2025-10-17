@@ -21,7 +21,7 @@ from .client import (
 )
 from .controller import TransferQueueController
 from .metadata import BatchMeta
-from .storage import TransferQueueStorageSimpleUnit
+from .storage import SimpleStorageUnit
 from .utils.utils import get_placement_group
 from .utils.zmq_utils import ZMQServerInfo
 
@@ -30,7 +30,7 @@ __all__ = [
     "BatchMeta",
     "TransferQueueClient",
     "TransferQueueController",
-    "TransferQueueStorageSimpleUnit",
+    "SimpleStorageUnit",
     "ZMQServerInfo",
     "process_zmq_server_info",
     "get_placement_group",
