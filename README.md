@@ -167,11 +167,13 @@ The building and installation steps are the following:
 
 <h2 id="milestones"> 🛣️ RoadMap</h2>
 
+- [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR66](https://github.com/TransferQueue/TransferQueue/pull/66))
+- [ ] Provide a `KVStorageManager` to cover all the KV based storage backends
 - [ ] Release the first stable version through PyPI
 - [ ] Support disaggregated framework (each rank retrieves its own data without going through a centralized node)
 - [ ] Provide a `StreamingDataLoader` interface for disaggregated framework
 - [ ] Support load-balancing and dynamic batching
-- [ ] Provide a general storage abstraction layer for different backends (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake))
+- [ ] Support high-performance storage backends for RDMA transmission (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake), [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html)...)
 - [ ] High-performance serialization and deserialization
 - [ ] More documentation, examples and tutorials
 
