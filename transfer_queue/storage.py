@@ -48,6 +48,8 @@ TQ_STORAGE_POLLER_TIMEOUT = os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 1000)
 TQ_STORAGE_HANDSHAKE_TIMEOUT = int(os.environ.get("TQ_STORAGE_HANDSHAKE_TIMEOUT", 30))
 TQ_DATA_UPDATE_RESPONSE_TIMEOUT = int(os.environ.get("TQ_DATA_UPDATE_RESPONSE_TIMEOUT", 600))
 
+# TODO (TQStorage): Carefully check all the docstrings in this file.
+
 
 class TransferQueueStorageManager(ABC):
     """Base class for storage layer. It defines the interface for data operation and
@@ -613,7 +615,7 @@ class StorageMetaGroup:
         return f"StorageMetaGroup(storage_id='{self.storage_id}', size={self.size})"
 
 
-# TODO: to be optimized. Now there are too many data dicts.
+# TODO (TQStorage): to be optimized. Now there are too many data dicts.
 # transfer_data, transfer_dict, data, StorageUnitData, field_data...
 def _add_field_data(
     transfer_dict: dict[str, Any], storage_meta_group: StorageMetaGroup, data: TensorDict
@@ -666,7 +668,6 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         self.config = config
         self.storage_unit_infos = config.get("storage_unit_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
-        self.storage_unit_size = config.get("storage_unit_size", 10000)  # type: int
 
         assert self.storage_unit_infos is not None
         self._build_storage_mapping_functions()
@@ -691,6 +692,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         return server_infos_transform
 
+    # TODO (TQStorage): Provide a general dynamic socket function for both Client & Storage @huazhong.
     @staticmethod
     def dynamic_storage_manager_socket(socket_name: str):
         """Decorator to auto-manage ZMQ sockets for Controller/Storage servers (create -> connect -> inject -> close).
@@ -989,6 +991,10 @@ class TransferQueueStorageManagerFactory:
                 f"Unknown manager_type: {manager_type}. Supported managers include: {list(cls._registry.keys())}"
             )
         return cls._registry[manager_type](config)
+
+
+# TODO (TQStorage): Provide a KVStorageManager implementation, where we can select different
+#                   backend storages like MoonCake, Redis, etc.
 
 
 # Register all the StorageManager

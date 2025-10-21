@@ -43,6 +43,8 @@ from transfer_queue.utils.zmq_utils import (
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+# TODO (TQStorage): Carefully check all the docstrings in this file.
+
 
 class AsyncTransferQueueClient:
     def __init__(
@@ -80,6 +82,7 @@ class AsyncTransferQueueClient:
             else:
                 logger.warning(f"[{self.client_id}]: Server {info.id} already registered, skipping")
 
+    # TODO (TQStorage): Provide a general dynamic socket function for both Client & Storage @huazhong.
     @staticmethod
     def dynamic_socket(socket_name: str):
         """Decorator to auto-manage ZMQ sockets for Controller/Storage servers (create -> connect -> inject -> close).

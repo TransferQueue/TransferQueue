@@ -98,7 +98,7 @@ class ActorRolloutRefWorker:
 
 @ray.remote
 class AsyncvLLMServer:
-    def __init__(self, config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size):
+    def __init__(self, config, data_system_controller_infos):
         self.config = config
         self.data_system_client = AsyncTransferQueueClient(
             client_id="AsyncvLLMServer",
@@ -132,9 +132,14 @@ class AsyncvLLMServer:
 
 @ray.remote(num_cpus=1)
 class AsyncRolloutWorker:
-    def __init__(self, config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size):
+    def __init__(
+        self,
+        config,
+        data_system_controller_infos,
+    ):
         self.async_vllm_server = AsyncvLLMServer.remote(
-            config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
+            config,
+            data_system_controller_infos,
         )
 
     async def generate_sequences(self, data_meta_chunk):
@@ -152,7 +157,7 @@ class AsyncRolloutWorker:
 
 
 class RolloutManager:
-    def __init__(self, config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size):
+    def __init__(self, config, data_system_storage_unit_infos, data_system_controller_infos):
         self.config = config
 
         self.data_system_client = AsyncTransferQueueClient(
@@ -165,11 +170,7 @@ class RolloutManager:
         self.async_rollout_workers = []
         num_workers = self.config.rollout_agent_num_workers
         for i in range(num_workers):
-            self.async_rollout_workers.append(
-                AsyncRolloutWorker.remote(
-                    config, data_system_storage_unit_infos, data_system_controller_infos, storage_unit_size
-                )
-            )
+            self.async_rollout_workers.append(AsyncRolloutWorker.remote(config, data_system_controller_infos))
 
     def generate_sequences(self, data_meta):
         data_meta_chunkes = data_meta.chunk(len(self.async_rollout_workers))
@@ -194,10 +195,10 @@ class Trainer:
             self.config,
             self.data_system_storage_unit_infos,
             self.data_system_controller_infos,
-            self.config["storage_unit_size"],
         )
 
     def _initialize_data_system(self):
+        # TODO (TQStorage): provide a general data system initialization utility function
         # 1. 初始化TransferQueueStorage
         total_storage_size = self.config.global_batch_size * self.config.num_global_batch * self.config.num_n_samples
         self.data_system_storage_units = {}
@@ -232,10 +233,14 @@ class Trainer:
         # with allow_objects=True to maintain ZMQServerInfo instance. Otherwise it will be flattened to dict
         tq_config.controller_infos = self.data_system_controller_infos
         tq_config.storage_unit_infos = self.data_system_storage_unit_infos
-        tq_config.storage_unit_size = math.ceil(total_storage_size / self.config.num_data_storage_units)
         self.config = OmegaConf.merge(tq_config, self.config)
 
         # 4. 创建Client
+        # TODO (TQStorage): Now it seems we cannot transmit the same client instance to multiple places,
+        #                   otherwise ray will report serialization error. Need to check and fix it in the future.
+
+        # TODO (TQStorage): TransferQueueClient needs a single controller_infos, while TransferQueueStorageManager
+        #                   requires all controller_infos. Need to reconcile.
         self.data_system_client = AsyncTransferQueueClient(
             client_id="Trainer",
             controller_infos=self.data_system_controller_infos[0],

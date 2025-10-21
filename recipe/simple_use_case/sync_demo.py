@@ -41,6 +41,8 @@ os.environ["RAY_DEDUP_LOGS"] = "0"
 os.environ["RAY_DEBUG"] = "1"
 ray.init()
 
+# TODO (TQStorage): Support new storage API
+
 
 def initialize_data_system(config):
     # 1. 初始化TransferQueueStorage
