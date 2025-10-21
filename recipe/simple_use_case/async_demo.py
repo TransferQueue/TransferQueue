@@ -209,7 +209,7 @@ class Trainer:
                 placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
             ).remote(storage_unit_size=math.ceil(total_storage_size / self.config.num_data_storage_units))
             self.data_system_storage_units[storage_unit_rank] = storage_node
-            logger.info(f"TransferQueueStorageSimpleUnit #{storage_unit_rank} has been created.")
+            logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
         # 2. 初始化TransferQueueController
         # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务

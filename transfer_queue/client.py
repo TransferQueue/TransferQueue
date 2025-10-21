@@ -436,12 +436,10 @@ class TransferQueueClient(AsyncTransferQueueClient):
         self,
         client_id: str,
         controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
-        storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
     ):
         super().__init__(
             client_id,
             controller_infos,
-            storage_infos,
         )
 
     def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, global_step: Optional[int] = None):
@@ -473,7 +471,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
 
 
 def process_zmq_server_info(
-    handlers: dict[Any, TransferQueueController | TransferQueueStorageManager | SimpleStorageUnit],
+    handlers: dict[Any, "TransferQueueController | TransferQueueStorageManager | SimpleStorageUnit"],
 ):  # noqa: UP007
     server_info = {}
     for name, handler in handlers.items():

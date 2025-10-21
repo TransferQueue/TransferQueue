@@ -65,9 +65,11 @@ For consumption status, we record the consumption records for each computational
 
 ### Data Plane: Distributed Data Storage
 
-In the data plane, `TransferQueueStorageSimpleUnit` serves as a naive storage unit based on CPU memory, responsible for the actual storage and retrieval of data. Each storage unit can be deployed on a separate node, allowing for distributed data management.
+In the data plane, `SimpleStorageUnit` serves as a naive storage unit based on CPU memory, responsible for the actual storage and retrieval of data. Each storage unit can be deployed on a separate node, allowing for distributed data management.
 
-`TransferQueueStorageSimpleUnit` employs a 2D data structure as follows:
+The storage system is built on top of the `TransferQueueStorageManager` abstraction layer, which enables pluggable storage backends. The current implementation uses `AsyncSimpleStorageManager` to coordinate distributed `SimpleStorageUnit` instances.
+
+`SimpleStorageUnit` employs a 2D data structure as follows:
 
 - Each row corresponds to a training sample, assigned a unique index within the corresponding global batch.
 - Each column represents the input/output data fields for computational tasks.
@@ -79,7 +81,7 @@ This data structure design is motivated by the computational characteristics of 
 </p>
 
 
-> In the future, we plan to implement a **general storage abstraction layer** to support various storage backends. Through this abstraction, we hope to integrate high-performance storage solutions such as [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) to support device-to-device data transfer through RDMA, further enhancing data transfer efficiency for large-scale data.
+> The **general storage abstraction layer** has been implemented with `TransferQueueStorageManager`, which allows pluggable storage backends. The current implementation includes `AsyncSimpleStorageManager` for CPU memory storage. Through this abstraction, we plan to integrate high-performance storage solutions such as [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) to support device-to-device data transfer through RDMA, further enhancing data transfer efficiency for large-scale data.
 
 
 ### User Interface: Asynchronous & Synchronous Client
@@ -174,6 +176,7 @@ Follow these steps to build and install:
 
 - [ ] Support data rewrite for partial rollout & agentic post-training
 - [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR66](https://github.com/TransferQueue/TransferQueue/pull/66))
+- [x] Implement `AsyncSimpleStorageManager` as the default storage backend based on the `TransferQueueStorageManager` abstraction
 - [ ] Provide a `KVStorageManager` to cover all the KV based storage backends
 - [ ] Support topic-based data partitioning to maintain train/val/test data simultaneously
 - [ ] Release the first stable version through PyPI
