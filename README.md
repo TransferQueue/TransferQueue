@@ -38,7 +38,7 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 
 
 <h2 id="updates">🔄 Updates</h2>
- - **Oct 21, 2025**: Official integration to verl is ready [verl/pulls/3649](https://github.com/volcengine/verl/pull/3649). Following PRs will optimize the single controller architecture by fully decouple data & control flows.
+ - **Oct 21, 2025**: Official integration to verl is ready [verl/pulls/3649](https://github.com/volcengine/verl/pull/3649). Following PRs will optimize the single controller architecture by fully decoupling data & control flows.
  - **July 22, 2025**: We present a series of Chinese blogs on <a href="https://zhuanlan.zhihu.com/p/1930244241625449814">Zhihu 1</a>, <a href="https://zhuanlan.zhihu.com/p/1933259599953232589">2</a>.
  - **July 21, 2025**: We started an RFC on verl community [verl/discussions/2662](https://github.com/volcengine/verl/discussions/2662).
  - **July 2, 2025**: We publish the paper [AsyncFlow](https://arxiv.org/abs/2507.01663).
