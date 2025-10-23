@@ -31,9 +31,8 @@ from transfer_queue.metadata import (
     StorageMetaGroup,
 )
 from transfer_queue.storage import TransferQueueStorageSimpleUnit
-from transfer_queue.utils.utils import (
-    TransferQueueRole,
-)
+from transfer_queue.utils.profiling_utils import ProfilerExtension, VizTracerProfiler
+from transfer_queue.utils.utils import TransferQueueRole
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -45,7 +44,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 
-class AsyncTransferQueueClient:
+class AsyncTransferQueueClient(ProfilerExtension):
     def __init__(
         self,
         client_id: str,
@@ -53,6 +52,8 @@ class AsyncTransferQueueClient:
         storage_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
     ):
         self.client_id = client_id
+
+        ProfilerExtension.__init__(self, profiler=VizTracerProfiler())
 
         self._controllers: dict[str, ZMQServerInfo] = {}
         self._storages: dict[str, ZMQServerInfo] = {}
@@ -162,6 +163,7 @@ class AsyncTransferQueueClient:
         return decorator
 
     @dynamic_socket(target_role=TransferQueueRole.CONTROLLER, socket_name="request_handle_socket")
+    @VizTracerProfiler.trace()
     async def async_get_meta(
         self,
         data_fields: list[str],
@@ -250,6 +252,7 @@ class AsyncTransferQueueClient:
         except Exception as e:
             raise RuntimeError(f"[{self.client_id}]: Error in get_meta: {str(e)}") from e
 
+    @VizTracerProfiler.trace()
     async def async_put(
         self,
         data: TensorDict,
@@ -389,6 +392,7 @@ class AsyncTransferQueueClient:
         except Exception as e:
             raise RuntimeError(f"Error getting data from storage unit {target_storage}: {str(e)}") from e
 
+    @VizTracerProfiler.trace()
     async def async_get_data(self, metadata: BatchMeta) -> TensorDict:
         """Asynchronously fetches data via Storage Units and organizes it into a TensorDict.
 
@@ -469,6 +473,7 @@ class AsyncTransferQueueClient:
 
         return TensorDict(tensor_data, batch_size=len(storage_data))
 
+    @VizTracerProfiler.trace()
     async def async_clear(self, global_step: int):
         """Asynchronously clears data from all storage units and controller metadata.
 
