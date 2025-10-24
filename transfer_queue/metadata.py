@@ -21,24 +21,15 @@ from tensordict import TensorDict
 
 from transfer_queue.utils.utils import ProductionStatus
 
-# TODO (TQStorage): Carefully check all the docstrings in this file.
-
 
 @dataclass
 class FieldMeta:
-    """
-    Records the metadata of a single data field. (name, dtype, shape, etc.)
-    """
+    """Records the metadata of a single data field (name, dtype, shape, etc.)."""
 
-    # field name (e.g., 'prompt', 'response', etc.)
     name: str
-
-    # data schema info
-    dtype: Optional[Any]  # if data has dtype attribute, e.g., torch.float32, numpy.float32, etc.
-    shape: Optional[Any]  # if data has shape attribute, e.g., torch.Size([3, 224, 224]), (3, 224, 224), etc.
-
-    # data status info
-    production_status: ProductionStatus = ProductionStatus.NOT_PRODUCED  # production status for this field
+    dtype: Optional[Any]  # Data type (e.g., torch.float32, numpy.float32)
+    shape: Optional[Any]  # Data shape (e.g., torch.Size([3, 224, 224]), (3, 224, 224))
+    production_status: ProductionStatus = ProductionStatus.NOT_PRODUCED
 
     def __str__(self) -> str:
         return (
@@ -54,19 +45,11 @@ class FieldMeta:
 
 @dataclass
 class SampleMeta:
-    """
-    Records the metadata of a single data sample (stored as a row in the data system).
-    """
+    """Records the metadata of a single data sample (stored as a row in the data system)."""
 
-    # algorithm related info
-    global_step: int  # global step, used for data versioning
-
-    # data retrival info
-    global_index: int  # global row index, uniquely identifies a data sample
-
-    # data fields info
-    # this fields may not contain all the fields of the sample, but only fields-of-interest
-    fields: dict[str, FieldMeta]
+    global_step: int  # Global step, used for data versioning
+    global_index: int  # Global row index, uniquely identifies a data sample
+    fields: dict[str, FieldMeta]  # Fields of interest for this sample
 
     def __post_init__(self):
         """Initialize is_ready property based on field readiness"""
@@ -103,8 +86,7 @@ class SampleMeta:
         """
         Add new fields to this sample. New fields will be initialized with given dtype, shape
         and production_status (if provided). If not provided, default values (None, None, READY_FOR_CONSUME)
-        will be used.
-        This modifies the sample in-place to include the new fields.
+        will be used. This modifies the sample in-place to include the new fields.
         """
         self.fields = _union_fields(self.fields, fields)
         # Update is_ready property
@@ -150,9 +132,7 @@ class SampleMeta:
 
 @dataclass
 class BatchMeta:
-    """
-    Records the metadata of a batch of data samples.
-    """
+    """Records the metadata of a batch of data samples."""
 
     samples: list[SampleMeta]
     extra_info: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -359,7 +339,6 @@ class BatchMeta:
 
         # Merge extra info dictionaries
         merged_extra_info = {**self.extra_info, **other.extra_info}
-
         return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
 
     def reorder(self, indices: list[int]):
