@@ -173,7 +173,7 @@ Follow these steps to build and install:
 <h2 id="quick-start">📊 Performance</h2>
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761291184832-e2332c04-00be-419a-81da-5359e568f8d0.png" width="100%">
+  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761294403612-76ca20a7-9108-42fc-b3f5-60f84d70f39b.png" width="100%">
 </p>
 
 > Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
