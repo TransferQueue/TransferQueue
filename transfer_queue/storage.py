@@ -1168,7 +1168,6 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             )
             for field, v in ordered_data.items()
         }
-        tensor_data["global_indexes"] = torch.tensor(metadata.global_indexes)
 
         return TensorDict(tensor_data, batch_size=len(metadata))
 
