@@ -62,7 +62,6 @@ class TransferQueueController:
         """Initialize the TransferQueueController.
 
         Args:
-            num_storage_units: Number of storage units in the system
             global_batch_size: Size of each global batch
             num_global_batch: Number of global batches to maintain in storage
             num_n_samples: For each prompt, sample n responses
@@ -222,14 +221,6 @@ class TransferQueueController:
             Dictionary mapping task names to their consumption status tensors
         """
         return self.data_consumption_status
-
-    def get_global_index_mapping(self):
-        """Get global index to storage mapping information.
-
-        Returns:
-            Tuple containing storage rank mapping and local index mapping
-        """
-        return self._global_index_storage_rank_mapping, self.global_index_local_index_mapping
 
     def _get_metadata(
         self,

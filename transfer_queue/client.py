@@ -61,7 +61,8 @@ class AsyncTransferQueueClient:
 
         Args:
             client_id: Unique identifier for this client instance
-            controller_infos: Single controller info or dictionary mapping controller IDs to their ZMQ server information
+            controller_infos: Single controller info or dictionary mapping controller IDs
+                              to their ZMQ server information
         """
         self.client_id = client_id
         self._controllers: dict[str, ZMQServerInfo] = {}

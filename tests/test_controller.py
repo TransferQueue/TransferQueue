@@ -13,11 +13,9 @@
 # limitations under the License.
 
 import logging
-import math
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 import ray
 import torch
@@ -25,8 +23,8 @@ import torch
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue.controller import TQ_INIT_FIELD_NUM, TransferQueueController  # noqa: E402
-from transfer_queue.storage import TransferQueueStorageSimpleUnit  # noqa: E402
+from transfer_queue import TransferQueueController  # noqa: E402
+from transfer_queue.controller import TQ_INIT_FIELD_NUM  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -53,10 +51,8 @@ def setup_teardown_transfer_queue_controller(ray_setup):
     global_batch_size = 8
     num_global_batch = 2
     num_n_samples = 2
-    num_data_storage_units = 2
 
     tq_controller = TransferQueueController.remote(
-        num_storage_units=num_data_storage_units,
         global_batch_size=global_batch_size,
         num_global_batch=num_global_batch,
         num_n_samples=num_n_samples,
@@ -65,119 +61,7 @@ def setup_teardown_transfer_queue_controller(ray_setup):
     ray.get(tq_controller.clear.remote(0))
 
 
-@pytest.fixture(scope="function")
-def setup_teardown_register_controller_info(setup_teardown_transfer_queue_controller):
-    tq_controller, global_batch_size, num_global_batch, num_n_samples = setup_teardown_transfer_queue_controller
-    total_storage_size = global_batch_size * num_global_batch * num_n_samples
-    num_data_storage_units = 2
-
-    data_system_storage_units = {}
-    for storage_unit_rank in range(num_data_storage_units):
-        storage_node = TransferQueueStorageSimpleUnit.remote(
-            storage_size=math.ceil(total_storage_size / num_data_storage_units)
-        )
-        data_system_storage_units[storage_unit_rank] = storage_node
-        logger.info(f"TransferQueueStorageSimpleUnit #{storage_unit_rank} has been created.")
-
-    # Register controller info
-    zmq_server_info = ray.get(tq_controller.get_zmq_server_info.remote())
-    controller_infos = {zmq_server_info.id: zmq_server_info}
-
-    ray.get(
-        [
-            storage_unit.register_controller_info.remote(controller_infos)
-            for storage_unit in data_system_storage_units.values()
-        ]
-    )
-
-    yield tq_controller, global_batch_size, num_n_samples, data_system_storage_units
-
-
 class TestTransferQueueController:
-    @pytest.mark.parametrize("num_n_samples", [1, 2])
-    @pytest.mark.parametrize("num_global_batch", [1, 2])
-    def test_build_index_storage_mapping(self, num_n_samples, num_global_batch, ray_setup):
-        # Used as the offset for the global index to distinguish which global step the data corresponds to
-        global_batch_size = 8
-        num_data_storage_units = 2
-
-        self.tq_controller = TransferQueueController.remote(
-            num_storage_units=num_data_storage_units,
-            global_batch_size=global_batch_size,
-            num_global_batch=num_global_batch,
-            num_n_samples=num_n_samples,
-        )
-
-        global_index_storage_mapping, global_index_local_index_mapping = ray.get(
-            self.tq_controller.get_global_index_mapping.remote()
-        )
-
-        if num_global_batch == 1 and num_n_samples == 1:
-            assert np.array_equal(global_index_storage_mapping, np.array([0, 0, 0, 0, 1, 1, 1, 1]))
-            assert np.array_equal(global_index_local_index_mapping, np.array([0, 1, 2, 3, 0, 1, 2, 3]))
-        # The data of a single GBS will be distributed across different storage units
-        elif num_global_batch == 2 and num_n_samples == 1:
-            assert np.array_equal(
-                global_index_storage_mapping, np.array([0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1])
-            )
-            assert np.array_equal(
-                global_index_local_index_mapping, np.array([0, 1, 2, 3, 0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6, 7])
-            )
-        # When num_n_samples is larger than 1
-        elif num_global_batch == 1 and num_n_samples == 2:
-            assert np.array_equal(
-                global_index_storage_mapping, np.array([0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1])
-            )
-            assert np.array_equal(
-                global_index_local_index_mapping, np.array([0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7])
-            )
-        elif num_global_batch == 2 and num_n_samples == 2:
-            assert np.array_equal(
-                global_index_storage_mapping,
-                np.array(
-                    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
-                ),
-            )
-            assert np.array_equal(
-                global_index_local_index_mapping,
-                np.array(
-                    [
-                        0,
-                        1,
-                        2,
-                        3,
-                        4,
-                        5,
-                        6,
-                        7,
-                        0,
-                        1,
-                        2,
-                        3,
-                        4,
-                        5,
-                        6,
-                        7,
-                        8,
-                        9,
-                        10,
-                        11,
-                        12,
-                        13,
-                        14,
-                        15,
-                        8,
-                        9,
-                        10,
-                        11,
-                        12,
-                        13,
-                        14,
-                        15,
-                    ]
-                ),
-            )
-
     def test_update_production_status(self, setup_teardown_transfer_queue_controller):
         tq_controller, global_batch_size, num_global_batch, num_n_samples = setup_teardown_transfer_queue_controller
 
@@ -210,8 +94,8 @@ class TestTransferQueueController:
         new_data_consumption_status = ray.get(tq_controller.get_data_consumption_status.remote())
         assert torch.equal(new_data_consumption_status[task_name], torch.zeros(total_storage_size, dtype=torch.int8))
 
-    def test_get_prompt_metadata(self, setup_teardown_register_controller_info):
-        tq_controller, global_batch_size, n_samples, _ = setup_teardown_register_controller_info
+    def test_get_prompt_metadata(self, setup_teardown_transfer_queue_controller):
+        tq_controller, global_batch_size, _, n_samples = setup_teardown_transfer_queue_controller
 
         data_fields = ["test_prompts"]
         global_step = 5
@@ -243,26 +127,6 @@ class TestTransferQueueController:
             17,
             16,
         ]
-        assert metadata.local_indexes == [
-            15,
-            14,
-            13,
-            12,
-            11,
-            10,
-            9,
-            8,
-            15,
-            14,
-            13,
-            12,
-            11,
-            10,
-            9,
-            8,
-        ]
-        storage_ids = metadata.storage_ids
-        assert len(set(storage_ids[: len(storage_ids) // 2])) == 1
 
     # TODO: Test case where multiple clients concurrently read datameta from a single controller,
     #  and each client receives the correct response
