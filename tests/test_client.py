@@ -64,7 +64,7 @@ class MockController:
         self.request_socket = self.context.socket(zmq.ROUTER)
         self.request_port = self._bind_to_random_port(self.request_socket)
 
-        self.zmq_server_info = ZMQServerInfo.create(
+        self.zmq_server_info = ZMQServerInfo(
             role="TransferQueueController",
             id=controller_id,
             ip="127.0.0.1",
@@ -138,8 +138,6 @@ class MockController:
             sample = SampleMeta(
                 global_step=0,
                 global_index=i,
-                storage_id="storage_0",
-                local_index=i,
                 fields={field.name: field for field in fields},
             )
             samples.append(sample)
@@ -164,7 +162,7 @@ class MockStorage:
         self.data_socket = self.context.socket(zmq.ROUTER)
         self.data_port = self._bind_to_random_port(self.data_socket)
 
-        self.zmq_server_info = ZMQServerInfo.create(
+        self.zmq_server_info = ZMQServerInfo(
             role="TransferQueueStorage",
             id=storage_id,
             ip="127.0.0.1",
@@ -268,8 +266,12 @@ def client_setup(mock_controller, mock_storage):
     client = TransferQueueClient(
         client_id=client_id,
         controller_infos={mock_controller.controller_id: mock_controller.zmq_server_info},
-        storage_infos={mock_storage.storage_id: mock_storage.zmq_server_info},
     )
+
+    config = {'controller_infos':{mock_controller.controller_id: mock_controller.zmq_server_info},
+                'storage_unit_infos':{mock_storage.storage_id: mock_storage.zmq_server_info}}
+    client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
+
 
     # Give some time for connections to establish
     time.sleep(0.5)
@@ -284,7 +286,6 @@ def test_client_initialization(client_setup):
 
     assert client.client_id is not None
     assert mock_controller.controller_id in client._controllers
-    assert mock_storage.storage_id in client._storages
 
 
 def test_put_and_get_data(client_setup):
@@ -323,7 +324,6 @@ def test_get_meta(client_setup):
     metadata = client.get_meta(data_fields=["tokens", "labels"], batch_size=10, global_step=0)
 
     # Verify metadata structure
-    assert hasattr(metadata, "storage_meta_groups")
     assert hasattr(metadata, "global_indexes")
     assert hasattr(metadata, "field_names")
     assert hasattr(metadata, "size")
@@ -353,15 +353,17 @@ def test_multiple_servers():
         storage_infos = {s.storage_id: s.zmq_server_info for s in storages}
 
         client = TransferQueueClient(
-            client_id=client_id, controller_infos=controller_infos, storage_infos=storage_infos
+            client_id=client_id, controller_infos=controller_infos
         )
+
+        config = {'controller_infos':controller_infos, 'storage_unit_infos':storage_infos}
+        client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
 
         # Give time for connections
         time.sleep(1.0)
 
         # Verify connections
         assert len(client._controllers) == 2
-        assert len(client._storages) == 3
 
         # Test basic operation
         test_data = TensorDict({"tokens": torch.randint(0, 100, (5, 128))}, batch_size=5)
