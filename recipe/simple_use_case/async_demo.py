@@ -199,20 +199,19 @@ class Trainer:
 
     def _initialize_data_system(self):
         # TODO (TQStorage): provide a general data system initialization utility function
-        # 1. 初始化TransferQueueStorage
+        # 1. Initialize TransferQueueStorage
         total_storage_size = self.config.global_batch_size * self.config.num_global_batch * self.config.num_n_samples
         self.data_system_storage_units = {}
         storage_placement_group = get_placement_group(self.config.num_data_storage_units, num_cpus_per_actor=1)
         for storage_unit_rank in range(self.config.num_data_storage_units):
-            # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
             storage_node = SimpleStorageUnit.options(
                 placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
             ).remote(storage_unit_size=math.ceil(total_storage_size / self.config.num_data_storage_units))
             self.data_system_storage_units[storage_unit_rank] = storage_node
             logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
-        # 2. 初始化TransferQueueController
-        # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务
+        # 2. Initialize TransferQueueController
+        # TODO (TQStorage): Set up and use only one controller
         self.data_system_controllers = {}
         controller_placement_group = get_placement_group(self.config.num_data_controllers, num_cpus_per_actor=1)
         for controller_rank in range(self.config.num_data_controllers):
@@ -225,7 +224,7 @@ class Trainer:
             )
             logger.info(f"TransferQueueController #{controller_rank} has been created.")
 
-        # 3. 准备必要信息
+        # 3. Prepare necessary information
         self.data_system_controller_infos = process_zmq_server_info(self.data_system_controllers)
         self.data_system_storage_unit_infos = process_zmq_server_info(self.data_system_storage_units)
 
@@ -235,19 +234,17 @@ class Trainer:
         tq_config.storage_unit_infos = self.data_system_storage_unit_infos
         self.config = OmegaConf.merge(tq_config, self.config)
 
-        # 4. 创建Client
-        # TODO (TQStorage): Now it seems we cannot transmit the same client instance to multiple places,
-        #                   otherwise ray will report serialization error. Need to check and fix it in the future.
-
-        # TODO (TQStorage): TransferQueueClient needs a single controller_infos, while TransferQueueStorageManager
-        #                   requires all controller_infos. Need to reconcile.
+        # 4. Create client
         self.data_system_client = AsyncTransferQueueClient(
             client_id="Trainer",
             controller_infos=self.data_system_controller_infos[0],
         )
 
         self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
-
+        # Note: The client contains ZMQ objects. Currently, we cannot transmit the same client instance
+        # to multiple places, as this will cause serialization errors in Ray.
+        # Workaround: If you need to use a client in multiple Ray actors or processes, create a separate
+        # AsyncTransferQueueClient instance for each actor/process instead of sharing or transmitting the same instance.
         return self.data_system_client
 
     def fit(self):

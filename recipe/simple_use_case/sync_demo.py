@@ -29,6 +29,7 @@ sys.path.append(str(parent_dir))
 
 from transfer_queue import (  # noqa: E402
     SimpleStorageUnit,
+    TransferQueueClient,
     TransferQueueController,
     process_zmq_server_info,
 )
@@ -41,24 +42,21 @@ os.environ["RAY_DEDUP_LOGS"] = "0"
 os.environ["RAY_DEBUG"] = "1"
 ray.init()
 
-# TODO (TQStorage): Support new storage API
-
 
 def initialize_data_system(config):
-    # 1. 初始化TransferQueueStorage
+    # 1. Initialize TransferQueueStorage
     total_storage_size = config.global_batch_size * config.num_global_batch * config.num_n_samples
     data_system_storage_units = {}
     storage_placement_group = get_placement_group(config.num_data_storage_units, num_cpus_per_actor=1)
     for storage_unit_rank in range(config.num_data_storage_units):
-        # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
         storage_node = SimpleStorageUnit.options(
             placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
         ).remote(storage_unit_size=math.ceil(total_storage_size / config.num_data_storage_units))
         data_system_storage_units[storage_unit_rank] = storage_node
         logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
-    # 2. 初始化TransferQueueController
-    # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务
+    # 2. Initialize TransferQueueController
+    # TODO (TQStorage): Set up and use only one controller
     controller_placement_group = get_placement_group(config.num_data_controllers, num_cpus_per_actor=1)
     data_system_controllers = {}
     for controller_rank in range(config.num_data_controllers):
@@ -71,7 +69,7 @@ def initialize_data_system(config):
         )
         logger.info(f"TransferQueueController #{controller_rank} has been created.")
 
-    # 3. 准备必要信息
+    # 3. Prepare necessary information
     data_system_controller_infos = process_zmq_server_info(data_system_controllers)
     data_system_storage_unit_infos = process_zmq_server_info(data_system_storage_units)
 
@@ -81,11 +79,7 @@ def initialize_data_system(config):
     tq_config.storage_unit_infos = data_system_storage_unit_infos
     config = OmegaConf.merge(tq_config, config)
 
-    # 4. 创建Client
-    from transfer_queue import TransferQueueClient
-
-    # TODO (TQStorage): TransferQueueClient needs a single controller_infos, while TransferQueueStorageManager
-    #                   requires all controller_infos. Need to reconcile.
+    # 4. Create client
     data_system_client = TransferQueueClient(
         client_id="Trainer",
         controller_infos=data_system_controller_infos[0],

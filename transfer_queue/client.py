@@ -576,7 +576,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
 
 
 def process_zmq_server_info(
-    handlers: dict[Any, TransferQueueController | TransferQueueStorageManager | SimpleStorageUnit],
+    handlers: dict[Any, "TransferQueueController | TransferQueueStorageManager | SimpleStorageUnit"],
 ):  # noqa: UP007
     """Extract ZMQ server information from handler objects.
 
