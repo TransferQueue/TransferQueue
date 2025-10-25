@@ -268,10 +268,11 @@ def client_setup(mock_controller, mock_storage):
         controller_infos={mock_controller.controller_id: mock_controller.zmq_server_info},
     )
 
-    config = {'controller_infos':{mock_controller.controller_id: mock_controller.zmq_server_info},
-                'storage_unit_infos':{mock_storage.storage_id: mock_storage.zmq_server_info}}
+    config = {
+        "controller_infos": {mock_controller.controller_id: mock_controller.zmq_server_info},
+        "storage_unit_infos": {mock_storage.storage_id: mock_storage.zmq_server_info},
+    }
     client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
-
 
     # Give some time for connections to establish
     time.sleep(0.5)
@@ -352,11 +353,9 @@ def test_multiple_servers():
         controller_infos = {c.controller_id: c.zmq_server_info for c in controllers}
         storage_infos = {s.storage_id: s.zmq_server_info for s in storages}
 
-        client = TransferQueueClient(
-            client_id=client_id, controller_infos=controller_infos
-        )
+        client = TransferQueueClient(client_id=client_id, controller_infos=controller_infos)
 
-        config = {'controller_infos':controller_infos, 'storage_unit_infos':storage_infos}
+        config = {"controller_infos": controller_infos, "storage_unit_infos": storage_infos}
         client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
 
         # Give time for connections
