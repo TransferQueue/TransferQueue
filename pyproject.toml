@@ -77,6 +77,14 @@ follow_imports = "skip"
 # Blanket silence
 ignore_errors = true
 
+# -------------------------------
+# tool.pytest - pytest config
+# -------------------------------
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:.*PyTorch API of nested tensors.*prototype.*:UserWarning",
+]
+
 [[tool.mypy.overrides]]
 module = [
     "transfer_queue.data_system.*",
