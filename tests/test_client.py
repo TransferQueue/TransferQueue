@@ -114,11 +114,8 @@ class MockController:
             except zmq.Again:
                 continue
             except Exception as e:
-                if self.is_running:
-                    print(f"MockController running exception: {e}")
-                else:
-                    print(f"MockController ERROR: {e}")
-                    raise
+                print(f"MockController ERROR: {e}")
+                raise
 
     def _mock_batch_meta(self, request_body):
         batch_size = request_body.get("batch_size", 1)
