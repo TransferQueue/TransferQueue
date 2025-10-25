@@ -365,9 +365,7 @@ class TransferQueueController:
         self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
     ) -> BatchMeta:
         """
-        Generate BatchMeta by resolving storage locations for given global indexes.
-
-        For each global index, looks up the corresponding storage node address using:
+        Generate BatchMeta of given global indexes.
 
         Args:
             global_step: Current global step
