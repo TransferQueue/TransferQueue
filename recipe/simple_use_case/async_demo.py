@@ -31,8 +31,8 @@ sys.path.append(str(parent_dir))
 from transfer_queue import (  # noqa: E402
     AsyncTransferQueueClient,
     BatchMeta,
+    SimpleStorageUnit,
     TransferQueueController,
-    TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
 )
 from transfer_queue.utils.utils import get_placement_group  # noqa: E402
@@ -98,8 +98,14 @@ class ActorRolloutRefWorker:
 
 @ray.remote
 class AsyncvLLMServer:
-    def __init__(self, data_system_client):
-        self.data_system_client = data_system_client
+    def __init__(self, config, data_system_controller_infos):
+        self.config = config
+        self.data_system_client = AsyncTransferQueueClient(
+            client_id="AsyncvLLMServer",
+            controller_infos=data_system_controller_infos[0],
+        )
+
+        self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
 
     async def generate(self, data_meta):
         data = await self.data_system_client.async_get_data(data_meta)
@@ -126,8 +132,15 @@ class AsyncvLLMServer:
 
 @ray.remote(num_cpus=1)
 class AsyncRolloutWorker:
-    def __init__(self, data_system_client):
-        self.async_vllm_server = AsyncvLLMServer.remote(data_system_client)
+    def __init__(
+        self,
+        config,
+        data_system_controller_infos,
+    ):
+        self.async_vllm_server = AsyncvLLMServer.remote(
+            config,
+            data_system_controller_infos,
+        )
 
     async def generate_sequences(self, data_meta_chunk):
         tasks = []
@@ -144,13 +157,20 @@ class AsyncRolloutWorker:
 
 
 class RolloutManager:
-    def __init__(self, config, data_system_client):
+    def __init__(self, config, data_system_storage_unit_infos, data_system_controller_infos):
         self.config = config
-        self.data_system_client = data_system_client
+
+        self.data_system_client = AsyncTransferQueueClient(
+            client_id="RolloutManager",
+            controller_infos=data_system_controller_infos[0],
+        )
+
+        self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
+
         self.async_rollout_workers = []
         num_workers = self.config.rollout_agent_num_workers
         for i in range(num_workers):
-            self.async_rollout_workers.append(AsyncRolloutWorker.remote(self.data_system_client))
+            self.async_rollout_workers.append(AsyncRolloutWorker.remote(config, data_system_controller_infos))
 
     def generate_sequences(self, data_meta):
         data_meta_chunkes = data_meta.chunk(len(self.async_rollout_workers))
@@ -171,55 +191,60 @@ class Trainer:
         self.config = config
         self.data_system_client = self._initialize_data_system()
         self.actor_rollout_wg = ActorRolloutRefWorker()
-        self.async_rollout_manager = RolloutManager(self.config, self.data_system_client)
+        self.async_rollout_manager = RolloutManager(
+            self.config,
+            self.data_system_storage_unit_infos,
+            self.data_system_controller_infos,
+        )
 
     def _initialize_data_system(self):
-        # 1. 初始化TransferQueueStorage
+        # TODO (TQStorage): provide a general data system initialization utility function
+        # 1. Initialize TransferQueueStorage
         total_storage_size = self.config.global_batch_size * self.config.num_global_batch * self.config.num_n_samples
         self.data_system_storage_units = {}
         storage_placement_group = get_placement_group(self.config.num_data_storage_units, num_cpus_per_actor=1)
         for storage_unit_rank in range(self.config.num_data_storage_units):
-            # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
-            storage_node = TransferQueueStorageSimpleUnit.options(
+            storage_node = SimpleStorageUnit.options(
                 placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
-            ).remote(storage_size=math.ceil(total_storage_size / self.config.num_data_storage_units))
+            ).remote(storage_unit_size=math.ceil(total_storage_size / self.config.num_data_storage_units))
             self.data_system_storage_units[storage_unit_rank] = storage_node
-            logger.info(f"TransferQueueStorageSimpleUnit #{storage_unit_rank} has been created.")
+            logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
-        # 2. 初始化TransferQueueController
-        # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务
+        # 2. Initialize TransferQueueController
+        # TODO (TQStorage): Set up and use only one controller
         self.data_system_controllers = {}
         controller_placement_group = get_placement_group(self.config.num_data_controllers, num_cpus_per_actor=1)
         for controller_rank in range(self.config.num_data_controllers):
             self.data_system_controllers[controller_rank] = TransferQueueController.options(
                 placement_group=controller_placement_group, placement_group_bundle_index=controller_rank
             ).remote(
-                num_storage_units=self.config.num_data_storage_units,
                 global_batch_size=self.config.global_batch_size,
                 num_global_batch=self.config.num_global_batch,
                 num_n_samples=self.config.num_n_samples,
             )
             logger.info(f"TransferQueueController #{controller_rank} has been created.")
 
-        # 3. 将Controller注册至各个Storage
-        # 每个Storage Unit拿到所有Controller的handler，通过Ray拿到对应的IP+端口，之后建立ZMQ Socket进行消息传输
+        # 3. Prepare necessary information
         self.data_system_controller_infos = process_zmq_server_info(self.data_system_controllers)
         self.data_system_storage_unit_infos = process_zmq_server_info(self.data_system_storage_units)
 
-        ray.get(
-            [
-                storage_unit.register_controller_info.remote(self.data_system_controller_infos)
-                for storage_unit in self.data_system_storage_units.values()
-            ]
-        )
+        tq_config = OmegaConf.create({}, flags={"allow_objects": True})  # Note: Need to generate a new DictConfig
+        # with allow_objects=True to maintain ZMQServerInfo instance. Otherwise it will be flattened to dict
+        tq_config.controller_infos = self.data_system_controller_infos
+        tq_config.storage_unit_infos = self.data_system_storage_unit_infos
+        self.config = OmegaConf.merge(tq_config, self.config)
 
-        # 4. 创建Client
+        # 4. Create client
         self.data_system_client = AsyncTransferQueueClient(
             client_id="Trainer",
             controller_infos=self.data_system_controller_infos[0],
-            storage_infos=self.data_system_storage_unit_infos,
         )
 
+        self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
+        # Note: The client contains ZMQ objects. Currently, we cannot transmit the same client instance
+        # to multiple places, as this will cause serialization errors in Ray.
+        # Workaround: If you need to use a client in multiple Ray actors or processes, create a separate
+        # AsyncTransferQueueClient instance for each actor/process instead of sharing or transmitting the same instance.
         return self.data_system_client
 
     def fit(self):

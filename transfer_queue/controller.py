@@ -13,15 +13,12 @@
 # limitations under the License.
 
 import logging
-import math
 import os
-import threading
 import time
 from threading import Thread
 from typing import Any, Optional
 from uuid import uuid4
 
-import numpy as np
 import ray
 import torch
 import zmq
@@ -50,6 +47,7 @@ logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 300))
 TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))
+TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL", 2))
 TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
 
 
@@ -57,7 +55,6 @@ TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
 class TransferQueueController:
     def __init__(
         self,
-        num_storage_units: int,
         global_batch_size: int,
         num_global_batch: int = 1,
         num_n_samples: int = 1,
@@ -65,7 +62,6 @@ class TransferQueueController:
         """Initialize the TransferQueueController.
 
         Args:
-            num_storage_units: Number of storage units in the system
             global_batch_size: Size of each global batch
             num_global_batch: Number of global batches to maintain in storage
             num_n_samples: For each prompt, sample n responses
@@ -74,7 +70,6 @@ class TransferQueueController:
 
         self._init_zmq_socket()  # Initialize ZMQ sockets for data communication
 
-        self.num_storage_units = num_storage_units
         self.global_batch_size = (
             global_batch_size  # Used as offset for global index to identify corresponding global step
         )
@@ -94,8 +89,7 @@ class TransferQueueController:
         self.per_tensor_dtype_mapping: dict[int, dict[str, Any]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, Any]] = {}
 
-        self._build_index_storage_mapping()
-
+        self._connected_storage_managers: set[str] = set()
         self._start_process_handshake()
         self._start_process_update_data_status()
         self._start_process_request()
@@ -202,31 +196,6 @@ class TransferQueueController:
 
         return row_mask, col_mask
 
-    def _build_index_storage_mapping(self):
-        """
-        Build mappings between global indices and storage locations.
-
-        Distributes samples across storage units based on total storage space and
-        maintains mappings between global index and local index within each storage.
-        """
-        # Assign each sample to a storage node. Here we scatter the samples in each GBS to different storage nodes
-        # Samples are arranged sequentially, similar to generate_data_status_mask
-        real_global_batch_size = self.global_batch_size * self.num_n_samples
-        global_batch_per_storage_unit = math.ceil(real_global_batch_size / self.num_storage_units)
-
-        # Build mapping between global index and storage unit for locating each data sample
-        batch_storage_indices = np.repeat(np.arange(self.num_storage_units), global_batch_per_storage_unit)[
-            :real_global_batch_size
-        ]
-        self._global_index_storage_rank_mapping = np.tile(batch_storage_indices, self.num_global_batch)
-
-        # Build mapping between global index and local index within each storage unit
-        indices = np.arange(self.total_storage_size)
-        pos_in_batch = indices % real_global_batch_size
-        g = indices // real_global_batch_size
-        pos_in_block = pos_in_batch % global_batch_per_storage_unit
-        self.global_index_local_index_mapping = g * global_batch_per_storage_unit + pos_in_block
-
     def get_data_production_status(self) -> torch.Tensor:
         """
         Get the current data production status matrix. The data production status is a 2D matrix that records whether
@@ -252,14 +221,6 @@ class TransferQueueController:
             Dictionary mapping task names to their consumption status tensors
         """
         return self.data_consumption_status
-
-    def get_global_index_mapping(self):
-        """Get global index to storage mapping information.
-
-        Returns:
-            Tuple containing storage rank mapping and local index mapping
-        """
-        return self._global_index_storage_rank_mapping, self.global_index_local_index_mapping
 
     def _get_metadata(
         self,
@@ -404,11 +365,7 @@ class TransferQueueController:
         self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
     ) -> BatchMeta:
         """
-        Generate BatchMeta by resolving storage locations for given global indexes.
-
-        For each global index, looks up the corresponding storage node address using:
-        - global_index_local_index_mapping: Maps to local index within storage
-        - _global_index_storage_id_mapping: Maps to storage node identifier
+        Generate BatchMeta of given global indexes.
 
         Args:
             global_step: Current global step
@@ -419,18 +376,11 @@ class TransferQueueController:
         Returns:
             BatchMeta object containing sample metadata with resolved storage locations
         """
-        global_arr = np.array(global_indexes)
-        storage_ids = self.global_index_storage_id_mapping[global_arr]
-        local_indexes = self.global_index_local_index_mapping[global_arr]
-
         samples = []
 
         # Create samples from the flattened BatchMeta data
         # TODO: Optimize this
         for i, global_index in enumerate(global_indexes):
-            local_index = local_indexes[i]
-            storage_id = storage_ids[i]
-
             # Create FieldMeta objects for each field
             fields = []
             for field_name in data_fields:
@@ -464,8 +414,6 @@ class TransferQueueController:
             sample = SampleMeta(
                 global_step=global_step,
                 global_index=global_index,
-                storage_id=storage_id,
-                local_index=local_index,
                 fields={field.name: field for field in fields},
             )
             samples.append(sample)
@@ -561,7 +509,7 @@ class TransferQueueController:
         )
         self.data_status_update_socket.bind(f"tcp://{self._node_ip}:{self._data_status_update_socket_port}")
 
-        self.zmq_server_info = ZMQServerInfo.create(
+        self.zmq_server_info = ZMQServerInfo(
             role=TransferQueueRole.CONTROLLER,
             id=self.controller_id,
             ip=self._node_ip,
@@ -573,33 +521,64 @@ class TransferQueueController:
         )
 
     def _wait_connection(self):
-        """Wait for all storage instances to complete handshake.
-
-        Clients don't need handshake to support dynamic scaling. Continuously
-        listens for handshake messages until all expected storage units connect.
         """
-        # TODO(zjj): Consider if retransmission is needed (assuming cases where Storage doesn't receive ACK)
-        connected_storage_units = set()
-        while len(connected_storage_units) < self.num_storage_units:
-            identity, serialized_msg = self.handshake_socket.recv_multipart()
-            request_msg = ZMQMessage.deserialize(serialized_msg)
-            if request_msg.request_type == ZMQRequestType.HANDSHAKE:
-                connected_storage_units.add(request_msg.sender_id)
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.HANDSHAKE_ACK,
-                    sender_id=self.controller_id,
-                    body={},
-                ).serialize()
-                self.handshake_socket.send_multipart([identity, response_msg])
-                logger.info("Controller sent handshake ack successfully!")
-        self.global_index_storage_id_mapping = np.array(sorted(list(connected_storage_units)))[
-            self._global_index_storage_rank_mapping
-        ]
-        self.handshake_done.set()
+        Wait for storage instances to complete handshake with retransmission support.
+
+        This method runs continuously in a dedicated thread to handle handshake responses for
+        new TransferQueueStorageManager connections. It listens for handshake requests from
+        storage managers and responds with acknowledgments, ensuring that new storage units can
+        connect and be tracked even after the initial startup phase.
+
+        The method includes a retransmission mechanism - if a storage manager resends a
+        HANDSHAKE message (e.g., due to network issues or timeout), the controller will
+        detect it as a duplicate and resend the ACK response without treating it as a new
+        connection.
+        """
+        poller = zmq.Poller()
+        poller.register(self.handshake_socket, zmq.POLLIN)
+
+        logger.info(f"Controller {self.controller_id} started waiting for storage connections...")
+
+        while True:
+            # Wait for messages with timeout
+            socks = dict(poller.poll(TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL * 1000))
+
+            if self.handshake_socket in socks:
+                try:
+                    identity, serialized_msg = self.handshake_socket.recv_multipart()
+                    request_msg = ZMQMessage.deserialize(serialized_msg)
+
+                    if request_msg.request_type == ZMQRequestType.HANDSHAKE:
+                        storage_manager_id = request_msg.sender_id
+
+                        # Always send ACK for HANDSHAKE (handles retransmission)
+                        response_msg = ZMQMessage.create(
+                            request_type=ZMQRequestType.HANDSHAKE_ACK,
+                            sender_id=self.controller_id,
+                            body={},
+                        ).serialize()
+                        self.handshake_socket.send_multipart([identity, response_msg])
+
+                        # Track new connections
+                        if storage_manager_id not in self._connected_storage_managers:
+                            self._connected_storage_managers.add(storage_manager_id)
+                            storage_manager_type = request_msg.body.get("storage_manager_type", "Unknown")
+                            logger.info(
+                                f"Controller {self.controller_id} received handshake from "
+                                f"storage manager {storage_manager_id} (type: {storage_manager_type}). "
+                                f"Total connected: {len(self._connected_storage_managers)}"
+                            )
+                        else:
+                            logger.debug(
+                                f"Controller {self.controller_id} received duplicate handshake from "
+                                f"storage manager {storage_manager_id}. Resending ACK."
+                            )
+
+                except Exception as e:
+                    logger.error(f"Controller {self.controller_id} error processing handshake: {e}")
 
     def _start_process_handshake(self):
         """Start the handshake process thread."""
-        self.handshake_done = threading.Event()
         self.wait_connection_thread = Thread(
             target=self._wait_connection, name="TransferQueueControllerWaitConnectionThread", daemon=True
         )
@@ -625,12 +604,11 @@ class TransferQueueController:
         Handles various request types including metadata retrieval,
         consumption status checks, and clear operations.
         """
-        self.handshake_done.wait()
+
         while True:
             # ROUTER socket receives multi-part messages
             identity, serialized_msg = self.request_handle_socket.recv_multipart()
             request_msg = ZMQMessage.deserialize(serialized_msg)
-
             if request_msg.request_type == ZMQRequestType.GET_META:
                 params = request_msg.body
                 logger.info("Controller preparing to get metadata...")

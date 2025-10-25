@@ -28,8 +28,9 @@ parent_dir = Path(__file__).resolve().parent.parent.parent
 sys.path.append(str(parent_dir))
 
 from transfer_queue import (  # noqa: E402
+    SimpleStorageUnit,
+    TransferQueueClient,
     TransferQueueController,
-    TransferQueueStorageSimpleUnit,
     process_zmq_server_info,
 )
 from transfer_queue.utils.utils import get_placement_group  # noqa: E402
@@ -43,55 +44,48 @@ ray.init()
 
 
 def initialize_data_system(config):
-    # 1. 初始化TransferQueueStorage
+    # 1. Initialize TransferQueueStorage
     total_storage_size = config.global_batch_size * config.num_global_batch * config.num_n_samples
     data_system_storage_units = {}
     storage_placement_group = get_placement_group(config.num_data_storage_units, num_cpus_per_actor=1)
     for storage_unit_rank in range(config.num_data_storage_units):
-        # TransferQueueStorage通过Ray拉起，是一个ray.remote修饰的类
-        storage_node = TransferQueueStorageSimpleUnit.options(
+        storage_node = SimpleStorageUnit.options(
             placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
-        ).remote(storage_size=math.ceil(total_storage_size / config.num_data_storage_units))
+        ).remote(storage_unit_size=math.ceil(total_storage_size / config.num_data_storage_units))
         data_system_storage_units[storage_unit_rank] = storage_node
-        logger.info(f"TransferQueueStorageSimpleUnit #{storage_unit_rank} has been created.")
+        logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
-    # 2. 初始化TransferQueueController
-    # 这里支持多controller实例以实现负载均衡，支持大规模扩展。不同controller可分配至不同RL计算任务
+    # 2. Initialize TransferQueueController
+    # TODO (TQStorage): Set up and use only one controller
     controller_placement_group = get_placement_group(config.num_data_controllers, num_cpus_per_actor=1)
     data_system_controllers = {}
     for controller_rank in range(config.num_data_controllers):
         data_system_controllers[controller_rank] = TransferQueueController.options(
             placement_group=controller_placement_group, placement_group_bundle_index=controller_rank
         ).remote(
-            num_storage_units=config.num_data_storage_units,
             global_batch_size=config.global_batch_size,
             num_global_batch=config.num_global_batch,
             num_n_samples=config.num_n_samples,
         )
         logger.info(f"TransferQueueController #{controller_rank} has been created.")
 
-    # 3. 将Controller注册至各个Storage
-    # 每个Storage Unit拿到所有Controller的handler，通过Ray拿到对应的IP+端口，之后建立ZMQ Socket进行消息传输
+    # 3. Prepare necessary information
     data_system_controller_infos = process_zmq_server_info(data_system_controllers)
     data_system_storage_unit_infos = process_zmq_server_info(data_system_storage_units)
 
-    ray.get(
-        [
-            storage_unit.register_controller_info.remote(data_system_controller_infos)
-            for storage_unit in data_system_storage_units.values()
-        ]
-    )
+    tq_config = OmegaConf.create({}, flags={"allow_objects": True})  # Note: Need to generate a new DictConfig
+    # with allow_objects=True to maintain ZMQServerInfo instance. Otherwise it will be flattened to dict
+    tq_config.controller_infos = data_system_controller_infos
+    tq_config.storage_unit_infos = data_system_storage_unit_infos
+    config = OmegaConf.merge(tq_config, config)
 
-    # 4. 创建Client
-    from transfer_queue import TransferQueueClient
-
+    # 4. Create client
     data_system_client = TransferQueueClient(
         client_id="Trainer",
-        controller_infos=data_system_controller_infos[
-            0
-        ],  # TODO: 主控Client感知所有controller，WorkerGroup和Worker的Client感知一个controller
-        storage_infos=data_system_storage_unit_infos,
+        controller_infos=data_system_controller_infos[0],
     )
+
+    data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
 
     return data_system_controllers, data_system_storage_units, data_system_client
 
@@ -101,7 +95,7 @@ def generate_sequences(data):
     return data
 
 
-def compute_old_log_prob(data1, data2):
+def compute_old_log_prob(data1, _data2):
     time.sleep(3)
     return data1
 
@@ -149,7 +143,7 @@ def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
 
 # Simulate the fit function of the trainer
 def fit(config, data_system_client):
-    for epoch in range(1):
+    for _epoch in range(1):
         train_dataloader = 1
         for step in range(train_dataloader):
             input_ids = (torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111]])) * (step + 1)
@@ -178,7 +172,7 @@ def fit(config, data_system_client):
             log_prob_meta = data_system_client.get_meta(
                 data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                 batch_size=config.global_batch_size,
-                global_step=0,
+                global_step=step,
                 get_n_samples=False,
                 task_name="compute_old_log_prob",
             )
@@ -200,7 +194,7 @@ def fit(config, data_system_client):
 
 def main(config):
     # Initialize Data System：基于Ray拉起Controller以及Storage
-    data_system_controllers, data_system_storage_units, data_system_client = initialize_data_system(config)
+    _data_system_controllers, _data_system_storage_units, data_system_client = initialize_data_system(config)
     import time
 
     time.sleep(5)
