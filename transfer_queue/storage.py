@@ -32,7 +32,7 @@ from ray.util import get_node_ip_address
 from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.metadata import BatchMeta, SampleMeta
-from transfer_queue.utils.utils import TransferQueueRole
+from transfer_queue.utils.utils import TransferQueueRole, limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -1154,20 +1154,21 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             for field in metadata.field_names:
                 ordered_data[field].append(merged_data[global_idx][field])
 
-        tensor_data = {
-            field: (
-                torch.stack(torch.nested.as_nested_tensor(v).unbind())
-                if v
-                and all(isinstance(item, torch.Tensor) for item in v)
-                and all(item.shape == v[0].shape for item in v)
-                else (
-                    torch.nested.as_nested_tensor(v)
-                    if v and all(isinstance(item, torch.Tensor) for item in v)
-                    else NonTensorStack(*v)
+        with limit_pytorch_auto_parallel_threads():
+            tensor_data = {
+                field: (
+                    torch.stack(torch.nested.as_nested_tensor(v).unbind())
+                    if v
+                    and all(isinstance(item, torch.Tensor) for item in v)
+                    and all(item.shape == v[0].shape for item in v)
+                    else (
+                        torch.nested.as_nested_tensor(v)
+                        if v and all(isinstance(item, torch.Tensor) for item in v)
+                        else NonTensorStack(*v)
+                    )
                 )
-            )
-            for field, v in ordered_data.items()
-        }
+                for field, v in ordered_data.items()
+            }
 
         return TensorDict(tensor_data, batch_size=len(metadata))
 

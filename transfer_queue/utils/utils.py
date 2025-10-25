@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import contextmanager
 from enum import Enum
+from typing import Optional
 
+import psutil
 import ray
 import torch
 
@@ -96,3 +99,34 @@ def sequential_sampler(
     else:
         sampled_indexes = [int(ready_for_consume_idx[i]) for i in range(batch_size)]
     return sampled_indexes
+
+
+@contextmanager
+def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None):
+    """Prevent PyTorch from overdoing the automatic parallelism during torch.stack() operation"""
+    pytorch_current_num_threads = torch.get_num_threads()
+    logical_cores = psutil.cpu_count(logical=True)
+    physical_cores = psutil.cpu_count(logical=False)
+
+    if target_num_threads is None:
+        # auto determine target_num_threads
+        if physical_cores >= 16:
+            target_num_threads = 16
+        else:
+            target_num_threads = physical_cores
+
+    if target_num_threads > logical_cores:
+        raise RuntimeError(
+            f"target_num_threads {target_num_threads} should not exceed total logical CPU cores {logical_cores}"
+        )
+
+    if pytorch_current_num_threads <= target_num_threads:
+        # No need to change settings
+        yield
+    else:
+        torch.set_num_threads(target_num_threads)
+        try:
+            yield
+        finally:
+            # Restore the original number of threads
+            torch.set_num_threads(pytorch_current_num_threads)
