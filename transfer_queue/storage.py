@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import concurrent.futures
 import dataclasses
 import logging
 import os
@@ -1035,12 +1036,23 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
         )
 
-        # send data to each storage unit
-        tasks = [
-            self._put_to_single_storage_unit(get_transfer_data(meta_group, data), target_storage_unit=storage_id)
-            for storage_id, meta_group in storage_meta_groups.items()
-        ]
-        await asyncio.gather(*tasks)
+        # send data to each storage unit using parallel threads for each meta_group
+        def put_data_single(storage_id, meta_group):
+            return asyncio.run(
+                self._put_to_single_storage_unit(get_transfer_data(meta_group, data), target_storage_unit=storage_id)
+            )
+
+        # Create and run threads for each meta_group
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(storage_meta_groups)) as executor:
+            futures = [
+                executor.submit(put_data_single, storage_id, meta_group)
+                for storage_id, meta_group in storage_meta_groups.items()
+            ]
+            # Wait for all threads to complete
+            concurrent.futures.wait(futures)
+            # Check for exceptions
+            for future in futures:
+                future.result()  # This will raise any exception that occurred
 
         # Gather per-field dtype and shape information for each field
         # global_indexes, local_indexes, and field_data correspond one-to-one
@@ -1117,13 +1129,20 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
         )
 
-        # retrive data
-        tasks = [
-            self._get_from_single_storage_unit(meta_group.get_transfer_data(), target_storage_unit=storage_id)
-            for storage_id, meta_group in storage_meta_groups.items()
-        ]
+        # retrieve data using parallel threads for each meta_group
+        def get_data_single(storage_id, meta_group):
+            return asyncio.run(
+                self._get_from_single_storage_unit(meta_group.get_transfer_data(), target_storage_unit=storage_id)
+            )
 
-        results = await asyncio.gather(*tasks)
+        # Create and run threads for each meta_group
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(storage_meta_groups)) as executor:
+            futures = [
+                executor.submit(get_data_single, storage_id, meta_group)
+                for storage_id, meta_group in storage_meta_groups.items()
+            ]
+            # Wait for all threads to complete and collect results
+            results = [future.result() for future in concurrent.futures.as_completed(futures)]
 
         # post-process data segments to generate a batch of data
         merged_data: dict[int, dict[str, torch.Tensor]] = {}
