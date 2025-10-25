@@ -16,12 +16,12 @@ name = "TransferQueue"
 
 dynamic = ["version", "dependencies"]
 authors = [
-  {name = "TransferQueue Team", email = "hanzy19@tsinghua.org.cn"},
+  {name = "The TransferQueue Team", email = "hanzy19@tsinghua.org.cn"},
 ]
 
 description = "TransferQueue: An Asynchronous Streaming Data Management Module"
 license = {text = "Apache-2.0"}
-#readme = {file = "README.md", content-type = "text/markdown"}
+readme = {file = "README.md", content-type = "text/markdown"}
 requires-python = ">=3.10"
 
 # -------------------------------
@@ -102,17 +102,23 @@ ignore_errors = false
 # This corresponds to `include_package_data=True` in setup.py.
 include-package-data = true
 
-# We read the version from a file in 'verl/version/version'
+# We read the version from a file in 'transfer_queue/version/version'
 [tool.setuptools.dynamic]
 version = {file = "transfer_queue/version/version"}
 dependencies = {file = "requirements.txt"}
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.20.0",
+]
 
 # If you need to mimic `package_dir={'': '.'}`:
 [tool.setuptools.package-dir]
 "" = "."
 
 # If you need to include specific non-Python data (like YAML files or version file):
-# This is the rough equivalent of package_data={'': ['version/*'], 'verl': ['trainer/config/*.yaml']}
+# This is the rough equivalent of package_data={'': ['version/*']}
 [tool.setuptools.package-data]
 transfer_queue = [
   "version/*",
