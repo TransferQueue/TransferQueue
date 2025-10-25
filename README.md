@@ -170,14 +170,14 @@ Follow these steps to build and install:
    pip install dist/*.whl
    ```
 
-<h2 id="quick-start">📊 Performance</h2>
+<h2 id="performance">📊 Performance</h2>
 
 <p align="center">
   <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761294403612-76ca20a7-9108-42fc-b3f5-60f84d70f39b.png" width="100%">
 </p>
 
 > Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
-> 
+
 For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/obi4ovmy9wf08zz3?singleDoc#).
 
 
