@@ -21,7 +21,7 @@
 TransferQueue is a high-performance data storage and transfer module with panoramic data visibility and streaming scheduling capabilities, optimized for efficient dataflow in post-training workflows.
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1758696193102-a5654375-65a1-4e06-9c63-142b59df90b8.png" width="70%">
+  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761356010763-b05751d3-f975-4890-ba59-c8d753cf95f2.png" width="70%">
 </p>
 
 
@@ -41,7 +41,7 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 
  - **Oct 21, 2025**: Official integration into verl is ready [verl/pulls/3649](https://github.com/volcengine/verl/pull/3649). Following PRs will optimize the single controller architecture by fully decoupling data & control flows.
  - **July 22, 2025**: We present a series of Chinese blogs on <a href="https://zhuanlan.zhihu.com/p/1930244241625449814">Zhihu 1</a>, <a href="https://zhuanlan.zhihu.com/p/1933259599953232589">2</a>.
- - **July 21, 2025**: We started an RFC on verl community [verl/discussions/2662](https://github.com/volcengine/verl/discussions/2662).
+ - **July 21, 2025**: We started an RFC on verl community [verl/RFC#2662](https://github.com/volcengine/verl/discussions/2662).
  - **July 2, 2025**: We publish the paper [AsyncFlow](https://arxiv.org/abs/2507.01663).
 
 
@@ -80,7 +80,7 @@ This data structure design is motivated by the computational characteristics of 
 </p>
 
 
-> In the future, we plan to implement a **general storage abstraction layer** to support various storage backends. Through this abstraction, we hope to integrate high-performance storage solutions such as [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) to support device-to-device data transfer through RDMA, further enhancing data transfer efficiency for large-scale data.
+> In the future, we plan to implement a **general storage abstraction layer** ([PR#66](https://github.com/TransferQueue/TransferQueue/pull/66), [issue#72](https://github.com/TransferQueue/TransferQueue/issues/72)), to support various storage backends. Through this abstraction, we hope to integrate high-performance storage solutions such as [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) to support device-to-device data transfer through RDMA, further enhancing data transfer efficiency for large-scale data.
 
 
 ### User Interface: Asynchronous & Synchronous Client
@@ -95,7 +95,7 @@ The interaction workflow of TransferQueue system is as follows:
 To simplify the usage of TransferQueue, we have encapsulated this process into `AsyncTransferQueueClient` and `TransferQueueClient`. These clients provide both asynchronous and synchronous interfaces for data transfer, allowing users to easily integrate TransferQueue into their framework.
 
 
-> In the future, we will provide a `StreamingDataLoader` interface for disaggregated frameworks as discussed in [RFC#2662](https://github.com/volcengine/verl/discussions/2662). Leveraging this abstraction, each rank can automatically get its own data like `DataLoader` in PyTorch. The TransferQueue system will handle the underlying data scheduling and transfer logic caused by different parallelism strategies, significantly simplifying the design of disaggregated frameworks.
+> In the future, we will provide a `StreamingDataLoader` interface for disaggregated frameworks as discussed in [issue#85](https://github.com/TransferQueue/TransferQueue/issues/85) and [verl/RFC#2662](https://github.com/volcengine/verl/discussions/2662). Leveraging this abstraction, each rank can automatically get its own data like `DataLoader` in PyTorch. The TransferQueue system will handle the underlying data scheduling and transfer logic caused by different parallelism strategies, significantly simplifying the design of disaggregated frameworks.
 
 
 <h2 id="show-cases">🔥 Showcases</h2>
@@ -131,7 +131,7 @@ Leveraging TransferQueue, we separate experience data transfer from metadata dis
 ![verl_dataflow_TransferQueue](https://cdn.nlark.com/yuque/0/2025/jpeg/23208217/1758704301666-0807dc06-766c-4a2d-9cde-889a6bb56b34.jpeg)
 
 
-You may refer to the [recipe](https://github.com/TransferQueue/TransferQueue/tree/dev/recipe/simple_use_case), where we mimic the verl usage in both async & sync scenarios. Official integration to verl is on the way.
+You may refer to the [recipe](https://github.com/TransferQueue/TransferQueue/tree/dev/recipe/simple_use_case), where we mimic the verl usage in both async & sync scenarios. Official integration to verl is also available now at [verl/pulls/3649](https://github.com/volcengine/verl/pull/3649) (with subsequent PRs to further optimize the integration).
 
 
 ### Disaggregated Example
@@ -170,11 +170,21 @@ Follow these steps to build and install:
    pip install dist/*.whl
    ```
 
+<h2 id="quick-start">📊 Performance</h2>
+
+<p align="center">
+  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761294403612-76ca20a7-9108-42fc-b3f5-60f84d70f39b.png" width="100%">
+</p>
+
+> Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
+> 
+For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/obi4ovmy9wf08zz3?singleDoc#).
+
 
 <h2 id="milestones"> 🛣️ RoadMap</h2>
 
 - [ ] Support data rewrite for partial rollout & agentic post-training
-- [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR66](https://github.com/TransferQueue/TransferQueue/pull/66))
+- [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR#66](https://github.com/TransferQueue/TransferQueue/pull/66), [issue#72](https://github.com/TransferQueue/TransferQueue/issues/72))
 - [ ] Provide a `KVStorageManager` to cover all the KV based storage backends
 - [ ] Support topic-based data partitioning to maintain train/val/test data simultaneously
 - [ ] Release the first stable version through PyPI
