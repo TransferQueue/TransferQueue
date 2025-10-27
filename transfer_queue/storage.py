@@ -773,12 +773,18 @@ def _add_field_data(
         >>> result = _add_field_data(transfer_dict, meta_group, data)
         >>> result["field_data"]["images"]  # [img2, img0, img3] - extracted by batch_index
     """
+    from operator import itemgetter
+
     field_names = transfer_dict["fields"]
     for fname in field_names:
         if fname in data.keys():
-            transfer_dict["field_data"][fname] = []
-            for sample_meta in storage_meta_group.sample_metas:
-                transfer_dict["field_data"][fname].append(data[fname][sample_meta.batch_index])
+            index = [sample_meta.batch_index for sample_meta in storage_meta_group.sample_metas]
+
+            if len(index) == 1:
+                transfer_dict["field_data"][fname] = [data[fname][index[0]]]
+            else:
+                transfer_dict["field_data"][fname] = list(itemgetter(*index)(data[fname]))
+
     return transfer_dict
 
 
