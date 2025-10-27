@@ -216,7 +216,7 @@ async def test_async_storage_manager_mapping_functions():
             sender_id="controller_0",
             body={"message": "Handshake successful"},
         )
-        mock_socket.recv_multipart = Mock(return_value=[handshake_response.serialize()])
+        mock_socket.recv = Mock(return_value=handshake_response.serialize())
 
         # Create manager
         manager = AsyncSimpleStorageManager(config)
@@ -289,7 +289,7 @@ async def test_async_storage_manager_error_handling():
             sender_id="controller_0",
             body={"message": "Handshake successful"},
         )
-        mock_socket.recv_multipart = Mock(return_value=[handshake_response.serialize()])
+        mock_socket.recv = Mock(return_value=handshake_response.serialize())
 
         # Create manager
         manager = AsyncSimpleStorageManager(config)
