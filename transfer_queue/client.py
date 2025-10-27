@@ -16,7 +16,7 @@ import asyncio
 import logging
 import os
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 from uuid import uuid4
 
 import ray
@@ -532,17 +532,25 @@ class TransferQueueClient(AsyncTransferQueueClient):
 
 
 def process_zmq_server_info(
-    handlers: dict[Any, "TransferQueueController | TransferQueueStorageManager | SimpleStorageUnit"],
+    handlers: dict[Any, Union["TransferQueueController", "TransferQueueStorageManager", "SimpleStorageUnit"]]
+    | Union["TransferQueueController", "TransferQueueStorageManager", "SimpleStorageUnit"],
 ):  # noqa: UP007
     """Extract ZMQ server information from handler objects.
 
     Args:
-        handlers: Dictionary of handler objects (controllers, storage managers, or storage units)
+        handlers: Dictionary of handler objects (controllers, storage managers, or storage units),
+                  or a single handler object
 
     Returns:
-        Dictionary mapping handler names to their ZMQ server information
+        If handlers is a dictionary: Dictionary mapping handler names to their ZMQ server information
+        If handlers is a single object: ZMQ server information for that object
     """
-    server_info = {}
-    for name, handler in handlers.items():
-        server_info[name] = ray.get(handler.get_zmq_server_info.remote())  # type: ignore[attr-defined]
-    return server_info
+    # Handle single handler object case
+    if not isinstance(handlers, dict):
+        return ray.get(handlers.get_zmq_server_info.remote())  # type: ignore[attr-defined]
+    else:
+        # Handle dictionary case
+        server_info = {}
+        for name, handler in handlers.items():
+            server_info[name] = ray.get(handler.get_zmq_server_info.remote())  # type: ignore[attr-defined]
+        return server_info

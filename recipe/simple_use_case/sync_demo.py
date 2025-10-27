@@ -64,7 +64,7 @@ def initialize_data_system(config):
     logger.info("TransferQueueController has been created.")
 
     # 3. Prepare necessary information
-    data_system_controller_info = process_zmq_server_info({0: data_system_controller})[0]
+    data_system_controller_info = process_zmq_server_info(data_system_controller)
     data_system_storage_unit_infos = process_zmq_server_info(data_system_storage_units)
 
     tq_config = OmegaConf.create({}, flags={"allow_objects": True})  # Note: Need to generate a new DictConfig

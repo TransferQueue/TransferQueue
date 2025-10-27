@@ -219,7 +219,7 @@ class Trainer:
         logger.info("TransferQueueController has been created.")
 
         # 3. Prepare necessary information
-        self.data_system_controller_info = process_zmq_server_info({0: self.data_system_controller})[0]
+        self.data_system_controller_info = process_zmq_server_info(self.data_system_controller)
         self.data_system_storage_unit_infos = process_zmq_server_info(self.data_system_storage_units)
 
         tq_config = OmegaConf.create({}, flags={"allow_objects": True})  # Note: Need to generate a new DictConfig

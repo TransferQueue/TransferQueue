@@ -72,10 +72,9 @@ async def mock_async_storage_manager():
         manager.storage_manager_id = "test_storage_manager"
         manager.config = config
         manager.controller_info = controller_info
-        manager.controller_infos = {controller_info.id: controller_info}
         manager.storage_unit_infos = storage_unit_infos
-        manager.data_status_update_sockets = {}
-        manager.controller_handshake_sockets = {}
+        manager.data_status_update_socket = None
+        manager.controller_handshake_socket = None
         manager.zmq_context = None
 
         # Add mapping functions
