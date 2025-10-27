@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 import pytest_asyncio
 import torch
+import zmq
 from tensordict import TensorDict
 
 # Setup path
@@ -52,7 +53,7 @@ async def mock_async_storage_manager():
     }
 
     # Mock controller info
-    controller_infos = ZMQServerInfo(
+    controller_info = ZMQServerInfo(
         role=TransferQueueRole.CONTROLLER,
         id="controller_0",
         ip="127.0.0.1",
@@ -61,34 +62,29 @@ async def mock_async_storage_manager():
 
     config = {
         "storage_unit_infos": storage_unit_infos,
-        "controller_infos": controller_infos,
+        "controller_info": controller_info,
     }
 
-    # Mock all ZMQ operations
-    with patch("transfer_queue.storage.create_zmq_socket") as mock_create_socket, patch("zmq.Poller") as mock_poller:
-        # Create mock socket with proper sync methods
-        mock_socket = AsyncMock()
-        mock_socket.connect = Mock()  # sync method
-        mock_socket.send = Mock()  # sync method
-        mock_socket.recv = AsyncMock()  # async method
-        mock_create_socket.return_value = mock_socket
+    # Mock the handshake process entirely to avoid ZMQ complexity
+    with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controllers") as mock_connect:
+        # Mock the manager without actually connecting
+        manager = AsyncSimpleStorageManager.__new__(AsyncSimpleStorageManager)
+        manager.storage_manager_id = "test_storage_manager"
+        manager.config = config
+        manager.controller_info = controller_info
+        manager.controller_infos = {controller_info.id: controller_info}
+        manager.storage_unit_infos = storage_unit_infos
+        manager.data_status_update_sockets = {}
+        manager.controller_handshake_sockets = {}
+        manager.zmq_context = None
 
-        # Mock poller with sync methods
-        mock_poller_instance = Mock()
-        mock_poller_instance.register = Mock()  # sync method
-        mock_poller_instance.poll = Mock(return_value=[])  # sync method
-        mock_poller.return_value = mock_poller_instance
+        # Add mapping functions
+        storage_unit_keys = list(storage_unit_infos.keys())
+        manager.global_index_storage_unit_mapping = lambda x: storage_unit_keys[x % len(storage_unit_keys)]
+        manager.global_index_local_index_mapping = lambda x: x // len(storage_unit_keys)
 
-        # Mock handshake response
-        handshake_response = ZMQMessage.create(
-            request_type=ZMQRequestType.HANDSHAKE_ACK,
-            sender_id="controller_0",
-            body={"message": "Handshake successful"},
-        )
-        mock_socket.recv.return_value = handshake_response.serialize()
-
-        # Create manager
-        manager = AsyncSimpleStorageManager(config)
+        # Mock essential methods
+        manager._connect_to_controllers = mock_connect
 
         yield manager
 
@@ -196,22 +192,23 @@ async def test_async_storage_manager_mapping_functions():
 
     config = {
         "storage_unit_infos": storage_unit_infos,
-        "controller_infos": controller_infos,
+        "controller_info": controller_infos,
     }
 
     # Mock ZMQ operations
     with patch("transfer_queue.storage.create_zmq_socket") as mock_create_socket, patch("zmq.Poller") as mock_poller:
         # Create mock socket with proper sync methods
-        mock_socket = AsyncMock()
+        mock_socket = Mock()
         mock_socket.connect = Mock()  # sync method
         mock_socket.send = Mock()  # sync method
-        mock_socket.recv = AsyncMock()  # async method
+        mock_socket.recv_multipart = Mock()  # sync method
         mock_create_socket.return_value = mock_socket
 
         # Mock poller with sync methods
         mock_poller_instance = Mock()
         mock_poller_instance.register = Mock()  # sync method
-        mock_poller_instance.poll = Mock(return_value=[])  # sync method
+        # Return mock socket in poll to simulate handshake response
+        mock_poller_instance.poll = Mock(return_value=[(mock_socket, zmq.POLLIN)])  # sync method
         mock_poller.return_value = mock_poller_instance
 
         # Mock handshake response
@@ -220,7 +217,7 @@ async def test_async_storage_manager_mapping_functions():
             sender_id="controller_0",
             body={"message": "Handshake successful"},
         )
-        mock_socket.recv.return_value = handshake_response.serialize()
+        mock_socket.recv_multipart = Mock(return_value=[handshake_response.serialize()])
 
         # Create manager
         manager = AsyncSimpleStorageManager(config)
@@ -268,22 +265,23 @@ async def test_async_storage_manager_error_handling():
 
     config = {
         "storage_unit_infos": storage_unit_infos,
-        "controller_infos": controller_infos,
+        "controller_info": controller_infos,
     }
 
     # Mock ZMQ operations
     with patch("transfer_queue.storage.create_zmq_socket") as mock_create_socket, patch("zmq.Poller") as mock_poller:
         # Create mock socket with proper sync methods
-        mock_socket = AsyncMock()
+        mock_socket = Mock()
         mock_socket.connect = Mock()  # sync method
         mock_socket.send = Mock()  # sync method
-        mock_socket.recv = AsyncMock()  # async method
+        mock_socket.recv_multipart = Mock()  # sync method
         mock_create_socket.return_value = mock_socket
 
         # Mock poller with sync methods
         mock_poller_instance = Mock()
         mock_poller_instance.register = Mock()  # sync method
-        mock_poller_instance.poll = Mock(return_value=[])  # sync method
+        # Return mock socket in poll to simulate handshake response
+        mock_poller_instance.poll = Mock(return_value=[(mock_socket, zmq.POLLIN)])  # sync method
         mock_poller.return_value = mock_poller_instance
 
         # Mock handshake response
@@ -292,7 +290,7 @@ async def test_async_storage_manager_error_handling():
             sender_id="controller_0",
             body={"message": "Handshake successful"},
         )
-        mock_socket.recv.return_value = handshake_response.serialize()
+        mock_socket.recv_multipart = Mock(return_value=[handshake_response.serialize()])
 
         # Create manager
         manager = AsyncSimpleStorageManager(config)

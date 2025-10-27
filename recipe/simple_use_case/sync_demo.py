@@ -55,39 +55,33 @@ def initialize_data_system(config):
         data_system_storage_units[storage_unit_rank] = storage_node
         logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
-    # 2. Initialize TransferQueueController
-    # TODO (TQStorage): Set up and use only one controller
-    controller_placement_group = get_placement_group(config.num_data_controllers, num_cpus_per_actor=1)
-    data_system_controllers = {}
-    for controller_rank in range(config.num_data_controllers):
-        data_system_controllers[controller_rank] = TransferQueueController.options(
-            placement_group=controller_placement_group, placement_group_bundle_index=controller_rank
-        ).remote(
-            global_batch_size=config.global_batch_size,
-            num_global_batch=config.num_global_batch,
-            num_n_samples=config.num_n_samples,
-        )
-        logger.info(f"TransferQueueController #{controller_rank} has been created.")
+    # 2. Initialize TransferQueueController (single controller only)
+    data_system_controller = TransferQueueController.remote(
+        global_batch_size=config.global_batch_size,
+        num_global_batch=config.num_global_batch,
+        num_n_samples=config.num_n_samples,
+    )
+    logger.info("TransferQueueController has been created.")
 
     # 3. Prepare necessary information
-    data_system_controller_infos = process_zmq_server_info(data_system_controllers)
+    data_system_controller_info = process_zmq_server_info({0: data_system_controller})[0]
     data_system_storage_unit_infos = process_zmq_server_info(data_system_storage_units)
 
     tq_config = OmegaConf.create({}, flags={"allow_objects": True})  # Note: Need to generate a new DictConfig
     # with allow_objects=True to maintain ZMQServerInfo instance. Otherwise it will be flattened to dict
-    tq_config.controller_infos = data_system_controller_infos
+    tq_config.controller_info = data_system_controller_info
     tq_config.storage_unit_infos = data_system_storage_unit_infos
     config = OmegaConf.merge(tq_config, config)
 
     # 4. Create client
     data_system_client = TransferQueueClient(
         client_id="Trainer",
-        controller_infos=data_system_controller_infos[0],
+        controller_info=data_system_controller_info,
     )
 
     data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
 
-    return data_system_controllers, data_system_storage_units, data_system_client
+    return data_system_controller, data_system_storage_units, data_system_client
 
 
 def generate_sequences(data):
@@ -194,7 +188,7 @@ def fit(config, data_system_client):
 
 def main(config):
     # Initialize Data System：基于Ray拉起Controller以及Storage
-    _data_system_controllers, _data_system_storage_units, data_system_client = initialize_data_system(config)
+    _data_system_controller, _data_system_storage_units, data_system_client = initialize_data_system(config)
     import time
 
     time.sleep(5)
@@ -205,9 +199,8 @@ def main(config):
 if __name__ == "__main__":
     config_str = """
       global_batch_size: 6
-      num_global_batch: 1 
+      num_global_batch: 1
       num_data_storage_units: 2
-      num_data_controllers: 1
       num_n_samples: 2
     """
     dict_conf = OmegaConf.create(config_str)

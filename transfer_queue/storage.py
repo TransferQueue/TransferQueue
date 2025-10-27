@@ -59,46 +59,34 @@ class TransferQueueStorageManager(ABC):
     def __init__(self, config: dict[str, Any]):
         self.storage_manager_id = f"TQ_STORAGE_{uuid4().hex[:8]}"
         self.config = config
-        self.controller_infos = config.get("controller_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
+        self.controller_info = config.get("controller_info", None)  # type: ZMQServerInfo
 
-        self.data_status_update_sockets = {}
-        self.controller_handshake_sockets = {}
+        self.data_status_update_socket = None
+        self.controller_handshake_socket = None
 
         self.zmq_context = None
         self._connect_to_controllers()
 
     def _connect_to_controllers(self) -> None:
-        """Initialize ZMQ sockets between storage unit and controllers for handshake."""
+        """Initialize ZMQ sockets between storage unit and controller for handshake."""
         try:
-            if isinstance(self.controller_infos, ZMQServerInfo):
-                self.controller_infos = {self.controller_infos.id: self.controller_infos}
-            elif isinstance(self.controller_infos, dict):
-                raw_controller_infos = self.controller_infos
-                self.controller_infos = {}
-                for controller_info in raw_controller_infos.items():
-                    if isinstance(controller_info, ZMQServerInfo):
-                        self.controller_infos[controller_info.id] = controller_info
-                    else:
-                        raise ValueError(
-                            f"controller_infos should be ZMQServerInfo | dict[str, ZMQServerInfo], "
-                            f"but got {type(controller_info)}"
-                        )
+            if not isinstance(self.controller_info, ZMQServerInfo):
+                raise ValueError(f"controller_info should be ZMQServerInfo, but got {type(self.controller_info)}")
 
             # create zmq context
             self.zmq_context = zmq.Context()
 
             # create zmq sockets for handshake and data status update
-            for controller_id in self.controller_infos.keys():
-                self.controller_handshake_sockets[controller_id] = create_zmq_socket(
-                    self.zmq_context,
-                    zmq.DEALER,
-                    identity=f"{self.storage_manager_id}-controller_handshake_sockets-{uuid4().hex[:8]}".encode(),
-                )
-                self.data_status_update_sockets[controller_id] = create_zmq_socket(
-                    self.zmq_context,
-                    zmq.DEALER,
-                    identity=f"{self.storage_manager_id}-data_status_update_sockets-{uuid4().hex[:8]}".encode(),
-                )
+            self.controller_handshake_socket = create_zmq_socket(
+                self.zmq_context,
+                zmq.DEALER,
+                identity=f"{self.storage_manager_id}-controller_handshake_socket-{uuid4().hex[:8]}".encode(),
+            )
+            self.data_status_update_socket = create_zmq_socket(
+                self.zmq_context,
+                zmq.DEALER,
+                identity=f"{self.storage_manager_id}-data_status_update_socket-{uuid4().hex[:8]}".encode(),
+            )
 
             # do handshake with controllers
             self._do_handshake_with_controller()
@@ -107,90 +95,89 @@ class TransferQueueStorageManager(ABC):
             logger.error(f"Failed to connect to controllers: {e}")
 
     def _do_handshake_with_controller(self) -> None:
-        """Handshake with all controllers to establish connection with retransmission mechanism."""
-        connected_controllers: set[str] = set()
-        pending_controllers: set[str] = set(self.controller_infos.keys())
-        handshake_retries: dict[str, int] = {controller_id: 0 for controller_id in self.controller_infos.keys()}
+        """Handshake with controller to establish connection with retransmission mechanism."""
+        is_connected: bool = False
+        pending_connection: bool = True
+        handshake_retries: int = 0
 
         # Create zmq poller for handshake confirmation between controller and storage manager
         poller = zmq.Poller()
 
-        for controller_id, controller_info in self.controller_infos.items():
-            self.controller_handshake_sockets[controller_id].connect(controller_info.to_addr("handshake_socket"))
-            logger.debug(
-                f"[{self.storage_manager_id}]: Handshake connection from storage manager id #{self.storage_manager_id} "
-                f"to controller id #{controller_id} establish successfully."
-            )
-            poller.register(self.controller_handshake_sockets[controller_id], zmq.POLLIN)
+        self.controller_handshake_socket.connect(self.controller_info.to_addr("handshake_socket"))
+        logger.debug(
+            f"[{self.storage_manager_id}]: Handshake connection from storage manager id #{self.storage_manager_id} "
+            f"to controller id #{self.controller_info.id} establish successfully."
+        )
+        poller.register(self.controller_handshake_socket, zmq.POLLIN)
 
         # Initial handshake request send
-        self._send_handshake_requests(pending_controllers)
+        self._send_handshake_requests()
 
         start_time = time.time()
-        last_retry_time = {controller_id: time.time() for controller_id in self.controller_infos.keys()}
+        last_retry_time = time.time()
 
         while (
-            len(connected_controllers) < len(self.controller_infos)
+            not is_connected  # Only one controller to connect to
             and time.time() - start_time < TQ_STORAGE_HANDSHAKE_TIMEOUT
         ):
             # Check for timeout and retransmission
             current_time = time.time()
-            for controller_id in list(pending_controllers):
+            if pending_connection:
                 if (
-                    current_time - last_retry_time[controller_id] >= TQ_STORAGE_HANDSHAKE_RETRY_INTERVAL
-                    and handshake_retries[controller_id] < TQ_STORAGE_HANDSHAKE_MAX_RETRIES
+                    current_time - last_retry_time >= TQ_STORAGE_HANDSHAKE_RETRY_INTERVAL
+                    and handshake_retries < TQ_STORAGE_HANDSHAKE_MAX_RETRIES
                 ):
                     logger.warning(
-                        f"[{self.storage_manager_id}]: Retransmitting handshake to controller {controller_id}, "
-                        f"attempt {handshake_retries[controller_id] + 1}/{TQ_STORAGE_HANDSHAKE_MAX_RETRIES}"
+                        f"[{self.storage_manager_id}]: Retransmitting handshake "
+                        f"to controller {self.controller_info.id}, "
+                        f"attempt {handshake_retries + 1}/{TQ_STORAGE_HANDSHAKE_MAX_RETRIES}"
                     )
-                    self._send_handshake_requests({controller_id})
-                    last_retry_time[controller_id] = current_time
-                    handshake_retries[controller_id] += 1
-                elif handshake_retries[controller_id] >= TQ_STORAGE_HANDSHAKE_MAX_RETRIES:
+                    self._send_handshake_requests()
+                    last_retry_time = current_time
+                    handshake_retries += 1
+                elif handshake_retries >= TQ_STORAGE_HANDSHAKE_MAX_RETRIES:
                     raise TimeoutError(
-                        f"[{self.storage_manager_id}]: Handshake with controller {controller_id} "
-                        f"({self.controller_infos[controller_id].ip}) failed after "
+                        f"[{self.storage_manager_id}]: Handshake with controller {self.controller_info.id} "
+                        f"({self.controller_info.ip}) failed after "
                         f"{TQ_STORAGE_HANDSHAKE_MAX_RETRIES} attempts."
                     )
 
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
-            for controller_id, controller_handshake_socket in self.controller_handshake_sockets.items():
-                if (socks.get(controller_handshake_socket, 0) & zmq.POLLIN) and controller_id in pending_controllers:
-                    try:
-                        response_msg = ZMQMessage.deserialize(controller_handshake_socket.recv())
+            if (socks.get(self.controller_handshake_socket, 0) & zmq.POLLIN) and pending_connection:
+                try:
+                    response_msg = ZMQMessage.deserialize(self.controller_handshake_socket.recv())
 
-                        if response_msg.request_type == ZMQRequestType.HANDSHAKE_ACK:
-                            connected_controllers.add(response_msg.sender_id)
-                            pending_controllers.remove(controller_id)
-                            logger.debug(
-                                f"[{self.storage_manager_id}]: Get handshake ACK response from "
-                                f"controller id #{str(response_msg.sender_id)} to storage manager id "
-                                f"#{self.storage_manager_id} successfully."
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"[{self.storage_manager_id}]: Error receiving handshake response from {controller_id}: {e}"
+                    if response_msg.request_type == ZMQRequestType.HANDSHAKE_ACK:
+                        is_connected = True
+                        pending_connection = False
+                        logger.debug(
+                            f"[{self.storage_manager_id}]: Get handshake ACK response from "
+                            f"controller id #{str(response_msg.sender_id)} to storage manager id "
+                            f"#{self.storage_manager_id} successfully."
                         )
+                except Exception as e:
+                    logger.warning(
+                        f"[{self.storage_manager_id}]: Error receiving handshake "
+                        f"response from {self.controller_info.id}: {e}"
+                    )
 
-    def _send_handshake_requests(self, controller_ids: set[str]) -> None:
-        """Send handshake requests to specified controllers."""
-        for controller_id in controller_ids:
-            request_msg = ZMQMessage.create(
-                request_type=ZMQRequestType.HANDSHAKE,
-                sender_id=self.storage_manager_id,
-                body={
-                    "storage_manager_id": self.storage_manager_id,
-                    "storage_manager_type": self.__class__.__name__,
-                },
-            ).serialize()
+    def _send_handshake_requests(self) -> None:
+        """Send handshake request to controller."""
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.HANDSHAKE,
+            sender_id=self.storage_manager_id,
+            body={
+                "storage_manager_id": self.storage_manager_id,
+                "storage_manager_type": self.__class__.__name__,
+            },
+        ).serialize()
 
-            self.controller_handshake_sockets[controller_id].send(request_msg)
-            logger.debug(
-                f"[{self.storage_manager_id}]: Send handshake request from storage manager id "
-                f"{self.storage_manager_id} to controller id #{controller_id} successfully."
-            )
+        self.controller_handshake_socket.send(request_msg)
+        logger.debug(
+            f"[{self.storage_manager_id}]: Send handshake request from storage manager id "
+            f"{self.storage_manager_id} to controller id #{self.controller_info.id} successfully."
+        )
 
     async def notify_data_update(
         self,
@@ -210,83 +197,79 @@ class TransferQueueStorageManager(ABC):
         """
         # Create zmq poller for notifying data update information
 
-        if not self.controller_infos:
-            logger.warning(f"No controllers connected for storage manager {self.storage_manager_id}")
+        if not self.controller_info:
+            logger.warning(f"No controller connected for storage manager {self.storage_manager_id}")
             return
 
         # Create zmq poller for notifying data update information
         poller = zmq.Poller()
 
-        # Connect data status update socket to all controllers
-        for controller_id, controller_info in self.controller_infos.items():
-            data_status_update_socket = self.data_status_update_sockets[controller_id]
-            data_status_update_socket.connect(controller_info.to_addr("data_status_update_socket"))
+        # Connect data status update socket to controller
+        self.data_status_update_socket.connect(self.controller_info.to_addr("data_status_update_socket"))
+        logger.debug(
+            f"[{self.storage_manager_id}]: Data status update connection from "
+            f"storage manager id #{self.storage_manager_id} to "
+            f"controller id #{self.controller_info.id} establish successfully."
+        )
+
+        try:
+            poller.register(self.data_status_update_socket, zmq.POLLIN)
+
+            request_msg = ZMQMessage.create(
+                request_type=ZMQRequestType.NOTIFY_DATA_UPDATE,
+                sender_id=self.storage_manager_id,
+                body={
+                    "fields": fields,
+                    "global_indexes": global_indexes,
+                    "dtypes": dtypes,
+                    "shapes": shapes,
+                },
+            ).serialize()
+
+            self.data_status_update_socket.send(request_msg)
             logger.debug(
-                f"[{self.storage_manager_id}]: Data status update connection from "
-                f"storage manager id #{self.storage_manager_id} to "
-                f"controller id #{controller_id} establish successfully."
+                f"[{self.storage_manager_id}]: Send data status update request "
+                f"from storage manager id #{self.storage_manager_id} "
+                f"to controller id #{self.controller_info.id} successfully."
             )
+        except Exception as e:
+            request_msg = ZMQMessage.create(
+                request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ERROR,
+                sender_id=self.storage_manager_id,
+                body={
+                    "message": f"Failed to notify data status update information from "
+                    f"storage manager id #{self.storage_manager_id}, "
+                    f"detail error message: {str(e)}"
+                },
+            ).serialize()
 
-            try:
-                poller.register(data_status_update_socket, zmq.POLLIN)
+            self.data_status_update_socket.send(request_msg)
 
-                request_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.NOTIFY_DATA_UPDATE,
-                    sender_id=self.storage_manager_id,
-                    body={
-                        "fields": fields,
-                        "global_indexes": global_indexes,
-                        "dtypes": dtypes,
-                        "shapes": shapes,
-                    },
-                ).serialize()
-
-                data_status_update_socket.send(request_msg)
-                logger.debug(
-                    f"[{self.storage_manager_id}]: Send data status update request "
-                    f"from storage manager id #{self.storage_manager_id} "
-                    f"to controller id #{controller_id} successfully."
-                )
-            except Exception as e:
-                request_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ERROR,
-                    sender_id=self.storage_manager_id,
-                    body={
-                        "message": f"Failed to notify data status update information from "
-                        f"storage manager id #{self.storage_manager_id}, "
-                        f"detail error message: {str(e)}"
-                    },
-                ).serialize()
-
-                data_status_update_socket.send(request_msg)
-
-        # Make sure all controllers successfully receive data status update information.
+        # Make sure controller successfully receives data status update information.
         response_controllers: set[str] = set()
         start_time = time.time()
 
         while (
-            len(response_controllers) < len(self.controller_infos)
+            len(response_controllers) < 1  # Only one controller to get response from
             and time.time() - start_time < TQ_DATA_UPDATE_RESPONSE_TIMEOUT
         ):
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
-            for data_status_update_socket in self.data_status_update_sockets.values():
-                if data_status_update_socket in socks:
-                    response_msg = ZMQMessage.deserialize(data_status_update_socket.recv())
+            if self.data_status_update_socket in socks:
+                response_msg = ZMQMessage.deserialize(self.data_status_update_socket.recv())
 
-                    if response_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE_ACK:
-                        response_controllers.add(response_msg.sender_id)
-                        logger.debug(
-                            f"[{self.storage_manager_id}]: Get data status update ACK response "
-                            f"from controller id #{response_msg.sender_id} "
-                            f"to storage manager id #{self.storage_manager_id} successfully."
-                        )
+                if response_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE_ACK:
+                    response_controllers.add(response_msg.sender_id)
+                    logger.debug(
+                        f"[{self.storage_manager_id}]: Get data status update ACK response "
+                        f"from controller id #{response_msg.sender_id} "
+                        f"to storage manager id #{self.storage_manager_id} successfully."
+                    )
 
-        if len(response_controllers) < len(self.controller_infos):
+        if len(response_controllers) < 1:
             logger.error(
                 f"[{self.storage_manager_id}]: Storage manager id #{self.storage_manager_id} "
-                f"only get {len(response_controllers)} / {len(self.controller_infos)} "
-                f"data status update ACK responses from controllers."
+                f"did not receive data status update ACK response from controller."
             )
 
     @abstractmethod

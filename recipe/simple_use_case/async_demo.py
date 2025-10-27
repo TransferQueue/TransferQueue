@@ -98,11 +98,11 @@ class ActorRolloutRefWorker:
 
 @ray.remote
 class AsyncvLLMServer:
-    def __init__(self, config, data_system_controller_infos):
+    def __init__(self, config, data_system_controller_info):
         self.config = config
         self.data_system_client = AsyncTransferQueueClient(
             client_id="AsyncvLLMServer",
-            controller_infos=data_system_controller_infos[0],
+            controller_info=data_system_controller_info,
         )
 
         self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
@@ -135,11 +135,11 @@ class AsyncRolloutWorker:
     def __init__(
         self,
         config,
-        data_system_controller_infos,
+        data_system_controller_info,
     ):
         self.async_vllm_server = AsyncvLLMServer.remote(
             config,
-            data_system_controller_infos,
+            data_system_controller_info,
         )
 
     async def generate_sequences(self, data_meta_chunk):
@@ -157,12 +157,12 @@ class AsyncRolloutWorker:
 
 
 class RolloutManager:
-    def __init__(self, config, data_system_storage_unit_infos, data_system_controller_infos):
+    def __init__(self, config, data_system_storage_unit_infos, data_system_controller_info):
         self.config = config
 
         self.data_system_client = AsyncTransferQueueClient(
             client_id="RolloutManager",
-            controller_infos=data_system_controller_infos[0],
+            controller_info=data_system_controller_info,
         )
 
         self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
@@ -170,7 +170,7 @@ class RolloutManager:
         self.async_rollout_workers = []
         num_workers = self.config.rollout_agent_num_workers
         for i in range(num_workers):
-            self.async_rollout_workers.append(AsyncRolloutWorker.remote(config, data_system_controller_infos))
+            self.async_rollout_workers.append(AsyncRolloutWorker.remote(config, data_system_controller_info))
 
     def generate_sequences(self, data_meta):
         data_meta_chunkes = data_meta.chunk(len(self.async_rollout_workers))
@@ -194,7 +194,7 @@ class Trainer:
         self.async_rollout_manager = RolloutManager(
             self.config,
             self.data_system_storage_unit_infos,
-            self.data_system_controller_infos,
+            self.data_system_controller_info,
         )
 
     def _initialize_data_system(self):
@@ -210,34 +210,28 @@ class Trainer:
             self.data_system_storage_units[storage_unit_rank] = storage_node
             logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
-        # 2. Initialize TransferQueueController
-        # TODO (TQStorage): Set up and use only one controller
-        self.data_system_controllers = {}
-        controller_placement_group = get_placement_group(self.config.num_data_controllers, num_cpus_per_actor=1)
-        for controller_rank in range(self.config.num_data_controllers):
-            self.data_system_controllers[controller_rank] = TransferQueueController.options(
-                placement_group=controller_placement_group, placement_group_bundle_index=controller_rank
-            ).remote(
-                global_batch_size=self.config.global_batch_size,
-                num_global_batch=self.config.num_global_batch,
-                num_n_samples=self.config.num_n_samples,
-            )
-            logger.info(f"TransferQueueController #{controller_rank} has been created.")
+        # 2. Initialize TransferQueueController (single controller only)
+        self.data_system_controller = TransferQueueController.remote(
+            global_batch_size=self.config.global_batch_size,
+            num_global_batch=self.config.num_global_batch,
+            num_n_samples=self.config.num_n_samples,
+        )
+        logger.info("TransferQueueController has been created.")
 
         # 3. Prepare necessary information
-        self.data_system_controller_infos = process_zmq_server_info(self.data_system_controllers)
+        self.data_system_controller_info = process_zmq_server_info({0: self.data_system_controller})[0]
         self.data_system_storage_unit_infos = process_zmq_server_info(self.data_system_storage_units)
 
         tq_config = OmegaConf.create({}, flags={"allow_objects": True})  # Note: Need to generate a new DictConfig
         # with allow_objects=True to maintain ZMQServerInfo instance. Otherwise it will be flattened to dict
-        tq_config.controller_infos = self.data_system_controller_infos
+        tq_config.controller_info = self.data_system_controller_info
         tq_config.storage_unit_infos = self.data_system_storage_unit_infos
         self.config = OmegaConf.merge(tq_config, self.config)
 
         # 4. Create client
         self.data_system_client = AsyncTransferQueueClient(
             client_id="Trainer",
-            controller_infos=self.data_system_controller_infos[0],
+            controller_info=self.data_system_controller_info,
         )
 
         self.data_system_client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
@@ -301,9 +295,8 @@ class Trainer:
 
                 batch_meta = batch_meta.union(old_log_prob_meta)
 
-                # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；
+                # client通知controller进行数据状态清空，controller返回metadata；
                 # client再根据metadata通知所有storage unit清空
-                # client选择一个主controller拿到metadata，其他的controller直接清空不用返回metadata即可
                 asyncio.run(self.data_system_client.async_clear(global_step=step))
                 logger.info("clear ok! ")
         logger.info("demo done!")
@@ -316,9 +309,8 @@ if __name__ == "__main__":
 
     config_str = """
       global_batch_size: 8
-      num_global_batch: 1 
+      num_global_batch: 1
       num_data_storage_units: 2
-      num_data_controllers: 1
       async_rollout_mode: True
       rollout_agent_num_workers: 2
       num_n_samples: 2
