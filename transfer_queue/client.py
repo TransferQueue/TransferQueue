@@ -637,12 +637,13 @@ def _add_field_data(
     transfer_dict: dict[str, Any], storage_meta_group: StorageMetaGroup, data: TensorDict
 ) -> dict[str, Any]:
     """Helper function to add field data to the transfer dictionary"""
+    from operator import itemgetter
+
     field_names = transfer_dict["fields"]
     for fname in field_names:
         if fname in data.keys():
-            transfer_dict["field_data"][fname] = []
-            for sample_meta in storage_meta_group.sample_metas:
-                transfer_dict["field_data"][fname].append(data[fname][sample_meta.batch_index])
+            index = [sample_meta.batch_index for sample_meta in storage_meta_group.sample_metas]
+            transfer_dict["field_data"][fname] = list(itemgetter(*index)(data[fname]))
     return transfer_dict
 
 
