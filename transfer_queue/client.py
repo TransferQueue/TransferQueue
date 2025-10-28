@@ -62,6 +62,10 @@ class AsyncTransferQueueClient:
             client_id: Unique identifier for this client instance
             controller_info: Single controller ZMQ server information
         """
+        if controller_info is None:
+            raise ValueError("controller_info cannot be None")
+        if not isinstance(controller_info, ZMQServerInfo):
+            raise TypeError(f"controller_info must be ZMQServerInfo, got {type(controller_info)}")
         self.client_id = client_id
         self._controller: ZMQServerInfo = controller_info
         logger.info(f"[{self.client_id}]: Registered Controller server {controller_info.id} at {controller_info.ip}")
@@ -448,6 +452,15 @@ class AsyncTransferQueueClient:
         # TODO: Implement this method to check if all samples for the current step is ready for consumption
         pass
 
+    def close(self) -> None:
+        """Close the client and cleanup resources including storage manager."""
+        try:
+            if hasattr(self, "storage_manager") and self.storage_manager:
+                if hasattr(self.storage_manager, "close"):
+                    self.storage_manager.close()
+        except Exception as e:
+            logger.warning(f"Error closing storage manager: {e}")
+
 
 class TransferQueueClient(AsyncTransferQueueClient):
     """Synchronous client wrapper for TransferQueue.
@@ -544,7 +557,15 @@ def process_zmq_server_info(
     Returns:
         If handlers is a dictionary: Dictionary mapping handler names to their ZMQ server information
         If handlers is a single object: ZMQ server information for that object
-    """
+
+    Examples:
+        >>> # Single handler
+        >>> controller = TransferQueueController.remote(...)
+        >>> info = process_zmq_server_info(controller)
+        >>>
+        >>> # Multiple handlers
+        >>> handlers = {"storage_0": storage_0, "storage_1": storage_1}
+        >>> info_dict = process_zmq_server_info(handlers)"""
     # Handle single handler object case
     if not isinstance(handlers, dict):
         return ray.get(handlers.get_zmq_server_info.remote())  # type: ignore[attr-defined]

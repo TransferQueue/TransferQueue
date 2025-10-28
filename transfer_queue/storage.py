@@ -65,14 +65,14 @@ class TransferQueueStorageManager(ABC):
         self.controller_handshake_socket = None
 
         self.zmq_context = None
-        self._connect_to_controllers()
+        self._connect_to_controller()
 
-    def _connect_to_controllers(self) -> None:
+    def _connect_to_controller(self) -> None:
         """Initialize ZMQ sockets between storage unit and controller for handshake."""
-        try:
-            if not isinstance(self.controller_info, ZMQServerInfo):
-                raise ValueError(f"controller_info should be ZMQServerInfo, but got {type(self.controller_info)}")
+        if not isinstance(self.controller_info, ZMQServerInfo):
+            raise ValueError(f"controller_info should be ZMQServerInfo, but got {type(self.controller_info)}")
 
+        try:
             # create zmq context
             self.zmq_context = zmq.Context()
 
@@ -87,12 +87,14 @@ class TransferQueueStorageManager(ABC):
                 zmq.DEALER,
                 identity=f"{self.storage_manager_id}-data_status_update_socket-{uuid4().hex[:8]}".encode(),
             )
+            self.data_status_update_socket.connect(self.controller_info.to_addr("data_status_update_socket"))
 
-            # do handshake with controllers
+            # do handshake with controller
             self._do_handshake_with_controller()
 
         except Exception as e:
-            logger.error(f"Failed to connect to controllers: {e}")
+            logger.error(f"Failed to connect to controller: {e}")
+            raise
 
     def _do_handshake_with_controller(self) -> None:
         """Handshake with controller to establish connection with retransmission mechanism."""
@@ -142,7 +144,10 @@ class TransferQueueStorageManager(ABC):
                         f"{TQ_STORAGE_HANDSHAKE_MAX_RETRIES} attempts."
                     )
 
-            socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
+            # Use shorter poll timeout for more responsive retry timing
+            # while maintaining overall handshake timeout behavior
+            poll_timeout = min(TQ_STORAGE_POLLER_TIMEOUT * 1000, 500)  # Max 500ms
+            socks = dict(poller.poll(poll_timeout))
 
             if (socks.get(self.controller_handshake_socket, 0) & zmq.POLLIN) and pending_connection:
                 try:
@@ -187,7 +192,7 @@ class TransferQueueStorageManager(ABC):
         shapes: dict[int, dict[str, Any]],
     ) -> None:
         """
-        Broadcast data status update to all controllers.
+        Notify controller that new data is ready.
 
         Args:
             fields: Data update related fields.
@@ -203,14 +208,7 @@ class TransferQueueStorageManager(ABC):
 
         # Create zmq poller for notifying data update information
         poller = zmq.Poller()
-
-        # Connect data status update socket to controller
-        self.data_status_update_socket.connect(self.controller_info.to_addr("data_status_update_socket"))
-        logger.debug(
-            f"[{self.storage_manager_id}]: Data status update connection from "
-            f"storage manager id #{self.storage_manager_id} to "
-            f"controller id #{self.controller_info.id} establish successfully."
-        )
+        # Note: data_status_update_socket is already connected during initialization
 
         try:
             poller.register(self.data_status_update_socket, zmq.POLLIN)
@@ -246,11 +244,11 @@ class TransferQueueStorageManager(ABC):
             self.data_status_update_socket.send(request_msg)
 
         # Make sure controller successfully receives data status update information.
-        response_controllers: set[str] = set()
+        response_received: bool = False
         start_time = time.time()
 
         while (
-            len(response_controllers) < 1  # Only one controller to get response from
+            not response_received  # Only one controller to get response from
             and time.time() - start_time < TQ_DATA_UPDATE_RESPONSE_TIMEOUT
         ):
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
@@ -259,14 +257,14 @@ class TransferQueueStorageManager(ABC):
                 response_msg = ZMQMessage.deserialize(self.data_status_update_socket.recv())
 
                 if response_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE_ACK:
-                    response_controllers.add(response_msg.sender_id)
+                    response_received = True
                     logger.debug(
                         f"[{self.storage_manager_id}]: Get data status update ACK response "
                         f"from controller id #{response_msg.sender_id} "
                         f"to storage manager id #{self.storage_manager_id} successfully."
                     )
 
-        if len(response_controllers) < 1:
+        if not response_received:
             logger.error(
                 f"[{self.storage_manager_id}]: Storage manager id #{self.storage_manager_id} "
                 f"did not receive data status update ACK response from controller."
@@ -433,7 +431,7 @@ class SimpleStorageUnit:
 
     def _init_zmq_socket(self) -> None:
         """
-        Initialize ZMQ socket connections between storage unit and controllers/clients:
+        Initialize ZMQ socket connections between storage unit and controller/clients:
         - put_get_socket:
             Handle put/get requests from clients.
         """
@@ -988,6 +986,9 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
                 try:
                     sock.connect(address)
+                    # Timeouts to avoid indefinite await on recv/send
+                    sock.setsockopt(zmq.RCVTIMEO, 10_000)  # 10s
+                    sock.setsockopt(zmq.SNDTIMEO, 10_000)  # 10s
                     logger.info(
                         f"[{self.storage_manager_id}]: Connected to StorageUnit {server_info.id} at {address} "
                         f"with identity {identity.decode()}"
@@ -1003,9 +1004,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 finally:
                     try:
                         if not sock.closed:
-                            sock.setsockopt(zmq.LINGER, -1)
+                            sock.setsockopt(zmq.LINGER, 0)
                             sock.close()
-                        sock.close(linger=0)
                     except Exception as e:
                         logger.warning(
                             f"[{self.storage_manager_id}]: Error closing socket to StorageUnit {server_info.id}: {e}"
@@ -1055,7 +1055,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 per_field_dtypes[global_idx][field] = data_item.dtype if hasattr(data_item, "dtype") else None
                 per_field_shapes[global_idx][field] = data_item.shape if hasattr(data_item, "shape") else None
 
-        # notify all controllers that new data is ready
+        # notify controller that new data is ready
         await self.notify_data_update(list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes)
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
@@ -1246,6 +1246,25 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             Dictionary mapping storage unit IDs to their ZMQServerInfo.
         """
         return self.storage_unit_infos
+
+    def close(self) -> None:
+        """Close all ZMQ sockets and context to prevent resource leaks."""
+        for sock in (
+            self.controller_handshake_socket,
+            self.data_status_update_socket,
+            getattr(self, "put_get_socket", None),
+        ):
+            try:
+                if sock and not sock.closed:
+                    sock.setsockopt(zmq.LINGER, 0)
+                    sock.close()
+            except Exception:
+                pass
+        try:
+            if hasattr(self, "zmq_context") and self.zmq_context:
+                self.zmq_context.term()
+        except Exception:
+            pass
 
 
 class TransferQueueStorageManagerFactory:

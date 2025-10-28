@@ -66,7 +66,7 @@ async def mock_async_storage_manager():
     }
 
     # Mock the handshake process entirely to avoid ZMQ complexity
-    with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controllers") as mock_connect:
+    with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controller") as mock_connect:
         # Mock the manager without actually connecting
         manager = AsyncSimpleStorageManager.__new__(AsyncSimpleStorageManager)
         manager.storage_manager_id = "test_storage_manager"
@@ -146,6 +146,7 @@ async def test_async_storage_manager_mock_operations(mock_async_storage_manager)
 
     # Test put_data (should not raise exceptions)
     await manager.put_data(test_data, batch_meta)
+    manager.notify_data_update.assert_awaited_once()
 
     # Test get_data
     retrieved_data = await manager.get_data(batch_meta)
@@ -200,7 +201,6 @@ async def test_async_storage_manager_mapping_functions():
         mock_socket = Mock()
         mock_socket.connect = Mock()  # sync method
         mock_socket.send = Mock()  # sync method
-        mock_socket.recv_multipart = Mock()  # sync method
         mock_create_socket.return_value = mock_socket
 
         # Mock poller with sync methods
@@ -273,7 +273,6 @@ async def test_async_storage_manager_error_handling():
         mock_socket = Mock()
         mock_socket.connect = Mock()  # sync method
         mock_socket.send = Mock()  # sync method
-        mock_socket.recv_multipart = Mock()  # sync method
         mock_create_socket.return_value = mock_socket
 
         # Mock poller with sync methods

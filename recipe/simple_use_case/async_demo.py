@@ -300,6 +300,9 @@ class Trainer:
                 asyncio.run(self.data_system_client.async_clear(global_step=step))
                 logger.info("clear ok! ")
         logger.info("demo done!")
+
+        # Cleanup resources
+        self.data_system_client.close()
         return batch_meta
 
 

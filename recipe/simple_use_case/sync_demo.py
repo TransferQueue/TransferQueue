@@ -195,6 +195,9 @@ def main(config):
 
     fit(config, data_system_client)
 
+    # Cleanup resources
+    data_system_client.close()
+
 
 if __name__ == "__main__":
     config_str = """

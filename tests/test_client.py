@@ -33,6 +33,7 @@ from transfer_queue.metadata import (  # noqa: E402
     FieldMeta,
     SampleMeta,
 )
+from transfer_queue.utils.utils import TransferQueueRole  # noqa: E402
 from transfer_queue.utils.zmq_utils import (  # noqa: E402
     ZMQMessage,
     ZMQRequestType,
@@ -66,7 +67,7 @@ class MockController:
         self.request_port = self._bind_to_random_port(self.request_socket)
 
         self.zmq_server_info = ZMQServerInfo(
-            role="TransferQueueController",
+            role=TransferQueueRole.CONTROLLER,
             id=controller_id,
             ip="127.0.0.1",
             ports={
@@ -210,7 +211,7 @@ class MockStorage:
             except zmq.Again:
                 continue
             except Exception as e:
-                if self.is_running:
+                if self.running:
                     print(f"MockStorage running exception: {e}")
                 else:
                     print(f"MockStorage ERROR: {e}")
@@ -267,7 +268,7 @@ def client_setup(mock_controller, mock_storage):
     )
 
     # Mock the storage manager to avoid handshake issues but mock all data operations
-    with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controllers"):
+    with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controller"):
         config = {
             "controller_info": mock_controller.zmq_server_info,
             "storage_unit_infos": {mock_storage.storage_id: mock_storage.zmq_server_info},
@@ -366,7 +367,7 @@ def test_single_controller_multiple_storages():
         client = TransferQueueClient(client_id=client_id, controller_info=controller.zmq_server_info)
 
         # Mock the storage manager to avoid handshake issues but mock all data operations
-        with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controllers"):
+        with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controller"):
             config = {
                 "controller_info": controller.zmq_server_info,
                 "storage_unit_infos": {s.storage_id: s.zmq_server_info for s in storages},
