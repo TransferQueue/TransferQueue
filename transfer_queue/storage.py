@@ -912,9 +912,12 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         self.config = config
         self.storage_unit_infos = config.get("storage_unit_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
-
         assert self.storage_unit_infos is not None
+
+        self.num_torage_units = len(self.storage_unit_infos)
         self._build_storage_mapping_functions()
+
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.num_torage_units)
 
     def _build_storage_mapping_functions(self):
         """Build mapping functions for global index to storage unit and local index.
@@ -922,9 +925,9 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         Creates round-robin mapping functions to distribute data across storage units.
         """
         self.global_index_storage_unit_mapping = lambda x: list(self.storage_unit_infos.keys())[
-            x % len(self.storage_unit_infos)
+            x % self.num_torage_units
         ]
-        self.global_index_local_index_mapping = lambda x: x // len(self.storage_unit_infos)
+        self.global_index_local_index_mapping = lambda x: x // self.num_torage_units
 
     def _register_servers(self, server_infos: "ZMQServerInfo | dict[Any, ZMQServerInfo]"):
         """Register and validate server information.
@@ -1042,17 +1045,13 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 self._put_to_single_storage_unit(get_transfer_data(meta_group, data), target_storage_unit=storage_id)
             )
 
-        # Create and run threads for each meta_group
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(storage_meta_groups)) as executor:
-            futures = [
-                executor.submit(put_data_single, storage_id, meta_group)
-                for storage_id, meta_group in storage_meta_groups.items()
-            ]
-            # Wait for all threads to complete
-            concurrent.futures.wait(futures)
-            # Check for exceptions
-            for future in futures:
-                future.result()  # This will raise any exception that occurred
+        futures = [
+            self._thread_pool.submit(put_data_single, storage_id, meta_group)
+            for storage_id, meta_group in storage_meta_groups.items()
+        ]
+        concurrent.futures.wait(futures)
+        for future in futures:
+            future.result()
 
         # Gather per-field dtype and shape information for each field
         # global_indexes, local_indexes, and field_data correspond one-to-one
@@ -1135,14 +1134,11 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 self._get_from_single_storage_unit(meta_group.get_transfer_data(), target_storage_unit=storage_id)
             )
 
-        # Create and run threads for each meta_group
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(storage_meta_groups)) as executor:
-            futures = [
-                executor.submit(get_data_single, storage_id, meta_group)
-                for storage_id, meta_group in storage_meta_groups.items()
-            ]
-            # Wait for all threads to complete and collect results
-            results = [future.result() for future in concurrent.futures.as_completed(futures)]
+        futures = [
+            self._thread_pool.submit(get_data_single, storage_id, meta_group)
+            for storage_id, meta_group in storage_meta_groups.items()
+        ]
+        results = [future.result() for future in concurrent.futures.as_completed(futures)]
 
         # post-process data segments to generate a batch of data
         merged_data: dict[int, dict[str, torch.Tensor]] = {}
@@ -1275,6 +1271,11 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         """
         return self.storage_unit_infos
 
+    def cleanup(self) -> None:
+        """Clean up resources including thread pool."""
+        if hasattr(self, "_thread_pool"):
+            self._thread_pool.shutdown(wait=True)
+
     def close(self) -> None:
         """Close all ZMQ sockets and context to prevent resource leaks."""
         for sock in (
@@ -1291,6 +1292,13 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         try:
             if hasattr(self, "zmq_context") and self.zmq_context:
                 self.zmq_context.term()
+        except Exception:
+            pass
+
+    def __del__(self):
+        """Destructor to ensure thread pool is cleaned up."""
+        try:
+            self.cleanup()
         except Exception:
             pass
 
