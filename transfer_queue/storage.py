@@ -778,10 +778,10 @@ def _add_field_data(
         if fname in data.keys():
             index = [sample_meta.batch_index for sample_meta in storage_meta_group.sample_metas]
 
-            if len(index) == 1:
-                transfer_dict["field_data"][fname] = [data[fname][index[0]]]
-            else:
-                transfer_dict["field_data"][fname] = list(itemgetter(*index)(data[fname]))
+            result = itemgetter(*index)(data[fname])
+            if not isinstance(result, tuple):
+                result = (result,)
+            transfer_dict["field_data"][fname] = list(result)
 
     return transfer_dict
 
