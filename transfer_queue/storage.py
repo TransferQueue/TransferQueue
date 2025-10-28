@@ -773,8 +773,6 @@ def _add_field_data(
         >>> result = _add_field_data(transfer_dict, meta_group, data)
         >>> result["field_data"]["images"]  # [img2, img0, img3] - extracted by batch_index
     """
-    from operator import itemgetter
-
     field_names = transfer_dict["fields"]
     for fname in field_names:
         if fname in data.keys():
@@ -1147,18 +1145,22 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         # post-process data segments to generate a batch of data
         merged_data: dict[int, dict[str, torch.Tensor]] = {}
         for global_indexes, fields, data_from_single_storage_unit in results:
-            extracted_data = {field: data_from_single_storage_unit[field] for field in fields}
+            field_getter = itemgetter(*fields)
+            field_values = field_getter(data_from_single_storage_unit)
+
+            if len(fields) == 1:
+                extracted_data = {fields[0]: field_values}
+            else:
+                extracted_data = dict(zip(fields, field_values))
 
             for idx, global_idx in enumerate(global_indexes):
                 if global_idx not in merged_data:
                     merged_data[global_idx] = {}
-                for field in fields:
-                    merged_data[global_idx][field] = extracted_data[field][idx]
+                merged_data[global_idx].update({field: extracted_data[field][idx] for field in fields})
 
-        ordered_data: dict[str, list[torch.Tensor]] = {field: [] for field in metadata.field_names}
-        for global_idx in metadata.global_indexes:
-            for field in metadata.field_names:
-                ordered_data[field].append(merged_data[global_idx][field])
+        ordered_data: dict[str, list[torch.Tensor]] = {}
+        for field in metadata.field_names:
+            ordered_data[field] = [merged_data[global_idx][field] for global_idx in metadata.global_indexes]
 
         with limit_pytorch_auto_parallel_threads():
             tensor_data = {
