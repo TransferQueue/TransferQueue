@@ -1151,7 +1151,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             if len(fields) == 1:
                 extracted_data = {fields[0]: field_values}
             else:
-                extracted_data = dict(zip(fields, field_values))
+                extracted_data = dict(zip(fields, field_values, strict=False))
 
             for idx, global_idx in enumerate(global_indexes):
                 if global_idx not in merged_data:
