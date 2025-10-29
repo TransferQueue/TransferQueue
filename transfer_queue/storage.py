@@ -914,10 +914,10 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         self.storage_unit_infos = config.get("storage_unit_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
         assert self.storage_unit_infos is not None
 
-        self.num_torage_units = len(self.storage_unit_infos)
+        self.num_storage_units = len(self.storage_unit_infos)
         self._build_storage_mapping_functions()
 
-        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.num_torage_units)
+        self._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=self.num_storage_units)
 
     def _build_storage_mapping_functions(self):
         """Build mapping functions for global index to storage unit and local index.
@@ -925,9 +925,9 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         Creates round-robin mapping functions to distribute data across storage units.
         """
         self.global_index_storage_unit_mapping = lambda x: list(self.storage_unit_infos.keys())[
-            x % self.num_torage_units
+            x % self.num_storage_units
         ]
-        self.global_index_local_index_mapping = lambda x: x // self.num_torage_units
+        self.global_index_local_index_mapping = lambda x: x // self.num_storage_units
 
     def _register_servers(self, server_infos: "ZMQServerInfo | dict[Any, ZMQServerInfo]"):
         """Register and validate server information.
