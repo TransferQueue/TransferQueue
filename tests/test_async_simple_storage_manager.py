@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import concurrent.futures
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -79,6 +80,11 @@ async def mock_async_storage_manager():
 
         # Add mapping functions
         storage_unit_keys = list(storage_unit_infos.keys())
+
+        # Add missing attributes that would normally be initialized in __init__
+        manager.num_torage_units = len(storage_unit_keys)
+        manager._thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=manager.num_torage_units)
+
         manager.global_index_storage_unit_mapping = lambda x: storage_unit_keys[x % len(storage_unit_keys)]
         manager.global_index_local_index_mapping = lambda x: x // len(storage_unit_keys)
 
