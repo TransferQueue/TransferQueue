@@ -183,7 +183,7 @@ async def test_async_storage_manager_mapping_functions():
     }
 
     # Mock controller info
-    controller_infos = ZMQServerInfo(
+    controller_info = ZMQServerInfo(
         role=TransferQueueRole.CONTROLLER,
         id="controller_0",
         ip="127.0.0.1",
@@ -192,11 +192,14 @@ async def test_async_storage_manager_mapping_functions():
 
     config = {
         "storage_unit_infos": storage_unit_infos,
-        "controller_info": controller_infos,
+        "controller_info": controller_info,
     }
 
     # Mock ZMQ operations
-    with patch("transfer_queue.storage.create_zmq_socket") as mock_create_socket, patch("zmq.Poller") as mock_poller:
+    with (
+        patch("transfer_queue.storage.managers.base.create_zmq_socket") as mock_create_socket,
+        patch("zmq.Poller") as mock_poller,
+    ):
         # Create mock socket with proper sync methods
         mock_socket = Mock()
         mock_socket.connect = Mock()  # sync method
@@ -268,7 +271,10 @@ async def test_async_storage_manager_error_handling():
     }
 
     # Mock ZMQ operations
-    with patch("transfer_queue.storage.create_zmq_socket") as mock_create_socket, patch("zmq.Poller") as mock_poller:
+    with (
+        patch("transfer_queue.storage.managers.base.create_zmq_socket") as mock_create_socket,
+        patch("zmq.Poller") as mock_poller,
+    ):
         # Create mock socket with proper sync methods
         mock_socket = Mock()
         mock_socket.connect = Mock()  # sync method

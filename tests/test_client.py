@@ -367,7 +367,9 @@ def test_single_controller_multiple_storages():
         client = TransferQueueClient(client_id=client_id, controller_info=controller.zmq_server_info)
 
         # Mock the storage manager to avoid handshake issues but mock all data operations
-        with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controller"):
+        with patch(
+            "transfer_queue.storage.managers.simple_backend_manager.AsyncSimpleStorageManager._connect_to_controller"
+        ):
             config = {
                 "controller_info": controller.zmq_server_info,
                 "storage_unit_infos": {s.storage_id: s.zmq_server_info for s in storages},
