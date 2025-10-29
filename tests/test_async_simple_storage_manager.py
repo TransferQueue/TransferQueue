@@ -83,7 +83,7 @@ async def mock_async_storage_manager():
         manager.global_index_local_index_mapping = lambda x: x // len(storage_unit_keys)
 
         # Mock essential methods
-        manager._connect_to_controllers = mock_connect
+        manager._connect_to_controller = mock_connect
 
         yield manager
 

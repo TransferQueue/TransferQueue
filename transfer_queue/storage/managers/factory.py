@@ -25,7 +25,10 @@ class TransferQueueStorageManagerFactory:
     @classmethod
     def register(cls, manager_type: str, manager_cls: type[TransferQueueStorageManager]):
         if not issubclass(manager_cls, TransferQueueStorageManager):
-            raise TypeError(f"manager_cls {type(manager_type)} must be a subclass of TransferQueueStorageManager")
+            raise TypeError(
+                f"manager_cls {getattr(manager_cls, '__name__', repr(manager_cls))} must be "
+                f"a subclass of TransferQueueStorageManager"
+            )
         cls._registry[manager_type] = manager_cls
 
     @classmethod

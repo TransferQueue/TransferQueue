@@ -14,6 +14,7 @@
 import asyncio
 import logging
 import os
+from collections.abc import Mapping
 from functools import wraps
 from operator import itemgetter
 from typing import Any, Callable
@@ -44,20 +45,13 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         super().__init__(config)
 
         self.config = config
-        self.storage_unit_infos = config.get("storage_unit_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
+        server_infos = config.get("storage_unit_infos", None)  # type: ZMQServerInfo | dict[str, ZMQServerInfo]
 
-        assert self.storage_unit_infos is not None
+        if server_infos is None:
+            raise ValueError("AsyncSimpleStorageManager requires non-empty 'storage_unit_infos' in config.")
+
+        self.storage_unit_infos = self._register_servers(server_infos)
         self._build_storage_mapping_functions()
-
-    def _build_storage_mapping_functions(self):
-        """Build mapping functions for global index to storage unit and local index.
-
-        Creates round-robin mapping functions to distribute data across storage units.
-        """
-        self.global_index_storage_unit_mapping = lambda x: list(self.storage_unit_infos.keys())[
-            x % len(self.storage_unit_infos)
-        ]
-        self.global_index_local_index_mapping = lambda x: x // len(self.storage_unit_infos)
 
     def _register_servers(self, server_infos: "ZMQServerInfo | dict[Any, ZMQServerInfo]"):
         """Register and validate server information.
@@ -73,9 +67,10 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             ValueError: If server_infos format is invalid.
         """
         server_infos_transform = {}
+
         if isinstance(server_infos, ZMQServerInfo):
             server_infos_transform[server_infos.id] = server_infos
-        elif isinstance(server_infos, dict):
+        elif isinstance(server_infos, Mapping):
             for k, v in server_infos.items():
                 if not isinstance(v, ZMQServerInfo):
                     raise ValueError(f"Invalid server info for key {k}: {v}")
@@ -84,6 +79,16 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             raise ValueError(f"Invalid server infos: {server_infos}")
 
         return server_infos_transform
+
+    def _build_storage_mapping_functions(self):
+        """Build mapping functions for global index to storage unit and local index.
+
+        Creates round-robin mapping functions to distribute data across storage units.
+        """
+        self.global_index_storage_unit_mapping = lambda x: list(self.storage_unit_infos.keys())[
+            x % len(self.storage_unit_infos)
+        ]
+        self.global_index_local_index_mapping = lambda x: x // len(self.storage_unit_infos)
 
     # TODO (TQStorage): Provide a general dynamic socket function for both Client & Storage @huazhong.
     @staticmethod
@@ -98,7 +103,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             2. `self` requires:
             - `storage_unit_infos: storage unit infos (ZMQServerInfo | dict[Any, ZMQServerInfo]).
             3. Specify target server via:
-            - `target_stroage_unit` arg.
+            - `target_storage_unit` arg.
             4. Receives ZMQ socket via `socket` keyword arg (injected by decorator).
         """
 
