@@ -15,9 +15,9 @@
 import pickle
 import socket
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Any, Optional
+from uuid import uuid4
 
 import psutil
 import zmq
@@ -109,7 +109,7 @@ class ZMQMessage:
             sender_id=sender_id,
             receiver_id=receiver_id,
             body=body,
-            request_id=str(uuid.uuid4()),
+            request_id=str(uuid4().hex[:8]),
             timestamp=time.time(),
         )
 

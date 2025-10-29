@@ -66,7 +66,7 @@ class TransferQueueController:
             num_global_batch: Number of global batches to maintain in storage
             num_n_samples: For each prompt, sample n responses
         """
-        self.controller_id = f"TQ_CONTROLLER_{uuid4()}"
+        self.controller_id = f"TQ_CONTROLLER_{uuid4().hex[:8]}"
 
         self._init_zmq_socket()  # Initialize ZMQ sockets for data communication
 
