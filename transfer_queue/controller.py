@@ -16,7 +16,7 @@ import logging
 import os
 import time
 from threading import Thread
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 import ray
@@ -33,7 +33,6 @@ from transfer_queue.samplers import BaseSampler, SequentialSampler
 from transfer_queue.utils.utils import (
     ProductionStatus,
     TransferQueueRole,
-    sequential_sampler,
 )
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
@@ -59,7 +58,7 @@ class TransferQueueController:
         global_batch_size: int,
         num_global_batch: int = 1,
         num_n_samples: int = 1,
-        sampler: Optional[Union[BaseSampler, Callable[[], BaseSampler]]] = None,
+        sampler: Optional[BaseSampler | Callable[[], BaseSampler]] = None,
     ) -> None:
         """Initialize the TransferQueueController.
 
@@ -114,7 +113,7 @@ class TransferQueueController:
     def register_sampler(
         self,
         task_name: str,
-        sampler: Union[BaseSampler, Callable[[], BaseSampler]],
+        sampler: BaseSampler | Callable[[], BaseSampler],
     ) -> None:
         """Register a custom sampler for a specific task.
 
