@@ -50,12 +50,37 @@ controller = TransferQueueController.remote(
 
 ### 3. DPSampler
 
-Partitions data across Data Parallel (DP) groups, ensuring ranks within the same DP group get identical data while different DP groups get different data.
+Partitions data across Data Parallel (DP) groups, ensuring ranks within the same DP group get data from the same pool while different DP groups get different data.
+
+**Recommended Approach: Pass sampler_params in get_meta**
+
+Instead of pre-registering samplers, pass DP parameters directly in the `get_meta` call:
+
+```python
+from transfer_queue import TransferQueueClient
+
+# In each distributed process
+client = TransferQueueClient(...)
+
+# Pass DP parameters via sampler_params
+batch_meta = client.get_meta(
+    data_fields=["prompts"],
+    batch_size=4,
+    global_step=0,
+    task_name="training_task",
+    sampler_params={
+        "dp_rank": 0,           # This rank's position in DP domain
+        "dp_size": 4,           # Total number of DP groups
+        "dp_group_id": "group_step0",  # Unique ID for this DP group
+    },
+)
+```
+
+**Alternative: Pre-register DPSampler (less flexible)**
 
 ```python
 from transfer_queue import TransferQueueController, DPSampler
 
-# For rank 0 in a 4-way DP setup
 controller = TransferQueueController.remote(
     global_batch_size=16,
     num_global_batch=1,
@@ -65,25 +90,55 @@ controller = TransferQueueController.remote(
 # Register DP sampler for this rank
 controller.register_sampler.remote(
     task_name="training_task",
-    sampler=DPSampler(
-        dp_rank=0,      # This rank's position in DP group
-        dp_size=4,      # Total number of DP groups
-        world_rank=0,   # Optional: global rank
-        world_size=16,  # Optional: total processes
-    ),
+    sampler=DPSampler(dp_rank=0, dp_size=4),
 )
 ```
 
 **Use case:** Distributed training with data parallelism.
 
 **Key features:**
-- Different DP groups get non-overlapping data partitions
-- Ranks within the same DP group would get the same data (by using the same `dp_rank`)
-- Efficient data distribution across DP groups
+- **Stateful:** Ranks in the same DP group (same `dp_group_id`) get data from the same pool
+- **Consistent:** Data is only marked consumed after ALL ranks in a DP group have consumed it
+- **Partitioned:** Different DP groups get non-overlapping data
+- **Flexible:** No need to pre-register samplers when using `sampler_params`
 
 ## Usage Patterns
 
-### Pattern 1: Default Sampler at Initialization
+### Pattern 1: Pass Sampler Parameters in get_meta (Recommended for DP)
+
+For DP sampling, the recommended approach is to pass sampler parameters directly in the `get_meta` call. This is more flexible as each process can specify its own parameters without pre-registration:
+
+```python
+from transfer_queue import TransferQueueClient
+import os
+
+# Get DP configuration from environment
+dp_rank = int(os.environ.get("DP_RANK", 0))
+dp_size = int(os.environ.get("DP_SIZE", 1))
+
+client = TransferQueueClient(...)
+
+# Each process passes its own DP parameters
+batch_meta = client.get_meta(
+    data_fields=["prompts", "responses"],
+    batch_size=4,
+    global_step=0,
+    task_name="training_task",
+    sampler_params={
+        "dp_rank": dp_rank,
+        "dp_size": dp_size,
+        "dp_group_id": f"dp_group_step{global_step}",  # Must be same for all ranks in group
+    },
+)
+```
+
+**Benefits:**
+- No need to pre-register samplers on the controller
+- Each process independently specifies its parameters
+- Cleaner separation between controller and client logic
+- Ranks in the same DP group (same `dp_group_id`) automatically get consistent data
+
+### Pattern 2: Default Sampler at Initialization
 
 Set a default sampler for all tasks:
 
@@ -98,7 +153,7 @@ controller = TransferQueueController.remote(
 )
 ```
 
-### Pattern 2: Task-Specific Samplers
+### Pattern 3: Task-Specific Samplers via Pre-registration
 
 Register different samplers for different tasks:
 
@@ -130,7 +185,7 @@ ray.get(controller.register_sampler.remote(
 # Other tasks use default SequentialSampler
 ```
 
-### Pattern 3: Callable Sampler Constructors
+### Pattern 4: Callable Sampler Constructors
 
 Pass sampler constructors for lazy initialization:
 

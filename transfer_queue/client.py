@@ -154,6 +154,7 @@ class AsyncTransferQueueClient:
         mode: str = "fetch",
         get_n_samples: bool = False,
         task_name: Optional[str] = None,
+        sampler_params: Optional[dict] = None,
         socket: Optional[zmq.asyncio.Socket] = None,
     ) -> BatchMeta:
         """Asynchronously fetch data metadata from the controller via ZMQ.
@@ -169,6 +170,10 @@ class AsyncTransferQueueClient:
             get_n_samples: If True, arrange samples of the same prompt contiguously. In 'fetch' mode,
                           only returns samples where all prompts in the group are ready
             task_name: Optional task name associated with the request
+            sampler_params: Optional parameters to pass to the sampler. For DP sampling, include:
+                - dp_rank: Rank of this process within the DP domain
+                - dp_size: Total number of DP groups
+                - dp_group_id: Unique identifier for this DP group (e.g., f"dp_group_{global_step}")
             socket: ZMQ async socket for message transmission (injected by decorator)
 
         Returns:
@@ -197,20 +202,37 @@ class AsyncTransferQueueClient:
             ...     task_name="generate_sequences"
             ... ))
             >>> print(batch_meta.is_ready)  # May be False if some samples not ready
+            >>>
+            >>> # Example 3: DP sampling with sampler params
+            >>> batch_meta = asyncio.run(client.async_get_meta(
+            ...     data_fields=["prompts"],
+            ...     batch_size=4,
+            ...     global_step=0,
+            ...     task_name="dp_task",
+            ...     sampler_params={
+            ...         "dp_rank": 0,
+            ...         "dp_size": 4,
+            ...         "dp_group_id": "dp_group_step0"
+            ...     }
+            ... ))
         """
         assert socket is not None
+        body = {
+            "data_fields": data_fields,
+            "batch_size": batch_size,
+            "global_step": global_step,
+            "mode": mode,
+            "get_n_samples": get_n_samples,
+            "task_name": task_name,
+        }
+        if sampler_params:
+            body["sampler_params"] = sampler_params
+        
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.GET_META,
             sender_id=self.client_id,
             receiver_id=self._controller.id,
-            body={
-                "data_fields": data_fields,
-                "batch_size": batch_size,
-                "global_step": global_step,
-                "mode": mode,
-                "get_n_samples": get_n_samples,
-                "task_name": task_name,
-            },
+            body=body,
         )
 
         try:
@@ -521,6 +543,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
         global_step: int,
         get_n_samples: bool = False,
         task_name: Optional[str] = None,
+        sampler_params: Optional[dict] = None,
     ) -> BatchMeta:
         """Synchronously fetch data metadata from controller.
 
@@ -530,6 +553,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
             global_step: Current training/processing step
             get_n_samples: If True, arrange samples of the same prompt contiguously
             task_name: Optional task name associated with the request
+            sampler_params: Optional parameters to pass to the sampler (e.g., dp_rank, dp_size, dp_group_id)
 
         Returns:
             BatchMeta: Batch metadata containing data location information
@@ -541,6 +565,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
                 global_step=global_step,
                 get_n_samples=get_n_samples,
                 task_name=task_name,
+                sampler_params=sampler_params,
             )
         )
 
