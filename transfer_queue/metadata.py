@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import dataclasses
+import itertools
+from collections import ChainMap
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -24,19 +26,12 @@ from transfer_queue.utils.utils import ProductionStatus
 
 @dataclass
 class FieldMeta:
-    """
-    Records the metadata of a single data field. (name, dtype, shape, etc.)
-    """
+    """Records the metadata of a single data field (name, dtype, shape, etc.)."""
 
-    # field name (e.g., 'prompt', 'response', etc.)
     name: str
-
-    # data schema info
-    dtype: Optional[Any]  # if data has dtype attribute, e.g., torch.float32, numpy.float32, etc.
-    shape: Optional[Any]  # if data has shape attribute, e.g., torch.Size([3, 224, 224]), (3, 224, 224), etc.
-
-    # data status info
-    production_status: ProductionStatus = ProductionStatus.NOT_PRODUCED  # production status for this field
+    dtype: Optional[Any]  # Data type (e.g., torch.float32, numpy.float32)
+    shape: Optional[Any]  # Data shape (e.g., torch.Size([3, 224, 224]), (3, 224, 224))
+    production_status: ProductionStatus = ProductionStatus.NOT_PRODUCED
 
     def __str__(self) -> str:
         return (
@@ -52,21 +47,11 @@ class FieldMeta:
 
 @dataclass
 class SampleMeta:
-    """
-    Records the metadata of a single data sample (stored as a row in the data system).
-    """
+    """Records the metadata of a single data sample (stored as a row in the data system)."""
 
-    # algorithm related info
-    global_step: int  # global step, used for data versioning
-
-    # data retrival info
-    global_index: int  # global row index, uniquely identifies a data sample
-    storage_id: str  # storage unit id
-    local_index: int  # local row index in the storage unit
-
-    # data fields info
-    # this fields may not contain all the fields of the sample, but only fields-of-interest
-    fields: dict[str, FieldMeta]
+    global_step: int  # Global step, used for data versioning
+    global_index: int  # Global row index, uniquely identifies a data sample
+    fields: dict[str, FieldMeta]  # Fields of interest for this sample
 
     def __post_init__(self):
         """Initialize is_ready property based on field readiness"""
@@ -74,11 +59,7 @@ class SampleMeta:
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
 
     def __str__(self) -> str:
-        return (
-            f"SampleMeta(global_step={self.global_step}, "
-            f"global_index={self.global_index}, storage_id='{self.storage_id}', "
-            f"local_index={self.local_index}, fields={self.fields})"
-        )
+        return f"SampleMeta(global_step={self.global_step}, global_index={self.global_index})"
 
     @property
     def field_names(self) -> list[str]:
@@ -107,8 +88,7 @@ class SampleMeta:
         """
         Add new fields to this sample. New fields will be initialized with given dtype, shape
         and production_status (if provided). If not provided, default values (None, None, READY_FOR_CONSUME)
-        will be used.
-        This modifies the sample in-place to include the new fields.
+        will be used. This modifies the sample in-place to include the new fields.
         """
         self.fields = _union_fields(self.fields, fields)
         # Update is_ready property
@@ -153,77 +133,8 @@ class SampleMeta:
 
 
 @dataclass
-class StorageMetaGroup:
-    """
-    Represents a group of samples stored in the same storage unit.
-    Used to organize samples by their storage_id for efficient client operations.
-    """
-
-    storage_id: str
-    sample_metas: list[SampleMeta] = dataclasses.field(default_factory=list)
-
-    def add_sample_meta(self, sample_meta: SampleMeta) -> None:
-        """Add a SampleMeta object to this storage group"""
-        self.sample_metas.append(sample_meta)
-
-    def get_batch_indexes(self) -> list[int]:
-        """Get all internal indexes from stored SampleMeta objects"""
-        return [meta.batch_index for meta in self.sample_metas]
-
-    def get_global_indexes(self) -> list[int]:
-        """Get all global indexes from stored SampleMeta objects"""
-        return [meta.global_index for meta in self.sample_metas]
-
-    def get_local_indexes(self) -> list[int]:
-        """Get all local indexes from stored SampleMeta objects"""
-        return [meta.local_index for meta in self.sample_metas]
-
-    def get_field_names(self) -> list[str]:
-        """Get all unique field names from stored SampleMeta objects"""
-        all_fields: set[str] = set()
-        for meta in self.sample_metas:
-            all_fields.update(meta.fields.keys())
-        return list(all_fields)
-
-    def get_transfer_info(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
-        """Convert to dictionary format for backward compatibility"""
-        if field_names is None:
-            field_names = self.get_field_names()
-        return {
-            "batch_indexes": self.get_batch_indexes(),
-            "global_indexes": self.get_global_indexes(),
-            "local_indexes": self.get_local_indexes(),
-            "fields": field_names,
-            "field_data": {},  # Placeholder for field data to be filled later
-        }
-
-    @property
-    def size(self) -> int:
-        """Number of samples in this storage meta group"""
-        return len(self.sample_metas)
-
-    @property
-    def is_empty(self) -> bool:
-        """Check if this storage meta group is empty"""
-        return len(self.sample_metas) == 0
-
-    def __len__(self) -> int:
-        """Number of samples in this storage meta group"""
-        return self.size
-
-    def __bool__(self) -> bool:
-        """Truthiness based on whether group has samples"""
-        return not self.is_empty
-
-    def __str__(self) -> str:
-        return f"StorageMetaGroup(storage_id='{self.storage_id}', size={self.size})"
-
-
-@dataclass
 class BatchMeta:
-    """
-    Records the metadata of a batch of data samples.
-    """
+    """Records the metadata of a batch of data samples."""
 
     samples: list[SampleMeta]
     extra_info: dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -240,21 +151,12 @@ class BatchMeta:
                 object.__setattr__(sample, "_batch_index", idx)  # Ensure batch_index is set correctly
 
             object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
-            object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
-            object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
 
             # assume all samples have the same fields.
             object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
-
-            # Initialize storage groups for efficient client operations
-            storage_meta_groups = self._build_storage_meta_groups()
-            object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
         else:
             object.__setattr__(self, "_global_indexes", [])
-            object.__setattr__(self, "_local_indexes", [])
-            object.__setattr__(self, "_storage_ids", [])
             object.__setattr__(self, "_field_names", [])
-            object.__setattr__(self, "_storage_meta_groups", {})
 
     @property
     def size(self) -> int:
@@ -272,48 +174,10 @@ class BatchMeta:
         return getattr(self, "_field_names", [])
 
     @property
-    def local_indexes(self) -> list[int]:
-        """Get all local indexes in this batch"""
-        return getattr(self, "_local_indexes", [])
-
-    @property
-    def storage_ids(self) -> list[str]:
-        """Get all storage unit IDs in this batch"""
-        return getattr(self, "_storage_ids", [])
-
-    @property
     def is_ready(self) -> bool:
         """Check if all samples in this batch are ready for consumption"""
         # TODO: get ready status from controller realtime
         return getattr(self, "_is_ready", False)
-
-    def _build_storage_meta_groups(self) -> dict[str, StorageMetaGroup]:
-        """Build storage groups from samples during initialization"""
-        storage_meta_groups: dict[str, StorageMetaGroup] = {}
-
-        for sample in self.samples:
-            storage_id = sample.storage_id
-            if storage_id not in storage_meta_groups:
-                storage_meta_groups[storage_id] = StorageMetaGroup(storage_id=storage_id)
-
-            # Use add_sample_meta to store SampleMeta references directly
-            storage_meta_groups[storage_id].add_sample_meta(sample)
-
-        return storage_meta_groups
-
-    @property
-    def storage_meta_groups(self) -> dict[str, StorageMetaGroup]:
-        """Get storage groups organized by storage_id"""
-        return getattr(self, "_storage_meta_groups", {})
-
-    @property
-    def storage_unit_ids(self) -> list[str]:
-        """Get list of all storage unit IDs"""
-        return list(self.storage_meta_groups.keys())
-
-    def get_storage_meta_groups(self, storage_id: str) -> Optional[StorageMetaGroup]:
-        """Get storage group by storage ID"""
-        return self.storage_meta_groups.get(storage_id)
 
     # Extra info interface methods
     def get_extra_info(self, key: str, default: Any = None) -> Any:
@@ -354,9 +218,12 @@ class BatchMeta:
             set_all_ready (bool): If True, set all production_status to READY_FOR_CONSUME. Default is True.
         """
         fields = _extract_field_metas(tensor_dict, set_all_ready)
-        if len(fields) > 0:
-            for idx, sample in enumerate(self.samples):
-                sample.add_fields(fields=fields[idx])
+
+        if fields:
+            if len(self.samples) != len(fields):
+                raise ValueError(f"add_fields length mismatch: samples={len(self.samples)} vs fields={len(fields)}")
+        for idx, sample in enumerate(self.samples):
+            sample.add_fields(fields=fields[idx])
 
             # Update batch-level fields cache
             object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
@@ -428,13 +295,10 @@ class BatchMeta:
                     raise ValueError("Error: Field names do not match for concatenation.")
 
         # Combine all samples
-        all_samples = []
-        for chunk in data:
-            all_samples.extend(chunk.samples)
+        all_samples = list(itertools.chain.from_iterable(chunk.samples for chunk in data))
         # Merge all extra_info dictionaries from the chunks
-        merged_extra_info = {}
-        for chunk in data:
-            merged_extra_info.update(chunk.extra_info)
+        merged_extra_info = dict(ChainMap(*(chunk.extra_info for chunk in data)))
+
         return BatchMeta(samples=all_samples, extra_info=merged_extra_info)
 
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
@@ -477,7 +341,6 @@ class BatchMeta:
 
         # Merge extra info dictionaries
         merged_extra_info = {**self.extra_info, **other.extra_info}
-
         return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
 
     def reorder(self, indices: list[int]):
@@ -506,13 +369,6 @@ class BatchMeta:
 
         # Update cached index lists
         object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
-        object.__setattr__(self, "_local_indexes", [sample.local_index for sample in self.samples])
-        object.__setattr__(self, "_storage_ids", [sample.storage_id for sample in self.samples])
-
-        # Note: No need to rebuild storage_meta_groups as samples' storage_id remain unchanged
-        # and their order does not affect the grouping
-        # storage_meta_groups = self._build_storage_meta_groups()
-        # object.__setattr__(self, "_storage_meta_groups", storage_meta_groups)
 
         # Note: No need to update _size, _field_names, _is_ready, etc., as these remain unchanged after reorder
 
@@ -584,20 +440,21 @@ def _extract_field_metas(tensor_dict: TensorDict, set_all_ready: bool = True) ->
     Returns:
         all_fields (list[dict[str, FieldMeta]]): A list of dictionaries containing field metadata.
     """
-    all_fields = []
     batch_size = tensor_dict.batch_size[0]
-    for idx in range(batch_size):
-        fields = {}
-        sample = tensor_dict[idx]
-        for name, value in sample.items():
-            fields[name] = FieldMeta(
+
+    production_status = ProductionStatus.READY_FOR_CONSUME if set_all_ready else ProductionStatus.NOT_PRODUCED
+
+    all_fields = [
+        {
+            name: FieldMeta(
                 name=name,
-                dtype=value.dtype if hasattr(value, "dtype") else None,
-                shape=value.shape if hasattr(value, "shape") else None,
-                production_status=ProductionStatus.READY_FOR_CONSUME
-                if set_all_ready
-                else ProductionStatus.NOT_PRODUCED,
+                dtype=getattr(value, "dtype", None),
+                shape=getattr(value, "shape", None),
+                production_status=production_status,
             )
-        all_fields.append(fields)
+            for name, value in tensor_dict[idx].items()
+        }
+        for idx in range(batch_size)
+    ]
 
     return all_fields

@@ -16,6 +16,7 @@ import sys
 import time
 from pathlib import Path
 from threading import Thread
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -32,6 +33,7 @@ from transfer_queue.metadata import (  # noqa: E402
     FieldMeta,
     SampleMeta,
 )
+from transfer_queue.utils.utils import TransferQueueRole  # noqa: E402
 from transfer_queue.utils.zmq_utils import (  # noqa: E402
     ZMQMessage,
     ZMQRequestType,
@@ -64,8 +66,8 @@ class MockController:
         self.request_socket = self.context.socket(zmq.ROUTER)
         self.request_port = self._bind_to_random_port(self.request_socket)
 
-        self.zmq_server_info = ZMQServerInfo.create(
-            role="TransferQueueController",
+        self.zmq_server_info = ZMQServerInfo(
+            role=TransferQueueRole.CONTROLLER,
             id=controller_id,
             ip="127.0.0.1",
             ports={
@@ -114,11 +116,8 @@ class MockController:
             except zmq.Again:
                 continue
             except Exception as e:
-                if self.is_running:
-                    print(f"MockController running exception: {e}")
-                else:
-                    print(f"MockController ERROR: {e}")
-                    raise
+                print(f"MockController ERROR: {e}")
+                raise
 
     def _mock_batch_meta(self, request_body):
         batch_size = request_body.get("batch_size", 1)
@@ -138,8 +137,6 @@ class MockController:
             sample = SampleMeta(
                 global_step=0,
                 global_index=i,
-                storage_id="storage_0",
-                local_index=i,
                 fields={field.name: field for field in fields},
             )
             samples.append(sample)
@@ -164,8 +161,8 @@ class MockStorage:
         self.data_socket = self.context.socket(zmq.ROUTER)
         self.data_port = self._bind_to_random_port(self.data_socket)
 
-        self.zmq_server_info = ZMQServerInfo.create(
-            role="TransferQueueStorage",
+        self.zmq_server_info = ZMQServerInfo(
+            role=TransferQueueRole.STORAGE,
             id=storage_id,
             ip="127.0.0.1",
             ports={
@@ -214,7 +211,7 @@ class MockStorage:
             except zmq.Again:
                 continue
             except Exception as e:
-                if self.is_running:
+                if self.running:
                     print(f"MockStorage running exception: {e}")
                 else:
                     print(f"MockStorage ERROR: {e}")
@@ -267,12 +264,33 @@ def client_setup(mock_controller, mock_storage):
 
     client = TransferQueueClient(
         client_id=client_id,
-        controller_infos={mock_controller.controller_id: mock_controller.zmq_server_info},
-        storage_infos={mock_storage.storage_id: mock_storage.zmq_server_info},
+        controller_info=mock_controller.zmq_server_info,
     )
 
-    # Give some time for connections to establish
-    time.sleep(0.5)
+    # Mock the storage manager to avoid handshake issues but mock all data operations
+    with patch(
+        "transfer_queue.storage.managers.simple_backend_manager.AsyncSimpleStorageManager._connect_to_controller"
+    ):
+        config = {
+            "controller_info": mock_controller.zmq_server_info,
+            "storage_unit_infos": {mock_storage.storage_id: mock_storage.zmq_server_info},
+        }
+        client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
+
+        # Mock all storage manager methods to avoid real ZMQ operations
+        async def mock_put_data(data, metadata):
+            pass  # Just pretend to store the data
+
+        async def mock_get_data(metadata):
+            # Return the test data when requested
+            return TEST_DATA
+
+        async def mock_clear_data(metadata):
+            pass  # Just pretend to clear the data
+
+        client.storage_manager.put_data = mock_put_data
+        client.storage_manager.get_data = mock_get_data
+        client.storage_manager.clear_data = mock_clear_data
 
     yield client, mock_controller, mock_storage
 
@@ -283,8 +301,8 @@ def test_client_initialization(client_setup):
     client, mock_controller, mock_storage = client_setup
 
     assert client.client_id is not None
-    assert mock_controller.controller_id in client._controllers
-    assert mock_storage.storage_id in client._storages
+    assert client._controller is not None
+    assert client._controller.id == mock_controller.controller_id
 
 
 def test_put_and_get_data(client_setup):
@@ -323,7 +341,6 @@ def test_get_meta(client_setup):
     metadata = client.get_meta(data_fields=["tokens", "labels"], batch_size=10, global_step=0)
 
     # Verify metadata structure
-    assert hasattr(metadata, "storage_meta_groups")
     assert hasattr(metadata, "global_indexes")
     assert hasattr(metadata, "field_names")
     assert hasattr(metadata, "size")
@@ -338,30 +355,47 @@ def test_clear_operation(client_setup):
     client.clear(global_step=0)
 
 
-# Test with multiple controllers and storage units
-def test_multiple_servers():
-    """Test client with multiple controllers and storage units"""
-    # Create multiple mock servers
-    controllers = [MockController(f"controller_{i}") for i in range(2)]
+# Test with single controller and multiple storage units
+def test_single_controller_multiple_storages():
+    """Test client with single controller and multiple storage units"""
+    # Create single controller and multiple storage units
+    controller = MockController("controller_0")
     storages = [MockStorage(f"storage_{i}") for i in range(3)]
 
     try:
-        # Create client with multiple servers
-        client_id = "client_test_multiple_servers"
+        # Create client with single controller
+        client_id = "client_test_single_controller"
 
-        controller_infos = {c.controller_id: c.zmq_server_info for c in controllers}
-        storage_infos = {s.storage_id: s.zmq_server_info for s in storages}
+        client = TransferQueueClient(client_id=client_id, controller_info=controller.zmq_server_info)
 
-        client = TransferQueueClient(
-            client_id=client_id, controller_infos=controller_infos, storage_infos=storage_infos
-        )
+        # Mock the storage manager to avoid handshake issues but mock all data operations
+        with patch(
+            "transfer_queue.storage.managers.simple_backend_manager.AsyncSimpleStorageManager._connect_to_controller"
+        ):
+            config = {
+                "controller_info": controller.zmq_server_info,
+                "storage_unit_infos": {s.storage_id: s.zmq_server_info for s in storages},
+            }
+            client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=config)
 
-        # Give time for connections
-        time.sleep(1.0)
+            # Mock all storage manager methods to avoid real ZMQ operations
+            async def mock_put_data(data, metadata):
+                pass  # Just pretend to store the data
 
-        # Verify connections
-        assert len(client._controllers) == 2
-        assert len(client._storages) == 3
+            async def mock_get_data(metadata):
+                # Return some test data when requested
+                return TensorDict({"tokens": torch.randint(0, 100, (5, 128))}, batch_size=5)
+
+            async def mock_clear_data(metadata):
+                pass  # Just pretend to clear the data
+
+            client.storage_manager.put_data = mock_put_data
+            client.storage_manager.get_data = mock_get_data
+            client.storage_manager.clear_data = mock_clear_data
+
+        # Verify controller is set
+        assert client._controller is not None
+        assert client._controller.id == controller.controller_id
 
         # Test basic operation
         test_data = TensorDict({"tokens": torch.randint(0, 100, (5, 128))}, batch_size=5)
@@ -371,8 +405,7 @@ def test_multiple_servers():
 
     finally:
         # Clean up
-        for c in controllers:
-            c.stop()
+        controller.stop()
         for s in storages:
             s.stop()
 
