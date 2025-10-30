@@ -100,7 +100,9 @@ class StorageUnitData:
                     else:
                         result[field] = NonTensorStack(*gathered_items)
 
-        return TensorDict(result)
+        # Explicit batch size for stability
+        bs = 0 if not fields or not local_indexes else len(local_indexes)
+        return TensorDict(result, batch_size=bs)
 
     def put_data(self, field_data: TensorDict[str, Any], local_indexes: list[int]) -> None:
         """
@@ -110,7 +112,8 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        extracted_data = dict(field_data)
+        # Accept TensorDict or plain dict[str, list-like]
+        extracted_data = field_data.to_dict()
 
         for f, values in extracted_data.items():
             if f not in self.field_data:
