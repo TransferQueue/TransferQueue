@@ -21,13 +21,23 @@ from .client import (
 )
 from .controller import TransferQueueController
 from .metadata import BatchMeta
+from .samplers import (
+    BaseSampler,
+    DPSampler,
+    GRPOSampler,
+    SequentialSampler,
+)
 from .storage import SimpleStorageUnit
 from .utils.utils import get_placement_group
 from .utils.zmq_utils import ZMQServerInfo
 
 __all__ = [
     "AsyncTransferQueueClient",
+    "BaseSampler",
     "BatchMeta",
+    "DPSampler",
+    "GRPOSampler",
+    "SequentialSampler",
     "TransferQueueClient",
     "TransferQueueController",
     "SimpleStorageUnit",

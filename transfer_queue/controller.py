@@ -16,7 +16,7 @@ import logging
 import os
 import time
 from threading import Thread
-from typing import Any, Optional
+from typing import Any, Callable, Optional, Union
 from uuid import uuid4
 
 import ray
@@ -29,6 +29,7 @@ from transfer_queue.metadata import (
     FieldMeta,
     SampleMeta,
 )
+from transfer_queue.samplers import BaseSampler, SequentialSampler
 from transfer_queue.utils.utils import (
     ProductionStatus,
     TransferQueueRole,
@@ -58,6 +59,7 @@ class TransferQueueController:
         global_batch_size: int,
         num_global_batch: int = 1,
         num_n_samples: int = 1,
+        sampler: Optional[Union[BaseSampler, Callable[[], BaseSampler]]] = None,
     ) -> None:
         """Initialize the TransferQueueController.
 
@@ -65,6 +67,10 @@ class TransferQueueController:
             global_batch_size: Size of each global batch
             num_global_batch: Number of global batches to maintain in storage
             num_n_samples: For each prompt, sample n responses
+            sampler: Optional sampler to control data consumption patterns.
+                    Can be a BaseSampler instance or a callable that returns one.
+                    If None, uses SequentialSampler (default behavior).
+                    Similar to torchrl.data.ReplayBuffer's sampler parameter.
         """
         self.controller_id = f"TQ_CONTROLLER_{uuid4().hex[:8]}"
 
@@ -89,10 +95,57 @@ class TransferQueueController:
         self.per_tensor_dtype_mapping: dict[int, dict[str, Any]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, Any]] = {}
 
+        # Initialize sampler: if callable, call it; if None, use default; otherwise use as-is
+        if sampler is None:
+            self._default_sampler = SequentialSampler()
+        elif callable(sampler) and not isinstance(sampler, BaseSampler):
+            self._default_sampler = sampler()
+        else:
+            self._default_sampler = sampler
+
+        # Task-specific samplers (can be registered per task)
+        self._task_samplers: dict[str, BaseSampler] = {}
+
         self._connected_storage_managers: set[str] = set()
         self._start_process_handshake()
         self._start_process_update_data_status()
         self._start_process_request()
+
+    def register_sampler(
+        self,
+        task_name: str,
+        sampler: Union[BaseSampler, Callable[[], BaseSampler]],
+    ) -> None:
+        """Register a custom sampler for a specific task.
+
+        This allows different tasks to use different sampling strategies.
+        For example, GRPO tasks can use GRPOSampler while DP tasks use DPSampler.
+
+        Args:
+            task_name: Name of the task to register the sampler for
+            sampler: Sampler instance or callable that returns a sampler
+
+        Example:
+            >>> from transfer_queue.samplers import GRPOSampler
+            >>> controller.register_sampler.remote("grpo_task", GRPOSampler(num_n_samples=4))
+        """
+        if callable(sampler) and not isinstance(sampler, BaseSampler):
+            sampler = sampler()
+        self._task_samplers[task_name] = sampler
+        logger.info(f"Registered sampler {type(sampler).__name__} for task '{task_name}'")
+
+    def _get_sampler(self, task_name: Optional[str] = None) -> BaseSampler:
+        """Get the appropriate sampler for a task.
+
+        Args:
+            task_name: Name of the task, or None to use default sampler
+
+        Returns:
+            Sampler instance for the task (task-specific if registered, otherwise default)
+        """
+        if task_name and task_name in self._task_samplers:
+            return self._task_samplers[task_name]
+        return self._default_sampler
 
     def _get_consumption_status(self, task_name: str) -> torch.Tensor:
         """
@@ -266,6 +319,9 @@ class TransferQueueController:
             return self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
 
         assert task_name is not None
+        # Get the appropriate sampler for this task
+        sampler = self._get_sampler(task_name)
+
         if mode == "fetch":
             # Find consumable samples within current batch and package into BatchMeta when reading
 
@@ -290,14 +346,16 @@ class TransferQueueController:
                 time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
-            batch_global_indexes = sequential_sampler(
-                ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples
+            # Use sampler to select the batch
+            batch_global_indexes = sampler.sample(
+                ready_for_consume_idx, batch_size, get_n_samples=get_n_samples
             )
         elif mode == "force_fetch":
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             consumer_status = self._get_consumption_status(task_name)
             not_consumed_idx = [i for i in range(start_idx, end_idx) if consumer_status[i] == 0]
-            batch_global_indexes = sequential_sampler(not_consumed_idx, batch_size, get_n_samples, self.num_n_samples)
+            # Use sampler to select the batch from not consumed indices
+            batch_global_indexes = sampler.sample(not_consumed_idx, batch_size, get_n_samples=get_n_samples)
 
         # Mark this batch of data as consumed
         consumer_status = self._get_consumption_status(task_name)
@@ -312,54 +370,42 @@ class TransferQueueController:
         self, data_fields: list[str], global_step: int, task_name: str, get_n_samples: bool
     ) -> list[int]:
         """
-        Scan data status to find samples ready for consumption.
+        Scan data status to find samples ready for consumption using the configured sampler.
 
         Args:
             data_fields: List of field names to check
             global_step: Global step to scan
             task_name: Name of the consumer task
-            get_n_samples: Whether to return n_samples as groups
+            get_n_samples: Whether to return n_samples as groups (used for backward compatibility)
 
         Returns:
             List of global indices that are ready for consumption
         """
-        # Get row and column masks
-        row_mask, col_mask = self.generate_data_status_mask(data_fields, global_step, task_name)
-        logger.debug(f"row_mask, col_mask: {row_mask, col_mask}")
+        # Get the appropriate sampler for this task
+        sampler = self._get_sampler(task_name)
 
-        if not row_mask.any() or not col_mask.any():
+        # Get all candidate indices for this global step
+        start_idx, end_idx = self._step_to_global_index_range(global_step)
+        all_indices = list(range(start_idx, end_idx))
+
+        if not all_indices:
             return []
 
-        # Extract subset of data status for relevant fields
-        logger.debug(f"self.data_production_status: {self.data_production_status}")
-        data_status_of_interest = self.data_production_status[:, col_mask]
-        logger.debug(f"data_status_of_interest: {data_status_of_interest}")
+        # Get consumption status for this task
+        consumption_status = self._get_consumption_status(task_name)
 
-        # Use torch.all for vectorized check instead of sum comparison
-        all_fields_ready = torch.all(data_status_of_interest, dim=1)
+        # Use sampler to filter ready indices
+        ready_indices = sampler.filter_ready_indices(
+            all_indices=all_indices,
+            production_status=self.data_production_status,
+            consumption_status=consumption_status,
+            data_fields=data_fields,
+            field_mapping=self.field_name_mapping,
+            get_n_samples=get_n_samples,  # Pass for backward compatibility
+        )
 
-        # Filter samples that meet criteria combined with row mask
-        ready_mask = all_fields_ready & row_mask
-
-        if get_n_samples and self.num_n_samples > 1:
-            # Reshape to group view and check group completeness
-            group_all_ready = torch.all(ready_mask.view(-1, self.num_n_samples), dim=1)
-
-            # Get indices of fully ready groups
-            ready_group_indices = group_all_ready.nonzero(as_tuple=False).flatten()
-
-            # Calculate all sample indices
-            sample_offset = torch.arange(self.num_n_samples)
-            ready_for_consume_idx = (
-                (ready_group_indices.unsqueeze(1) * self.num_n_samples + sample_offset).flatten().tolist()
-            )
-
-            return ready_for_consume_idx
-        else:
-            ready_for_consume_idx = torch.nonzero(ready_mask, as_tuple=False).flatten().tolist()
-            logger.debug(f"ready_for_consume_idx: {ready_for_consume_idx}")
-
-            return ready_for_consume_idx
+        logger.debug(f"Sampler {type(sampler).__name__} found {len(ready_indices)} ready indices")
+        return ready_indices
 
     def _generate_batch_meta(
         self, global_step: int, global_indexes: list[int], data_fields: list[str], mode: str
