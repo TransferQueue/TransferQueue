@@ -26,6 +26,7 @@ from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.metadata import BatchMeta
 from transfer_queue.storage.managers.base import TransferQueueStorageManager
+from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
 from transfer_queue.storage.simple_backend import StorageMetaGroup
 from transfer_queue.utils.utils import limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
@@ -34,6 +35,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 
+@TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager")
 class AsyncSimpleStorageManager(TransferQueueStorageManager):
     """Asynchronous storage manager that handles multiple storage units.
 
