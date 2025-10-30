@@ -21,6 +21,9 @@ from uuid import uuid4
 
 import zmq
 from tensordict import TensorDict
+import  torch
+from torch import Tensor
+
 
 from transfer_queue.metadata import BatchMeta
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
