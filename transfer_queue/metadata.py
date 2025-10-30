@@ -218,9 +218,12 @@ class BatchMeta:
             set_all_ready (bool): If True, set all production_status to READY_FOR_CONSUME. Default is True.
         """
         fields = _extract_field_metas(tensor_dict, set_all_ready)
-        if len(fields) > 0:
-            for idx, sample in enumerate(self.samples):
-                sample.add_fields(fields=fields[idx])
+
+        if fields:
+            if len(self.samples) != len(fields):
+                raise ValueError(f"add_fields length mismatch: samples={len(self.samples)} vs fields={len(fields)}")
+        for idx, sample in enumerate(self.samples):
+            sample.add_fields(fields=fields[idx])
 
             # Update batch-level fields cache
             object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))

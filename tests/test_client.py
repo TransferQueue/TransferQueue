@@ -162,7 +162,7 @@ class MockStorage:
         self.data_port = self._bind_to_random_port(self.data_socket)
 
         self.zmq_server_info = ZMQServerInfo(
-            role="TransferQueueStorage",
+            role=TransferQueueRole.STORAGE,
             id=storage_id,
             ip="127.0.0.1",
             ports={
