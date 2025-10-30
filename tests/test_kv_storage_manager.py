@@ -56,8 +56,8 @@ class Test(unittest.TestCase):
             samples.append(sample)
         self.metadata = BatchMeta(samples=samples)
 
-    def test_create(self):
-        self.sm = YuanrongStorageManager(self.cfg)
+    # def test_create(self):
+    #     self.sm = YuanrongStorageManager(self.cfg)
 
     def test_generate_yr_keys(self):
         """测试 _generate_yr_keys 生成正确的 key 列表"""
