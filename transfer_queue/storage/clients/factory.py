@@ -11,3 +11,59 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from abc import ABC,abstractmethod
+from torch import Tensor
+from typing import Type
+class StorageClientFactory(ABC):
+    """
+    Abstract factory base class for creating storage client instances.
+    Uses a decorator-based registration mechanism to map client names to classes.
+    Subclasses must implement the core methods: put, get, and clear.
+    """
+
+    # Class variable: maps client names to their corresponding classes
+    _registry: dict[str, Type['StorageClientFactory']] = {}
+
+    @classmethod
+    def register(cls, name: str):
+        """
+        Decorator to register a concrete client class with the factory.
+        Args:
+            name (str): The name used to identify the client
+        Returns:
+            Callable: The decorator function that returns the original class
+        """
+        def decorator(client_class: Type['StorageClientFactory']) -> Type['StorageClientFactory']:
+            cls._registry[name] = client_class
+            return client_class
+        return decorator
+
+    @classmethod
+    def create(cls, name: str, config: dict) -> 'StorageClientFactory':
+        """
+        Create and return an instance of the storage client by name.
+        Args:
+            name (str): The registered name of the client
+        Returns:
+            StorageClientFactory: An instance of the requested client
+        Raises:
+            ValueError: If no client is registered with the given name
+        """
+        if name not in cls._registry:
+            raise ValueError(f"Unknown StorageClient: {name}")
+        return cls._registry[name](config)
+
+    @abstractmethod
+    def put(self, keys: list[str], values: list[Tensor]) -> None:
+        raise NotImplementedError("Subclasses must implement put")
+    @abstractmethod
+    def get(self, keys: list[str], shapes = None, dtypes = None) -> list[Tensor]:
+        raise NotImplementedError("Subclasses must implement get")
+    @abstractmethod
+    def clear(self, keys: list[str]) -> None:
+        raise NotImplementedError("Subclasses must implement clear")
+
+try:
+    from .yuanrong_client import YRStorageClient
+except ImportError:
+    pass
