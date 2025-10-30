@@ -268,7 +268,9 @@ def client_setup(mock_controller, mock_storage):
     )
 
     # Mock the storage manager to avoid handshake issues but mock all data operations
-    with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controller"):
+    with patch(
+        "transfer_queue.storage.managers.simple_backend_manager.AsyncSimpleStorageManager._connect_to_controller"
+    ):
         config = {
             "controller_info": mock_controller.zmq_server_info,
             "storage_unit_infos": {mock_storage.storage_id: mock_storage.zmq_server_info},

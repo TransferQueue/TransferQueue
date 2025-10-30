@@ -406,13 +406,13 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 if sock and not sock.closed:
                     sock.setsockopt(zmq.LINGER, 0)
                     sock.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"[{self.storage_manager_id}]: Error closing socket {sock}: {str(e)}")
         try:
             if hasattr(self, "zmq_context") and self.zmq_context:
                 self.zmq_context.term()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[{self.storage_manager_id}]: Error terminating zmq_context: {str(e)}")
 
 
 def get_transfer_data(

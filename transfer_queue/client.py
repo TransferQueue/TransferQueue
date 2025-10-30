@@ -80,10 +80,10 @@ class AsyncTransferQueueClient:
         Args:
             manager_type: Type of storage manager to create. Supported types include:
                           AsyncSimpleStorageManager, KVStorageManager (under development), etc.
-            config: Configuration dictionary for the storage manager. Must contain the
-                    following required keys:
-                    - data_system_controller_info: ZMQ server information about the controller
-                    - data_system_storage_unit_infos: ZMQ server information about the storage units
+            config: Configuration dictionary for the storage manager.
+                    For AsyncSimpleStorageManager, must contain the following required keys:
+                    - controller_info: ZMQ server information about the controller
+                    - storage_unit_infos: ZMQ server information about the storage units
 
         """
         self.storage_manager = TransferQueueStorageManagerFactory.create(manager_type, config)
@@ -285,6 +285,13 @@ class AsyncTransferQueueClient:
             >>> asyncio.run(client.async_put(data=prompts_repeated_batch, global_step=current_step))
 
         """
+
+        if not hasattr(self, "storage_manager") or self.storage_manager is None:
+            raise RuntimeError(
+                f"[{self.client_id}]: Storage manager not initialized. "
+                "Call initialize_storage_manager() before performing storage operations."
+            )
+
         if metadata is None:
             assert global_step is not None, "global_steps must be provided if metadata is not given"
 
@@ -330,6 +337,13 @@ class AsyncTransferQueueClient:
             >>> # TensorDict with fields "prompts", "attention_mask", and sample order matching metadata global_indexes
 
         """
+
+        if not hasattr(self, "storage_manager") or self.storage_manager is None:
+            raise RuntimeError(
+                f"[{self.client_id}]: Storage manager not initialized. "
+                "Call initialize_storage_manager() before performing storage operations."
+            )
+
         if not metadata or metadata.size == 0:
             return TensorDict({}, batch_size=0)
 
@@ -347,6 +361,12 @@ class AsyncTransferQueueClient:
             RuntimeError: If clear operation fails
         """
         try:
+            if not hasattr(self, "storage_manager") or self.storage_manager is None:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Storage manager not initialized. "
+                    "Call initialize_storage_manager() before performing storage operations."
+                )
+
             if not self._controller:
                 raise RuntimeError("No controller registered")
 

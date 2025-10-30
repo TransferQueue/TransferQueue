@@ -66,7 +66,9 @@ async def mock_async_storage_manager():
     }
 
     # Mock the handshake process entirely to avoid ZMQ complexity
-    with patch("transfer_queue.storage.AsyncSimpleStorageManager._connect_to_controller") as mock_connect:
+    with patch(
+        "transfer_queue.storage.managers.base.TransferQueueStorageManager._connect_to_controller"
+    ) as mock_connect:
         # Mock the manager without actually connecting
         manager = AsyncSimpleStorageManager.__new__(AsyncSimpleStorageManager)
         manager.storage_manager_id = "test_storage_manager"

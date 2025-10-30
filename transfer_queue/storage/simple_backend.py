@@ -18,7 +18,7 @@ import os
 from dataclasses import dataclass
 from operator import itemgetter
 from threading import Thread
-from typing import Optional
+from typing import Any, Optional
 from uuid import uuid4
 
 import ray
@@ -102,7 +102,7 @@ class StorageUnitData:
 
         return TensorDict(result)
 
-    def put_data(self, field_data: TensorDict[str, list], local_indexes: list[int]) -> None:
+    def put_data(self, field_data: TensorDict[str, Any], local_indexes: list[int]) -> None:
         """
         Put or update data into storage unit according to given field_data and local_indexes.
 
@@ -257,7 +257,7 @@ class SimpleStorageUnit:
         """
         try:
             local_indexes = data_parts.body["local_indexes"]
-            field_data = data_parts.body["data"]  # field_data should be in {field_name: [real data]} format.
+            field_data = data_parts.body["data"]  # field_data should be a TensorDict.
 
             self.storage_data.put_data(field_data, local_indexes)
 
