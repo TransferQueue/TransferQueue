@@ -29,6 +29,7 @@ from transfer_queue.metadata import (
     FieldMeta,
     SampleMeta,
 )
+from transfer_queue.sampler import BaseSampler, SequentialSampler
 from transfer_queue.utils.utils import (
     ProductionStatus,
     TransferQueueRole,
@@ -58,6 +59,7 @@ class TransferQueueController:
         global_batch_size: int,
         num_global_batch: int = 1,
         num_n_samples: int = 1,
+        sampler: BaseSampler = SequentialSampler,
     ) -> None:
         """Initialize the TransferQueueController.
 
@@ -88,6 +90,13 @@ class TransferQueueController:
         # Per-field dtype and shape storage: {global_index: {field_name: {'dtype': dtype, 'shape': shape}}}
         self.per_tensor_dtype_mapping: dict[int, dict[str, Any]] = {}
         self.per_tensor_shape_mapping: dict[int, dict[str, Any]] = {}
+
+        if issubclass(sampler, BaseSampler):
+            self.sampler = sampler
+        else:
+            raise TypeError(
+                f"sampler {getattr(sampler, '__name__', repr(sampler))} must be a subclass of BaseSampler"
+            )
 
         self._connected_storage_managers: set[str] = set()
         self._start_process_handshake()
@@ -226,10 +235,9 @@ class TransferQueueController:
         self,
         data_fields: list[str],
         batch_size: int,
-        global_step: int,
         mode: str = "fetch",
         task_name: str | None = None,
-        get_n_samples=False,
+        sampling_config: Optional[dict[str, Any]] = None,
         *args,
         **kwargs,
     ) -> BatchMeta:
@@ -290,8 +298,10 @@ class TransferQueueController:
                 time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
-            batch_global_indexes = sequential_sampler(
-                ready_for_consume_idx, batch_size, get_n_samples, self.num_n_samples
+            batch_global_indexes, consumed_indexes = self.sampler(
+                ready_for_consume_idx,
+                batch_size,
+                **sampling_config,
             )
         elif mode == "force_fetch":
             start_idx, end_idx = self._step_to_global_index_range(global_step)
@@ -301,7 +311,7 @@ class TransferQueueController:
 
         # Mark this batch of data as consumed
         consumer_status = self._get_consumption_status(task_name)
-        consumer_status[batch_global_indexes] = 1
+        consumer_status[consumed_indexes] = 1
         # Package into metadata
         metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
         logger.debug(f"_get_metadata: {metadata}")
