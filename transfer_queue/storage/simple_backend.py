@@ -102,7 +102,7 @@ class StorageUnitData:
 
         # Explicit batch size for stability
         batch_size = 0 if not fields or not local_indexes else len(local_indexes)
-        return TensorDict(result, batch_size=bs)
+        return TensorDict(result, batch_size=batch_size)
 
     def put_data(self, field_data: TensorDict[str, Any], local_indexes: list[int]) -> None:
         """
