@@ -280,9 +280,9 @@ def test_data_partition_status_advanced():
     initial_consumption_sum = sum(t.sum().item() for t in partition.consumption_status.values())
 
     # Clear only production data
-    success = partition.clear_data(clear_consumption=False)
+    success = partition.clear_data(list(range(4)), clear_consumption=False)
     assert success == True
-    assert partition.production_status.sum().item() == 0
+    assert partition.production_status[:4, :].sum().item() == 0
 
     # Consumption data should remain
     remaining_consumption_sum = sum(t.sum().item() for t in partition.consumption_status.values())

@@ -340,13 +340,10 @@ class DataPartitionStatus:
         Returns:
             True if update was successful, False on error
         """
-        self.controller_id = f"DYNAMIC_TQ_CONTROLLER_{uuid4().hex[:8]}"
         try:
             # Determine required capacity
-            num_samples = len(sample_indices) if sample_indices else -1
-            # TODO: 确认为什么这里要+1
-            # required_samples = num_samples + 1
-            required_samples = num_samples
+            max_sample_idx = max(sample_indices) if sample_indices else -1
+            required_samples = max_sample_idx + 1
 
             # Register new fields if needed
             new_fields = [field for field in field_names if field not in self.field_name_mapping]
@@ -633,7 +630,7 @@ class TransferQueueController:
 
     def __init__(self) -> None:
         """Initialize the Dynamic TransferQueue Controller."""
-        self.controller_id = f"DYNAMIC_TQ_CONTROLLER_{uuid4()}"
+        self.controller_id = f"DYNAMIC_TQ_CONTROLLER_{uuid4().hex[:8]}"
 
         # Initialize ZMQ sockets for communication
         self._init_zmq_socket()
