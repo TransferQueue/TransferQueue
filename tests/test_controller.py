@@ -1,17 +1,3 @@
-# Copyright 2025 The TransferQueue Team
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import logging
 import sys
 from pathlib import Path
@@ -19,15 +5,18 @@ from pathlib import Path
 import pytest
 import ray
 import torch
+from tensordict import TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue import TransferQueueController  # noqa: E402
-from transfer_queue.controller import TQ_INIT_FIELD_NUM  # noqa: E402
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+from transfer_queue import TransferQueueController
+from transfer_queue.controller import TQ_INIT_FIELD_NUM
+from transfer_queue.utils.utils import ProductionStatus
 
 
 @pytest.fixture(scope="function")
@@ -45,88 +34,107 @@ def ray_setup():
         logger.info("Ray has been shut down completely after test")
 
 
-@pytest.fixture(scope="function")
-def setup_teardown_transfer_queue_controller(ray_setup):
-    # Used as the offset for the global index to distinguish which global step the data corresponds to
-    global_batch_size = 8
-    num_global_batch = 2
-    num_n_samples = 2
-
-    tq_controller = TransferQueueController.remote(
-        global_batch_size=global_batch_size,
-        num_global_batch=num_global_batch,
-        num_n_samples=num_n_samples,
-    )
-    yield tq_controller, global_batch_size, num_global_batch, num_n_samples
-    ray.get(tq_controller.clear.remote(0))
-
-
 class TestTransferQueueController:
-    def test_update_production_status(self, setup_teardown_transfer_queue_controller):
-        tq_controller, global_batch_size, num_global_batch, num_n_samples = setup_teardown_transfer_queue_controller
+    def test_controller_with_single_partition(ray_setup):
+        gbs = 8
+        num_n_samples = 4
+        seq_len = 16
 
-        total_storage_size = global_batch_size * num_global_batch * num_n_samples
-        # Initialize get_data_production_status and filed_name_mapping
-        init_update_production_status = torch.zeros(total_storage_size, TQ_INIT_FIELD_NUM, dtype=torch.int8)
-        assert torch.equal(ray.get(tq_controller.get_data_production_status.remote()), init_update_production_status)
-        assert ray.get(tq_controller.get_field_name_mapping.remote()) == {}
+        tq_controller = TransferQueueController.remote()
 
-        columns_list = ["test_prompts"]
-        global_indexes = list(range(global_batch_size * num_n_samples))
-
-        # update production status
-        tq_controller._update_production_status.remote(global_indexes, columns_list)
-        new_field_name_mapping = ray.get(tq_controller.get_field_name_mapping.remote())
-        assert new_field_name_mapping["test_prompts"] == 0
-
-        new_data_production_status = ray.get(tq_controller.get_data_production_status.remote())
-        assert new_data_production_status[:, 0][: len(global_indexes)].sum() == len(global_indexes)
-
-    def test_data_consumption_status(self, setup_teardown_transfer_queue_controller):
-        tq_controller, global_batch_size, num_global_batch, num_n_samples = setup_teardown_transfer_queue_controller
-        total_storage_size = global_batch_size * num_global_batch * num_n_samples
-
-        init_data_consumption_status = {}
-        assert ray.get(tq_controller.get_data_consumption_status.remote()) == init_data_consumption_status
-
-        task_name = "test_task1"
-        ray.get(tq_controller._get_consumption_status.remote(task_name))
-        new_data_consumption_status = ray.get(tq_controller.get_data_consumption_status.remote())
-        assert torch.equal(new_data_consumption_status[task_name], torch.zeros(total_storage_size, dtype=torch.int8))
-
-    def test_get_prompt_metadata(self, setup_teardown_transfer_queue_controller):
-        tq_controller, global_batch_size, _, n_samples = setup_teardown_transfer_queue_controller
-
-        data_fields = ["test_prompts"]
-        global_step = 5
-
+        # Test get metadata in insert mode
+        partition_id = "train_0"
+        data_fields = ["prompt_ids", "attention_mask"]
         metadata = ray.get(
-            tq_controller._get_metadata.remote(
+            tq_controller.get_metadata.remote(
                 data_fields=data_fields,
-                batch_size=global_batch_size * n_samples,
-                global_step=global_step,
+                batch_size=gbs * num_n_samples,
+                partition_id=partition_id,
+                mode="insert",
+                get_n_samples=True,
+            )
+        )
+
+        assert metadata.global_indexes == list(range(gbs * num_n_samples))
+        assert metadata.samples[0].partition_id == "train_0"
+        assert sum(
+            [int(sample.fields.get("prompt_ids").production_status) for sample in metadata.samples]
+        ) == int(ProductionStatus.NOT_PRODUCED)
+        assert sum(
+            [int(sample.fields.get("attention_mask").production_status) for sample in metadata.samples]
+        ) == int(ProductionStatus.NOT_PRODUCED)
+        partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id))
+        assert partition_index_range == set(range(gbs * num_n_samples))
+
+        print("✓ Initial get metadata correct")
+
+        # Test update production status
+        original_prompts = torch.randn(gbs, seq_len)
+        prompts_repeated = torch.repeat_interleave(original_prompts, num_n_samples, dim=0)
+        original_attention_mask = torch.ones(gbs, seq_len)
+        attention_mask_repeated = torch.repeat_interleave(original_attention_mask, num_n_samples, dim=0)
+        input_batch = TensorDict(
+            {"prompt_ids": prompts_repeated, "attention_mask": attention_mask_repeated},
+            batch_size=prompts_repeated.size(0)
+        )
+
+        success = ray.get(
+            tq_controller.update_production_status.remote(
+                partition_id=partition_id,
+                sample_indices=metadata.global_indexes,
+                field_names=metadata.field_names,
+            )
+        )
+        assert success == True
+        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        assert partition.production_status is not None
+        assert partition.production_status.size(0) == gbs * num_n_samples
+        assert partition.production_status.size(1) == TQ_INIT_FIELD_NUM
+        assert torch.equal(
+            sum(partition.production_status[:, :len(data_fields)]), torch.Tensor([gbs*num_n_samples, gbs*num_n_samples])
+        )
+        assert torch.equal(
+            sum(partition.production_status[:, len(data_fields):]),
+            torch.zeros((1 * (TQ_INIT_FIELD_NUM - len(data_fields))))
+        )
+
+        print(f"✓ Updated production status for partition {partition_id}")
+
+        # Test get metadate in fetch mode
+        gen_meta = ray.get(
+            tq_controller.get_metadata.remote(
+                data_fields=["prompt_ids"],
+                batch_size=gbs * num_n_samples,
+                partition_id=partition_id,
+                mode="fetch",
+                task_name="generate_sequences",
+                get_n_samples=False,
+            )
+        )
+        assert gen_meta.global_indexes == list(range(gbs * num_n_samples))
+        assert gen_meta.samples[0].partition_id == "train_0"
+        assert gen_meta.field_names == ["prompt_ids"]
+        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        assert torch.equal(partition.consumption_status["generate_sequences"], torch.ones(gbs * num_n_samples))
+        print("✓ Get metadata in fetch mode correct")
+
+        # Test get clear meta
+        clear_meta = ray.get(
+            tq_controller.get_metadata.remote(
+                data_fields=[],
+                partition_id=partition_id,
                 mode="insert",
             )
         )
-        metadata.reorder([15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0])
-        assert metadata.global_indexes == [
-            31,
-            30,
-            29,
-            28,
-            27,
-            26,
-            25,
-            24,
-            23,
-            22,
-            21,
-            20,
-            19,
-            18,
-            17,
-            16,
-        ]
+        assert clear_meta.global_indexes == list(range(gbs * num_n_samples))
+        assert [sample.fields for sample in clear_meta.samples] == [{}] * (gbs * num_n_samples)
+        print("✓ Clear metadata correct")
 
-    # TODO: Test case where multiple clients concurrently read datameta from a single controller,
-    #  and each client receives the correct response
+        # Test clear
+        ray.get(tq_controller.clear.remote(partition_id))
+        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id))
+        assert partition_index_range == set()
+        assert torch.all(partition.production_status == 0)
+        assert torch.all(partition.consumption_status["generate_sequences"] == 0)
+        print("✓ Clear correct")

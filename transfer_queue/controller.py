@@ -1006,7 +1006,7 @@ class TransferQueueController:
                     production_status=production_status,
                 )
 
-            # TODO: (baichao) SampleMeta中的global_step替换成partition_id
+            # TODO: (baichao) 确认是否需要将SampleMeta中的global_step替换成partition_id
             sample = SampleMeta(
                 partition_id=partition_id,
                 global_index=global_index,
