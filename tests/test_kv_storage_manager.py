@@ -60,8 +60,8 @@ class Test(unittest.TestCase):
     #     self.sm = YuanrongStorageManager(self.cfg)
 
     def test_generate_keys(self):
-        """测试 _generate_yr_keys 生成正确的 key 列表"""
-        keys = KVStorageManager._generate_yr_keys(self.metadata)
+        """测试 _generate_keys 生成正确的 key 列表"""
+        keys = KVStorageManager._generate_keys(self.metadata)
         expected = [
             '8@label', '9@label', '10@label',
             '8@mask', '9@mask', '10@mask',
