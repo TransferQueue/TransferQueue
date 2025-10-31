@@ -39,6 +39,7 @@ class GRPOSampler(BaseSampler):
         Args:
             num_n_samples: Number of samples per prompt that must be ready together
         """
+        super().__init__()
         if num_n_samples < 1:
             raise ValueError(f"num_n_samples must be >= 1, got {num_n_samples}")
         self.num_n_samples = num_n_samples

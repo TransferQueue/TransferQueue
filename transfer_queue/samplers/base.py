@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Callable, Optional
 
 
 class BaseSampler(ABC):
@@ -25,7 +25,20 @@ class BaseSampler(ABC):
 
     Similar to torchrl.data.ReplayBuffer's sampler interface, samplers can be
     passed as either instances or callables that construct sampler instances.
+    
+    Samplers can be stateless or stateful:
+    - Stateless samplers (e.g., SequentialSampler, GRPOSampler) operate independently on each request
+    - Stateful samplers (e.g., DPSampler) maintain state across multiple requests and handle
+      coordinated data access patterns, including their own consumption tracking
     """
+    
+    def __init__(self):
+        """Initialize the base sampler.
+        
+        Subclasses should call super().__init__() to initialize consumption tracking.
+        """
+        # Consumption state managed by sampler: {task_name: set of consumed indices}
+        self._consumption_state: dict[str, set[int]] = {}
 
     @abstractmethod
     def sample(
@@ -76,6 +89,99 @@ class BaseSampler(ABC):
             List of indices that are ready for consumption according to sampler logic
         """
         pass
+
+    def is_stateful(self) -> bool:
+        """Check if this sampler requires state management.
+        
+        Stateful samplers need to coordinate data access across multiple processes
+        or requests. The controller will delegate state management to the sampler.
+        
+        Returns:
+            True if the sampler is stateful, False otherwise (default)
+        """
+        return False
+
+    def get_or_create_batch(
+        self,
+        task_name: str,
+        sampler_params: dict[str, Any],
+        scan_ready_fn: Callable[[], list[int]],
+        **kwargs: Any,
+    ) -> tuple[list[int], Optional[list[int]]]:
+        """Get or create a batch with state management for stateful samplers.
+        
+        This method is called for stateful samplers to handle coordinated data access.
+        Stateless samplers can leave this unimplemented.
+        
+        Args:
+            task_name: Name of the consumer task
+            sampler_params: Parameters passed from the client
+            scan_ready_fn: Function to scan for ready indices (production status already checked)
+            **kwargs: Additional context (batch_size, data_fields, global_step, etc.)
+        
+        Returns:
+            Tuple of (batch_indices, indices_to_mark_consumed)
+            - batch_indices: List of indices for this request
+            - indices_to_mark_consumed: List of indices to mark as consumed, or None if not ready yet
+        
+        Raises:
+            NotImplementedError: If called on a stateless sampler
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} is not stateful. "
+            "Override is_stateful() to return True and implement get_or_create_batch()."
+        )
+    
+    def mark_consumed(self, task_name: str, indices: list[int]) -> None:
+        """Mark indices as consumed for a specific task.
+        
+        This is called by the sampler internally to track its own consumption state.
+        
+        Args:
+            task_name: Name of the consumer task
+            indices: List of indices to mark as consumed
+        """
+        if task_name not in self._consumption_state:
+            self._consumption_state[task_name] = set()
+        self._consumption_state[task_name].update(indices)
+    
+    def is_consumed(self, task_name: str, index: int) -> bool:
+        """Check if an index has been consumed for a specific task.
+        
+        Args:
+            task_name: Name of the consumer task
+            index: Index to check
+            
+        Returns:
+            True if the index has been consumed, False otherwise
+        """
+        return task_name in self._consumption_state and index in self._consumption_state[task_name]
+    
+    def get_consumed_indices(self, task_name: str) -> set[int]:
+        """Get all consumed indices for a specific task.
+        
+        Args:
+            task_name: Name of the consumer task
+            
+        Returns:
+            Set of consumed indices
+        """
+        return self._consumption_state.get(task_name, set())
+    
+    def clear_consumed(self, task_name: str, indices: Optional[list[int]] = None) -> None:
+        """Clear consumption state for specific indices or all indices of a task.
+        
+        Args:
+            task_name: Name of the consumer task
+            indices: Optional list of specific indices to clear. If None, clear all.
+        """
+        if task_name not in self._consumption_state:
+            return
+        
+        if indices is None:
+            self._consumption_state[task_name].clear()
+        else:
+            self._consumption_state[task_name].difference_update(indices)
 
     def __call__(self, *args: Any, **kwargs: Any) -> list[int]:
         """Allow samplers to be called directly."""

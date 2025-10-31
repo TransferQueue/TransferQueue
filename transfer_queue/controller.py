@@ -104,10 +104,10 @@ class TransferQueueController:
 
         # Task-specific samplers (can be registered per task)
         self._task_samplers: dict[str, BaseSampler] = {}
-
-        # DP group state management: {task_name: {dp_group_id: (indices, consumed_ranks)}}
-        # This tracks which data each DP group is consuming and which ranks have consumed it
-        self._dp_group_state: dict[str, dict[str, tuple[list[int], set[int]]]] = {}
+        
+        # Dynamically created stateful samplers (e.g., for DP sampling via sampler_params)
+        # Key: task_name, Value: sampler instance
+        self._dynamic_samplers: dict[str, BaseSampler] = {}
 
         self._connected_storage_managers: set[str] = set()
         self._start_process_handshake()
@@ -149,113 +149,6 @@ class TransferQueueController:
         if task_name and task_name in self._task_samplers:
             return self._task_samplers[task_name]
         return self._default_sampler
-
-    def _get_or_create_dp_batch(
-        self,
-        task_name: str,
-        dp_group_id: str,
-        dp_rank: int,
-        dp_size: int,
-        data_fields: list[str],
-        global_step: int,
-        batch_size: int,
-        get_n_samples: bool,
-        sampler: BaseSampler,
-        sampler_params: dict[str, Any],
-    ) -> list[int]:
-        """Get or create a batch for DP group, ensuring all ranks in the group get the same data.
-
-        This method implements stateful DP sampling where:
-        1. The first rank in a DP group to request data will trigger batch creation
-        2. Subsequent ranks in the same group will get the same batch
-        3. Data is only marked as consumed after all ranks have retrieved it
-
-        Args:
-            task_name: Name of the consumer task
-            dp_group_id: Unique identifier for the DP group
-            dp_rank: Rank of this process within the DP domain (not DP group)
-            dp_size: Total number of DP groups
-            data_fields: List of field names to check
-            global_step: Global step to scan
-            batch_size: Number of samples per DP group
-            get_n_samples: Whether to return n_samples as groups
-            sampler: Sampler instance to use
-            sampler_params: Parameters to pass to sampler
-
-        Returns:
-            List of global indices for this DP rank
-        """
-        # Initialize task state if needed
-        if task_name not in self._dp_group_state:
-            self._dp_group_state[task_name] = {}
-
-        # Check if this DP group already has cached data
-        if dp_group_id in self._dp_group_state[task_name]:
-            cached_indices, consumed_ranks = self._dp_group_state[task_name][dp_group_id]
-            
-            # Mark this rank as having consumed the data
-            consumed_ranks.add(dp_rank)
-            
-            # If all ranks in the DP domain have consumed, mark data as consumed and cleanup
-            # Note: We assume all ranks in the DP domain will request data
-            if len(consumed_ranks) >= dp_size:
-                consumer_status = self._get_consumption_status(task_name)
-                consumer_status[cached_indices] = 1
-                del self._dp_group_state[task_name][dp_group_id]
-                logger.info(
-                    f"All {dp_size} ranks consumed data for DP group {dp_group_id}, "
-                    f"marking indices {cached_indices[:5]}... as consumed"
-                )
-            
-            # Return the appropriate slice for this DP rank
-            # Each rank gets batch_size samples
-            start_idx = (dp_rank % dp_size) * batch_size
-            end_idx = start_idx + batch_size
-            return cached_indices[start_idx:end_idx]
-        
-        # This is the first rank in the DP group to request data
-        # Scan for ready data
-        start_time = time.time()
-        while True:
-            ready_for_consume_idx = self._scan_data_status(data_fields, global_step, task_name, get_n_samples)
-
-            # Need enough data for all DP groups
-            total_required = batch_size * dp_size
-            if len(ready_for_consume_idx) >= total_required:
-                break
-
-            if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
-                raise TimeoutError(
-                    f"Timeout while waiting for sufficient data for DP sampling. "
-                    f"Required: {total_required} ({batch_size} × {dp_size} groups), "
-                    f"Available: {len(ready_for_consume_idx)}"
-                )
-
-            logger.warning(
-                f"Insufficient data for DP sampling. Required: {total_required}, "
-                f"Available: {len(ready_for_consume_idx)}. Retrying in "
-                f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
-            )
-            time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
-
-        # Use sampler to select enough data for all DP groups
-        # The sampler will partition the data appropriately
-        total_batch_size = batch_size * dp_size
-        all_indices = sampler.sample(ready_for_consume_idx, total_batch_size, **sampler_params)
-        
-        # Cache the data for this DP group
-        consumed_ranks = {dp_rank}  # This rank has now consumed
-        self._dp_group_state[task_name][dp_group_id] = (all_indices, consumed_ranks)
-        
-        logger.info(
-            f"Created DP batch for group {dp_group_id}: {len(all_indices)} total indices, "
-            f"rank {dp_rank} is first consumer"
-        )
-        
-        # Return the appropriate slice for this DP rank
-        start_idx = (dp_rank % dp_size) * batch_size
-        end_idx = start_idx + batch_size
-        return all_indices[start_idx:end_idx]
 
     def _get_consumption_status(self, task_name: str) -> torch.Tensor:
         """
@@ -433,33 +326,56 @@ class TransferQueueController:
         assert task_name is not None
         # Get the appropriate sampler for this task
         sampler = self._get_sampler(task_name)
-        
-        # Extract DP parameters if provided
         sampler_params = sampler_params or {}
-        dp_rank = sampler_params.get("dp_rank")
-        dp_size = sampler_params.get("dp_size")
-        dp_group_id = sampler_params.get("dp_group_id")  # Unique ID for this DP group
         
-        # Check if this is DP sampling
-        is_dp_sampling = dp_rank is not None and dp_size is not None
-
+        # Check if DP sampling is requested via sampler_params
+        # If so, use a cached DPSampler for this task (or create one)
+        if "dp_rank" in sampler_params and "dp_size" in sampler_params and not sampler.is_stateful():
+            from transfer_queue.samplers import DPSampler
+            # Use or create a cached DPSampler for this task
+            if task_name not in self._dynamic_samplers:
+                self._dynamic_samplers[task_name] = DPSampler()
+            sampler = self._dynamic_samplers[task_name]
+        
+        # Track which indices to mark as consumed
+        indices_to_mark_consumed = None
+        
         if mode == "fetch":
-            # Check if we have cached data for this DP group
-            if is_dp_sampling and dp_group_id:
-                batch_global_indexes = self._get_or_create_dp_batch(
+            if sampler.is_stateful():
+                # Stateful sampler handles its own state management
+                # Create a closure to scan for ready data (with retry logic)
+                def scan_ready_fn():
+                    start_time = time.time()
+                    while True:
+                        ready_idx = self._scan_data_status(data_fields, global_step, task_name, get_n_samples)
+                        if len(ready_idx) >= batch_size:
+                            return ready_idx
+                        
+                        if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
+                            raise TimeoutError(
+                                f"Timeout while waiting for sufficient data. "
+                                f"Required: {batch_size}, Available: {len(ready_idx)}"
+                            )
+                        
+                        logger.warning(
+                            f"Insufficient data available. Required: {batch_size}, "
+                            f"Available: {len(ready_idx)}. Retrying in "
+                            f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
+                        )
+                        time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
+                
+                # Delegate to sampler's state management
+                batch_global_indexes, indices_to_mark_consumed = sampler.get_or_create_batch(
                     task_name=task_name,
-                    dp_group_id=dp_group_id,
-                    dp_rank=dp_rank,
-                    dp_size=dp_size,
+                    sampler_params=sampler_params,
+                    scan_ready_fn=scan_ready_fn,
+                    batch_size=batch_size,
                     data_fields=data_fields,
                     global_step=global_step,
-                    batch_size=batch_size,
                     get_n_samples=get_n_samples,
-                    sampler=sampler,
-                    sampler_params=sampler_params,
                 )
             else:
-                # Standard non-DP sampling
+                # Stateless sampler - standard sampling
                 start_time = time.time()
                 while True:
                     ready_for_consume_idx = self._scan_data_status(data_fields, global_step, task_name, get_n_samples)
@@ -485,18 +401,20 @@ class TransferQueueController:
                 batch_global_indexes = sampler.sample(
                     ready_for_consume_idx, batch_size, **sampler_params
                 )
+                # For stateless samplers, mark consumed immediately
+                indices_to_mark_consumed = batch_global_indexes
         elif mode == "force_fetch":
             start_idx, end_idx = self._step_to_global_index_range(global_step)
             consumer_status = self._get_consumption_status(task_name)
             not_consumed_idx = [i for i in range(start_idx, end_idx) if consumer_status[i] == 0]
             # Use sampler to select the batch from not consumed indices
             batch_global_indexes = sampler.sample(not_consumed_idx, batch_size, **sampler_params)
+            indices_to_mark_consumed = batch_global_indexes
 
-        # Mark this batch of data as consumed
-        # For DP sampling, only mark as consumed after all ranks in the group have consumed
-        if not is_dp_sampling or not dp_group_id:
+        # Mark indices as consumed if needed
+        if indices_to_mark_consumed is not None:
             consumer_status = self._get_consumption_status(task_name)
-            consumer_status[batch_global_indexes] = 1
+            consumer_status[indices_to_mark_consumed] = 1
         # Package into metadata
         metadata = self._generate_batch_meta(global_step, batch_global_indexes, data_fields, mode)
         logger.debug(f"_get_metadata: {metadata}")

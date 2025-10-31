@@ -25,6 +25,10 @@ class SequentialSampler(BaseSampler):
     This sampler selects samples in sequential order from the ready indices.
     It is the default sampler and preserves backward compatibility.
     """
+    
+    def __init__(self):
+        """Initialize SequentialSampler."""
+        super().__init__()
 
     def sample(
         self,
