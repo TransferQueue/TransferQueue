@@ -276,12 +276,11 @@ def test_data_partition_status_advanced():
     print("✓ Statistics generation comprehensive")
 
     # Test 6: Data clearing functionality
-    initial_production_sum = partition.production_status.sum().item()
     initial_consumption_sum = sum(t.sum().item() for t in partition.consumption_status.values())
 
     # Clear only production data
     success = partition.clear_data(list(range(4)), clear_consumption=False)
-    assert success == True
+    assert success
     assert partition.production_status[:4, :].sum().item() == 0
 
     # Consumption data should remain
@@ -404,6 +403,8 @@ def test_backward_compatibility():
             # These should return reasonable values or None
             dtype = partition.get_field_dtype(sample_idx, field)
             shape = partition.get_field_shape(sample_idx, field)
+            assert dtype is None
+            assert shape is None
             # Should not crash even if metadata wasn't provided
 
     print("✓ Metadata access patterns preserved")

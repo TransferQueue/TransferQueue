@@ -461,8 +461,8 @@ class DataPartitionStatus:
             return []
 
         # Check if all requested fields are registered
-        for field in field_names:
-            if field not in self.field_name_mapping:
+        for field_name in field_names:
+            if field_name not in self.field_name_mapping:
                 return []
 
         # Create row mask
@@ -518,8 +518,8 @@ class DataPartitionStatus:
             return None, None
 
         # Check if all requested fields are registered
-        for field in field_names:
-            if field not in self.field_name_mapping:
+        for field_name in field_names:
+            if field_name not in self.field_name_mapping:
                 return None, None
 
         # Create row mask
@@ -639,7 +639,7 @@ class TransferQueueController:
         self.partitions: dict[str, DataPartitionStatus] = {}  # partition_id -> DataPartitionStatus
 
         # Partition GlobalIndex management
-        self.index_manager = PartitionIndexManager() # partition_id -> global_indexes
+        self.index_manager = PartitionIndexManager()  # partition_id -> global_indexes
 
         # Connected storage managers tracking
         self._connected_storage_managers: set[str] = set()
@@ -747,7 +747,8 @@ class TransferQueueController:
         success = partition.update_production_status(sample_indices, field_names, dtypes, shapes)
         if success:
             logger.debug(
-                f"Updated production status for partition {partition_id}: samples={sample_indices}, fields={field_names}"
+                f"Updated production status for partition {partition_id}: samples={sample_indices}, "
+                f"fields={field_names}"
             )
         return success
 
@@ -800,7 +801,8 @@ class TransferQueueController:
         mode: str = "fetch",
         task_name: str | None = None,
         batch_size: int | None = None,
-        get_n_samples=False,  # TODO: get_n_samples作用在哪个步骤？insert模式设置了get_n_samples=True，但是没看到有对应的处理逻辑
+        # TODO: get_n_samples作用在哪个步骤？insert模式设置了get_n_samples=True，但是没看到有对应的处理逻辑
+        get_n_samples=False,
         *args,
         **kwargs,
     ) -> BatchMeta:
@@ -938,7 +940,12 @@ class TransferQueueController:
     # ==================== Metadata Generation API ====================
 
     def generate_batch_meta(
-        self, partition_id: str, batch_global_indices: list[int], data_fields: list[str], task_name: str, mode: str = "fetch"
+        self,
+        partition_id: str,
+        batch_global_indices: list[int],
+        data_fields: list[str],
+        task_name: str,
+        mode: str = "fetch"
     ) -> BatchMeta:
         """
         Generate BatchMeta for specific samples in a partition.
@@ -1163,7 +1170,7 @@ class TransferQueueController:
                         get_n_samples=params.get("get_n_samples", False),
                     )
                 else:
-                    raise ValueError(f"Please set the correct partition_id, for example: train_$global_step")
+                    raise ValueError("Please set the correct partition_id, for example: train_$global_step")
 
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.GET_META_RESPONSE,
@@ -1214,7 +1221,7 @@ class TransferQueueController:
                     else:
                         consumed = False
                 else:
-                    raise ValueError(f"Please set the correct partition_id, for example: train_$global_step")
+                    raise ValueError("Please set the correct partition_id, for example: train_$global_step")
 
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.CONSUMPTION_RESPONSE,

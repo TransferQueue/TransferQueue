@@ -52,7 +52,6 @@ class TestTransferQueueController:
     def test_controller_with_single_partition(self, ray_setup):
         gbs = 8
         num_n_samples = 4
-        seq_len = 16
 
         tq_controller = TransferQueueController.remote()
 
@@ -71,27 +70,18 @@ class TestTransferQueueController:
 
         assert metadata.global_indexes == list(range(gbs * num_n_samples))
         assert metadata.samples[0].partition_id == "train_0"
-        assert sum(
-            [int(sample.fields.get("prompt_ids").production_status) for sample in metadata.samples]
-        ) == int(ProductionStatus.NOT_PRODUCED)
-        assert sum(
-            [int(sample.fields.get("attention_mask").production_status) for sample in metadata.samples]
-        ) == int(ProductionStatus.NOT_PRODUCED)
+        assert sum([int(sample.fields.get("prompt_ids").production_status) for sample in metadata.samples]) == int(
+            ProductionStatus.NOT_PRODUCED
+        )
+        assert sum([int(sample.fields.get("attention_mask").production_status) for sample in metadata.samples]) == int(
+            ProductionStatus.NOT_PRODUCED
+        )
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id))
         assert partition_index_range == set(range(gbs * num_n_samples))
 
         print("✓ Initial get metadata correct")
 
         # Test update production status
-        original_prompts = torch.randn(gbs, seq_len)
-        prompts_repeated = torch.repeat_interleave(original_prompts, num_n_samples, dim=0)
-        original_attention_mask = torch.ones(gbs, seq_len)
-        attention_mask_repeated = torch.repeat_interleave(original_attention_mask, num_n_samples, dim=0)
-        input_batch = TensorDict(
-            {"prompt_ids": prompts_repeated, "attention_mask": attention_mask_repeated},
-            batch_size=prompts_repeated.size(0)
-        )
-
         success = ray.get(
             tq_controller.update_production_status.remote(
                 partition_id=partition_id,
@@ -99,17 +89,18 @@ class TestTransferQueueController:
                 field_names=metadata.field_names,
             )
         )
-        assert success == True
+        assert success
         partition = ray.get(tq_controller.get_partition.remote(partition_id))
         assert partition.production_status is not None
         assert partition.production_status.size(0) == gbs * num_n_samples
         assert partition.production_status.size(1) == TQ_INIT_FIELD_NUM
         assert torch.equal(
-            sum(partition.production_status[:, :len(data_fields)]), torch.Tensor([gbs*num_n_samples, gbs*num_n_samples])
+            sum(partition.production_status[:, :len(data_fields)]),
+            torch.Tensor([gbs*num_n_samples, gbs*num_n_samples]),
         )
         assert torch.equal(
             sum(partition.production_status[:, len(data_fields):]),
-            torch.zeros((1 * (TQ_INIT_FIELD_NUM - len(data_fields))))
+            torch.zeros(1 * (TQ_INIT_FIELD_NUM - len(data_fields))),
         )
 
         print(f"✓ Updated production status for partition {partition_id}")
