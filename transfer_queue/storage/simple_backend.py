@@ -101,7 +101,7 @@ class StorageUnitData:
                         result[field] = NonTensorStack(*gathered_items)
 
         # Explicit batch size for stability
-        bs = 0 if not fields or not local_indexes else len(local_indexes)
+        batch_size = 0 if not fields or not local_indexes else len(local_indexes)
         return TensorDict(result, batch_size=bs)
 
     def put_data(self, field_data: TensorDict[str, Any], local_indexes: list[int]) -> None:
