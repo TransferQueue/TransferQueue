@@ -59,7 +59,7 @@ class Test(unittest.TestCase):
     # def test_create(self):
     #     self.sm = YuanrongStorageManager(self.cfg)
 
-    def test_generate_yr_keys(self):
+    def test_generate_keys(self):
         """测试 _generate_yr_keys 生成正确的 key 列表"""
         keys = KVStorageManager._generate_yr_keys(self.metadata)
         expected = [
@@ -70,13 +70,13 @@ class Test(unittest.TestCase):
         self.assertEqual(keys, expected)
         self.assertEqual(len(keys), 9)  # 3 fields * 3 indexes
 
-    def test_generate_yr_values(self):
+    def test_generate_values(self):
         """测试 _generate_yr_values 按 field-major 扁平化 tensor"""
         values = KVStorageManager._generate_values(self.data)
         expected_length = len(self.field_names) * len(self.global_indexes)  # 9
         self.assertEqual(len(values), expected_length)
 
-    def test_generate_yr_values_type_check(self):
+    def test_generate_values_type_check(self):
         """测试 _generate_yr_values 对非 tensor 输入抛出异常"""
         bad_data = TensorDict({
             "text": torch.tensor([1, 2]),
