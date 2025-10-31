@@ -13,7 +13,7 @@
 # limitations under the License.
 from abc import ABC, abstractmethod
 from torch import Tensor
-from typing import Type
+
 class TransferQueueStorageClient(ABC):
     """
     Abstract base class for storage client.
@@ -73,6 +73,6 @@ class StorageClientFactory:
 # TODO: Dynamically register the storage client class based on the configuration
 # Register storage clients
 try:
-    from .yuanrong_client import YRStorageClient
+    import transfer_queue.storage.clients.yuanrong_client
 except ImportError:
     pass
