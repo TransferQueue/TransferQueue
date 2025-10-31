@@ -1,6 +1,7 @@
 import unittest
 import torch
 from transfer_queue.storage.clients.factory import StorageClientFactory
+from transfer_queue.storage.clients.yuanrong_client import YRStorageClient
 
 class Test(unittest.TestCase):
     def setUp(self):
