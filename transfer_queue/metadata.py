@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import dataclasses
+import itertools
+from collections import ChainMap
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -216,9 +218,12 @@ class BatchMeta:
             set_all_ready (bool): If True, set all production_status to READY_FOR_CONSUME. Default is True.
         """
         fields = _extract_field_metas(tensor_dict, set_all_ready)
-        if len(fields) > 0:
-            for idx, sample in enumerate(self.samples):
-                sample.add_fields(fields=fields[idx])
+
+        if fields:
+            if len(self.samples) != len(fields):
+                raise ValueError(f"add_fields length mismatch: samples={len(self.samples)} vs fields={len(fields)}")
+        for idx, sample in enumerate(self.samples):
+            sample.add_fields(fields=fields[idx])
 
             # Update batch-level fields cache
             object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
@@ -290,13 +295,10 @@ class BatchMeta:
                     raise ValueError("Error: Field names do not match for concatenation.")
 
         # Combine all samples
-        all_samples = []
-        for chunk in data:
-            all_samples.extend(chunk.samples)
+        all_samples = list(itertools.chain.from_iterable(chunk.samples for chunk in data))
         # Merge all extra_info dictionaries from the chunks
-        merged_extra_info = {}
-        for chunk in data:
-            merged_extra_info.update(chunk.extra_info)
+        merged_extra_info = dict(ChainMap(*(chunk.extra_info for chunk in data)))
+
         return BatchMeta(samples=all_samples, extra_info=merged_extra_info)
 
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
@@ -438,20 +440,21 @@ def _extract_field_metas(tensor_dict: TensorDict, set_all_ready: bool = True) ->
     Returns:
         all_fields (list[dict[str, FieldMeta]]): A list of dictionaries containing field metadata.
     """
-    all_fields = []
     batch_size = tensor_dict.batch_size[0]
-    for idx in range(batch_size):
-        fields = {}
-        sample = tensor_dict[idx]
-        for name, value in sample.items():
-            fields[name] = FieldMeta(
+
+    production_status = ProductionStatus.READY_FOR_CONSUME if set_all_ready else ProductionStatus.NOT_PRODUCED
+
+    all_fields = [
+        {
+            name: FieldMeta(
                 name=name,
-                dtype=value.dtype if hasattr(value, "dtype") else None,
-                shape=value.shape if hasattr(value, "shape") else None,
-                production_status=ProductionStatus.READY_FOR_CONSUME
-                if set_all_ready
-                else ProductionStatus.NOT_PRODUCED,
+                dtype=getattr(value, "dtype", None),
+                shape=getattr(value, "shape", None),
+                production_status=production_status,
             )
-        all_fields.append(fields)
+            for name, value in tensor_dict[idx].items()
+        }
+        for idx in range(batch_size)
+    ]
 
     return all_fields

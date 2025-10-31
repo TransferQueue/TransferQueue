@@ -15,6 +15,7 @@
 import logging
 import os
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field
 from threading import Thread
 from typing import Any, Optional
@@ -58,6 +59,137 @@ TQ_FIELD_MIN_EXPANSION_SIZE = int(
     os.environ.get("TQ_FIELD_MIN_EXPANSION_SIZE", 5)
 )  # Minimum expansion size for fields (columns)
 TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
+
+
+class PartitionIndexManager:
+    """
+    管理分区与全局索引的映射关系，负责索引的分配和复用
+    修复版本：解决了索引分配可能导致的覆盖问题
+    """
+
+    def __init__(self):
+        # 记录每个分区使用的global_index集合
+        self.partition_to_indexes = defaultdict(set)
+
+        # 可复用的global_index池 - 使用列表存储
+        self.reusable_indexes = []
+
+        # 全局索引计数器，用于分配新的索引
+        self.global_index_counter = 0
+
+        # 跟踪所有已分配的索引（活跃的 + 可复用的）
+        self.allocated_indexes = set()
+
+    def allocate_indexes(self, partition_id, count=1):
+        """
+        为指定分区分配global_index
+        优先从可复用池中获取，不足时分配新的索引
+
+        修复点：
+        1. 确保新分配的索引不会与现有活跃索引冲突
+        2. 维护allocated_indexes集合跟踪所有已分配的索引
+        3. 智能global_index_counter始终指向最大已分配索引+1
+
+        Args:
+            partition_id: 分区ID
+            count: 需要分配的索引数量
+
+        Returns:
+            list: 分配的global_index列表
+        """
+        indexes = []
+
+        # 从可复用池中获取索引
+        if self.reusable_indexes and count > 0:
+            # 计算需要从可复用池获取的索引数量
+            num_reuse = min(count, len(self.reusable_indexes))
+
+            # 使用切片操作一次性获取多个元素（从开头获取，FIFO原则）
+            indexes.extend(self.reusable_indexes[:num_reuse])
+            del self.reusable_indexes[:num_reuse]
+
+            # 从allocated_indexes中移除这些索引（它们将重新变为活跃状态）
+            for idx in indexes:
+                self.allocated_indexes.discard(idx)
+
+        # 如果可复用池中的索引不足，分配新的索引
+        if len(indexes) < count:
+            # 确保新分配的索引不会与现有索引冲突
+            needed = count - len(indexes)
+            new_indexes = []
+
+            while len(new_indexes) < needed:
+                # 检查当前计数器指向的索引是否已被使用
+                if self.global_index_counter not in self.allocated_indexes:
+                    new_indexes.append(self.global_index_counter)
+                    self.allocated_indexes.add(self.global_index_counter)
+                    self.global_index_counter += 1
+                else:
+                    # 如果已被使用，递增计数器直到找到可用的索引
+                    self.global_index_counter += 1
+
+            indexes.extend(new_indexes)
+
+        # 记录分区与索引的关系
+        self.partition_to_indexes[partition_id].update(indexes)
+
+        return indexes
+
+    def release_indexes(self, partition_id):
+        """
+        释放指定分区的所有global_index，将其加入可复用池
+
+        修复点：
+        1. 释放的索引添加到allocated_indexes集合
+        2. 不修改global_index_counter，确保其始终指向最大已分配索引+1
+
+        Args:
+            partition_id: 分区ID
+
+        Returns:
+            list: 释放的global_index列表
+        """
+        if partition_id in self.partition_to_indexes:
+            indexes = self.partition_to_indexes.pop(partition_id)
+
+            # 将释放的索引添加到可复用池
+            self.reusable_indexes.extend(indexes)
+
+            # 将释放的索引添加到allocated_indexes集合
+            self.allocated_indexes.update(indexes)
+
+            return indexes
+        return []
+
+    def get_indexes_for_partition(self, partition_id):
+        """
+        获取指定分区的所有global_index
+
+        Args:
+            partition_id: 分区ID
+
+        Returns:
+            set: 该分区的global_index集合
+        """
+        return self.partition_to_indexes.get(partition_id, set()).copy()
+
+    def get_allocated_indexes(self):
+        """
+        获取所有已分配的索引（活跃的 + 可复用的）
+
+        Returns:
+            set: 所有已分配的索引
+        """
+        # 活跃索引
+        active_indexes = set()
+        for indexes in self.partition_to_indexes.values():
+            active_indexes.update(indexes)
+
+        # 可复用索引
+        reusable_indexes = set(self.reusable_indexes)
+
+        # 返回所有已分配的索引
+        return active_indexes.union(reusable_indexes)
 
 
 @dataclass
@@ -208,10 +340,13 @@ class DataPartitionStatus:
         Returns:
             True if update was successful, False on error
         """
+        self.controller_id = f"DYNAMIC_TQ_CONTROLLER_{uuid4().hex[:8]}"
         try:
             # Determine required capacity
-            max_sample_idx = max(sample_indices) if sample_indices else -1
-            required_samples = max_sample_idx + 1
+            num_samples = len(sample_indices) if sample_indices else -1
+            # TODO: 确认为什么这里要+1
+            # required_samples = num_samples + 1
+            required_samples = num_samples
 
             # Register new fields if needed
             new_fields = [field for field in field_names if field not in self.field_name_mapping]
@@ -463,15 +598,15 @@ class DataPartitionStatus:
 
         return stats
 
-    def clear_data(self, clear_consumption: bool = True) -> bool:
+    def clear_data(self, global_indexes_range: list[int], clear_consumption: bool = True) -> bool:
         """Clear all production and optionally consumption data."""
         try:
             if self.production_status is not None:
-                self.production_status.zero_()
+                self.production_status[global_indexes_range, :] = 0
 
             if clear_consumption:
                 for consumption_tensor in self.consumption_status.values():
-                    consumption_tensor.zero_()
+                    consumption_tensor[global_indexes_range] = 0
 
             return True
         except Exception as e:
@@ -505,6 +640,9 @@ class TransferQueueController:
 
         # Partition management
         self.partitions: dict[str, DataPartitionStatus] = {}  # partition_id -> DataPartitionStatus
+
+        # Partition GlobalIndex management
+        self.index_manager = PartitionIndexManager() # partition_id -> global_indexes
 
         # Connected storage managers tracking
         self._connected_storage_managers: set[str] = set()
@@ -575,6 +713,10 @@ class TransferQueueController:
             logger.info(f"Deleted partition {partition_id}")
             return True
         return False
+
+    # ==================== Partition Index Management API ====================
+    def get_partition_index_range(self, partition) -> set:
+        return self.index_manager.get_indexes_for_partition(partition)
 
     # ==================== Data Production API ====================
 
@@ -654,10 +796,97 @@ class TransferQueueController:
 
         return partition.generate_data_status_mask(field_names, task_name, sample_filter)
 
+    def get_metadata(
+        self,
+        data_fields: list[str],
+        partition_id: str,
+        mode: str = "fetch",
+        task_name: str | None = None,
+        batch_size: int | None = None,
+        get_n_samples=False,  # TODO: get_n_samples作用在哪个步骤？insert模式设置了get_n_samples=True，但是没看到有对应的处理逻辑
+        *args,
+        **kwargs,
+    ) -> BatchMeta:
+        """
+        Retrieve metadata with support for three modes.
+
+        Args:
+            data_fields: List of field names to include in metadata
+            batch_size: Number of samples to retrieve
+            global_step: Global step for which to retrieve metadata
+            mode: Operation mode - 'insert', 'fetch', or 'force_fetch'
+                - mode="insert": Insert metadata for new rows (without checking data status)
+                - mode="fetch": Retrieve metadata for ready data (check data status and sample)
+                - mode="force_fetch": Directly return metadata (without checking data status)
+            task_name: Name of the consumer task (required for fetch modes)
+            get_n_samples: Whether to retrieve n_samples as groups
+            *args: Additional positional arguments
+            **kwargs: Additional keyword arguments
+
+        Returns:
+            BatchMeta object containing the requested metadata
+
+        Raises:
+            TimeoutError: If waiting for sufficient data times out in fetch mode
+        """
+        if partition_id not in self.partitions:
+            self.create_partition(partition_id)
+
+        if mode == "insert":
+            # TODO: 区分初次put_data和clear_meta获取batch_global_indices的方法
+            if data_fields:
+                # 初次put_data时，调用insert模式的get_metadata
+                batch_global_indices = self.index_manager.allocate_indexes(partition_id, count=batch_size)
+            else:
+                # clear metadata时调用get_metadata传入的data_fields为空
+                batch_global_indices = self.index_manager.get_indexes_for_partition(partition_id)
+            return self.generate_batch_meta(partition_id, batch_global_indices, data_fields, task_name, mode)
+
+        assert task_name is not None
+        if mode == "fetch":
+            # Find consumable samples within current batch and package into BatchMeta when reading
+
+            start_time = time.time()
+            while True:
+                ready_for_consume_idx = self.scan_data_status(partition_id, data_fields, task_name, batch_size)
+
+                if len(ready_for_consume_idx) >= batch_size:
+                    break
+
+                if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
+                    raise TimeoutError(
+                        f"Timeout while waiting for sufficient data. "
+                        f"Required: {batch_size}, Available: {len(ready_for_consume_idx)}"
+                    )
+
+                logger.warning(
+                    f"Insufficient data available. Required: {batch_size}, "
+                    f"Available: {len(ready_for_consume_idx)}. Retrying in "
+                    f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
+                )
+                time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
+            logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
+            batch_global_indices = ready_for_consume_idx
+        elif mode == "force_fetch":
+            global_indexes_range = self.index_manager.get_indexes_for_partition(partition_id)
+            consumer_status = self.get_consumption_status(partition_id, task_name)
+            not_consumed_idx = [i for i in global_indexes_range if consumer_status[i] == 0]
+            batch_global_indices = not_consumed_idx
+
+        # # Mark this batch of data as consumed
+        # consumer_status = self.get_consumption_status(partition_id, task_name)
+        # consumer_status[batch_global_indices] = 1
+
+        # Package into metadata
+        metadata = self.generate_batch_meta(partition_id, batch_global_indices, data_fields, task_name, mode)
+        logger.debug(f"get_metadata: {metadata}")
+
+        return metadata
+
     def scan_data_status(
         self,
         partition_id: str,
-        field_names: list[str],
+        data_fields: list[str],
         task_name: str,
         batch_size: int,
         sample_filter: Optional[list[int]] = None,
@@ -669,7 +898,7 @@ class TransferQueueController:
 
         Args:
             partition_id: ID of the partition
-            field_names: List of required field names
+            data_fields: List of required field names
             task_name: Name of the consumer task
             batch_size: Number of samples needed
             sample_filter: Optional list of specific sample indices to consider
@@ -692,7 +921,7 @@ class TransferQueueController:
                 continue
 
             # Use partition's own scanning method
-            ready_sample_indices = partition.scan_data_status(field_names, task_name, sample_filter)
+            ready_sample_indices = partition.scan_data_status(data_fields, task_name, sample_filter)
 
             if len(ready_sample_indices) >= batch_size:
                 return ready_sample_indices[:batch_size]
@@ -712,7 +941,7 @@ class TransferQueueController:
     # ==================== Metadata Generation API ====================
 
     def generate_batch_meta(
-        self, partition_id: str, sample_indices: list[int], field_names: list[str], task_name: str, mode: str = "fetch"
+        self, partition_id: str, batch_global_indices: list[int], data_fields: list[str], task_name: str, mode: str = "fetch"
     ) -> BatchMeta:
         """
         Generate BatchMeta for specific samples in a partition.
@@ -737,34 +966,34 @@ class TransferQueueController:
         if mode not in ["fetch", "insert", "force_fetch"]:
             raise ValueError(f"Invalid mode: {mode}")
 
-        # Mark samples as consumed if in fetch mode
-        if mode == "fetch":
-            partition.mark_consumed(task_name, sample_indices)
+        # Mark samples as consumed if in fetch or force_fetch mode
+        if mode in ["fetch", "force_fetch"]:
+            partition.mark_consumed(task_name, batch_global_indices)
 
         # Generate sample metadata
         samples = []
-        for sample_idx in sample_indices:
+        for global_index in batch_global_indices:
             fields = {}
-            for field_name in field_names:
+            for field_name in data_fields:
                 # Determine production status
                 if mode == "fetch":
                     production_status = ProductionStatus.READY_FOR_CONSUME
-                    dtype = partition.get_field_dtype(sample_idx, field_name)
-                    shape = partition.get_field_shape(sample_idx, field_name)
+                    dtype = partition.get_field_dtype(global_index, field_name)
+                    shape = partition.get_field_shape(global_index, field_name)
                 elif mode == "insert":
                     production_status = ProductionStatus.NOT_PRODUCED
                     dtype = None
                     shape = None
                 elif mode == "force_fetch":
-                    field_idx = partition.field_name_mapping.get(field_name)
+                    field_index = partition.field_name_mapping.get(field_name)
                     if (
-                        field_idx is not None
+                        field_index is not None
                         and partition.production_status is not None
-                        and partition.production_status[sample_idx, field_idx] == 1
+                        and partition.production_status[global_index, field_index] == 1
                     ):
-                        production_status = ProductionStatus.READY_FOR_CONSUME
-                        dtype = partition.get_field_dtype(sample_idx, field_name)
-                        shape = partition.get_field_shape(sample_idx, field_name)
+                        production_status = ProductionStatus.NOT_PRODUCED
+                        dtype = partition.get_field_dtype(global_index, field_name)
+                        shape = partition.get_field_shape(global_index, field_name)
                     else:
                         production_status = ProductionStatus.NOT_PRODUCED
                         dtype = None
@@ -777,57 +1006,17 @@ class TransferQueueController:
                     production_status=production_status,
                 )
 
-            # Extract global step from partition_id if it follows the pattern "type@step"
-            global_step = 0
-            if "@" in partition_id:
-                try:
-                    global_step = int(partition_id.split("@")[1].split("_")[-1])
-                except (IndexError, ValueError):
-                    pass
-
+            # TODO: (baichao) SampleMeta中的global_step替换成partition_id
             sample = SampleMeta(
-                global_step=global_step,
-                global_index=sample_idx,
+                partition_id=partition_id,
+                global_index=global_index,
                 fields=fields,
             )
             samples.append(sample)
 
         return BatchMeta(samples=samples)
 
-    # ==================== Advanced Query API ====================
-
-    def query_partitions_by_pattern(self, pattern: str) -> list[str]:
-        """
-        Find partition IDs matching a specific pattern.
-
-        Args:
-            pattern: Pattern to match (supports wildcards like "train@*")
-
-        Returns:
-            List of matching partition IDs
-        """
-        import fnmatch
-
-        return [pid for pid in self.partitions.keys() if fnmatch.fnmatch(pid, pattern)]
-
-    def get_partition_statistics(self, partition_id: str) -> Optional[dict[str, Any]]:
-        """
-        Get detailed statistics for a partition.
-        Delegates to the partition's own method.
-
-        Args:
-            partition_id: ID of the partition
-
-        Returns:
-            Dictionary containing partition statistics, or None if partition doesn't exist
-        """
-        partition = self.get_partition(partition_id)
-        if not partition:
-            return None
-
-        return partition.get_statistics()
-
-    def clear_partition_data(self, partition_id: str, clear_consumption: bool = True) -> bool:
+    def clear(self, partition_id: str, clear_consumption: bool = True) -> bool:
         """
         Clear data for a specific partition.
 
@@ -842,69 +1031,12 @@ class TransferQueueController:
         if not partition:
             return False
 
-        success = partition.clear_data(clear_consumption)
+        global_indexes_range = list(self.index_manager.get_indexes_for_partition(partition_id))
+        success = partition.clear_data(global_indexes_range, clear_consumption)
+        self.index_manager.release_indexes(partition_id)
         if success:
             logger.info(f"Cleared data for partition {partition_id}")
         return success
-
-    # ==================== Legacy Compatibility API ====================
-    # These methods provide backward compatibility with the original controller interface
-
-    def _extract_partition_info_from_step(self, global_step: int, data_type: str = "train") -> tuple[str, int, int]:
-        """
-        Helper method to extract partition information in legacy format.
-
-        Args:
-            global_step: Global step number
-            data_type: Type of data (train, inference, etc.)
-
-        Returns:
-            Tuple of (partition_id, start_idx, end_idx)
-        """
-        # For legacy compatibility, assume fixed batch sizes
-        # This would need to be configured based on use case
-        default_batch_size = 32  # This should be configurable
-        default_num_samples = 1
-
-        partition_id = f"{data_type}@global_batch_{global_step}"
-        start_idx = 0
-        end_idx = default_batch_size * default_num_samples
-
-        return partition_id, start_idx, end_idx
-
-    def get_metadata_legacy(
-        self,
-        data_fields: list[str],
-        batch_size: int,
-        global_step: int,
-        mode: str = "fetch",
-        task_name: Optional[str] = None,
-        get_n_samples: bool = False,
-        data_type: str = "train",
-    ) -> BatchMeta:
-        """
-        Legacy compatibility method for getting metadata.
-
-        This method adapts the old global_step-based interface to the new partition-based system.
-        """
-        partition_id, start_idx, _ = self._extract_partition_info_from_step(global_step, data_type)
-
-        # Create partition if it doesn't exist
-        if partition_id not in self.partitions:
-            self.create_partition(partition_id)
-
-        if mode == "insert":
-            # For insert mode, return metadata for the entire batch
-            sample_indices = list(range(start_idx, start_idx + batch_size))
-            return self.generate_batch_meta(partition_id, sample_indices, data_fields, task_name or "", mode)
-
-        if task_name is None:
-            raise ValueError("task_name is required for fetch modes")
-
-        # For fetch modes, find ready samples
-        ready_samples = self.scan_data_status(partition_id, data_fields, task_name, batch_size)
-
-        return self.generate_batch_meta(partition_id, ready_samples, data_fields, task_name, mode)
 
     # ==================== ZMQ Communication Methods ====================
     # These methods are largely unchanged from the original implementation
@@ -1023,35 +1155,18 @@ class TransferQueueController:
                 # Handle new partition-based metadata requests
                 params = request_msg.body
                 partition_id = params.get("partition_id")
-                task_name = params.get("task_name")
 
-                if partition_id and task_name:
-                    # New partition-based request
-                    sample_indices = self.scan_data_status(
-                        partition_id=partition_id,
-                        field_names=params["data_fields"],
-                        task_name=task_name,
-                        batch_size=params["batch_size"],
-                        timeout=params.get("timeout", TQ_CONTROLLER_GET_METADATA_TIMEOUT),
-                    )
-
-                    metadata = self.generate_batch_meta(
-                        partition_id=partition_id,
-                        sample_indices=sample_indices,
-                        field_names=params["data_fields"],
-                        task_name=task_name,
-                        mode=params.get("mode", "fetch"),
-                    )
-                else:
-                    # Legacy compatibility mode
-                    metadata = self.get_metadata_legacy(
+                if partition_id:
+                    metadata = self.get_metadata(
                         data_fields=params["data_fields"],
                         batch_size=params["batch_size"],
-                        global_step=params["global_step"],
+                        partition_id=partition_id,
                         mode=params.get("mode", "fetch"),
                         task_name=params.get("task_name", None),
                         get_n_samples=params.get("get_n_samples", False),
                     )
+                else:
+                    raise ValueError(f"Please set the correct partition_id, for example: train_$global_step")
 
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.GET_META_RESPONSE,
@@ -1059,6 +1174,29 @@ class TransferQueueController:
                     receiver_id=request_msg.sender_id,
                     body={"metadata": metadata},
                 )
+
+            elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
+                params = request_msg.body
+                # TODO: (baichao) GET_CLEAR_META消息体需要包含partition_id
+                partition_id = params.get("partition_id")
+                if partition_id:
+                    metadata = self.get_metadata(
+                        data_fields=[],
+                        partition_id=partition_id,
+                        mode="insert",
+                    )
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.GET_CLEAR_META_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"metadata": metadata},
+                    )
+            elif request_msg.request_type == ZMQRequestType.CLEAR_META:
+                params = request_msg.body
+                # TODO: (baichao) CLEAR_META消息体需要包含partition_id
+                partition_id = params.get("partition_id")
+                if partition_id:
+                    self.clear(partition_id)
 
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
                 # Handle consumption status checks
@@ -1079,8 +1217,7 @@ class TransferQueueController:
                     else:
                         consumed = False
                 else:
-                    # Legacy compatibility mode would go here
-                    consumed = False
+                    raise ValueError(f"Please set the correct partition_id, for example: train_$global_step")
 
                 response_msg = ZMQMessage.create(
                     request_type=ZMQRequestType.CONSUMPTION_RESPONSE,
@@ -1091,10 +1228,6 @@ class TransferQueueController:
                         "consumed": consumed,
                     },
                 )
-
-            # Handle other request types (CLEAR_META, GET_CLEAR_META) as needed
-            # ... (implementation would be similar to original but partition-aware)
-
             self.request_handle_socket.send_multipart([identity, response_msg.serialize()])
 
     def _update_data_status(self):
@@ -1105,18 +1238,8 @@ class TransferQueueController:
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
                 message_data = request_msg.body
-
+                # TODO: (baichao) NOTIFY_DATA_UPDATE消息体需要包含partition_id
                 partition_id = message_data.get("partition_id")
-                if not partition_id:
-                    # Legacy compatibility - extract partition from global_step
-                    global_step = message_data.get("global_step", 0)
-                    data_type = message_data.get("data_type", "train")
-                    partition_id, _, _ = self._extract_partition_info_from_step(global_step, data_type)
-
-                # Ensure partition exists
-                if partition_id not in self.partitions:
-                    num_samples = len(message_data.get("global_indexes", []))
-                    self.create_partition(partition_id)
 
                 # Update production status
                 success = self.update_production_status(
@@ -1145,27 +1268,3 @@ class TransferQueueController:
     def get_zmq_server_info(self) -> ZMQServerInfo:
         """Get ZMQ server connection information."""
         return self.zmq_server_info
-
-    # ==================== Monitoring and Diagnostics ====================
-
-    def get_controller_status(self) -> dict[str, Any]:
-        """
-        Get comprehensive controller status information.
-
-        Returns:
-            Dictionary containing controller statistics and status
-        """
-        status = {
-            "controller_id": self.controller_id,
-            "total_partitions": len(self.partitions),
-            "connected_storage_managers": len(self._connected_storage_managers),
-            "uptime_seconds": time.time()
-            - (self.partitions[list(self.partitions.keys())[0]].created_at if self.partitions else time.time()),
-            "partitions": {},
-        }
-
-        # Add statistics for each partition
-        for partition_id in self.partitions:
-            status["partitions"][partition_id] = self.get_partition_statistics(partition_id)
-
-        return status

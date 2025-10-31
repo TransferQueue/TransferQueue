@@ -16,7 +16,7 @@ import asyncio
 import logging
 import os
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Union
 from uuid import uuid4
 
 import ray
@@ -45,28 +45,30 @@ logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 
 class AsyncTransferQueueClient:
-    """Asynchronous client for interacting with TransferQueue controllers and storage systems.
+    """Asynchronous client for interacting with TransferQueue controller and storage systems.
 
     This client provides async methods for data transfer operations including getting metadata,
     reading data from storage, writing data to storage, and clearing data.
     """
 
-    # TODO: Simplify the code, using only a single controller.
     def __init__(
         self,
         client_id: str,
-        controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        controller_info: ZMQServerInfo,
     ):
         """Initialize the asynchronous TransferQueue client.
 
         Args:
             client_id: Unique identifier for this client instance
-            controller_infos: Single controller info or dictionary mapping controller IDs
-                              to their ZMQ server information
+            controller_info: Single controller ZMQ server information
         """
+        if controller_info is None:
+            raise ValueError("controller_info cannot be None")
+        if not isinstance(controller_info, ZMQServerInfo):
+            raise TypeError(f"controller_info must be ZMQServerInfo, got {type(controller_info)}")
         self.client_id = client_id
-        self._controllers: dict[str, ZMQServerInfo] = {}
-        self._register_controllers(controller_infos)
+        self._controller: ZMQServerInfo = controller_info
+        logger.info(f"[{self.client_id}]: Registered Controller server {controller_info.id} at {controller_info.ip}")
 
     def initialize_storage_manager(
         self,
@@ -78,37 +80,13 @@ class AsyncTransferQueueClient:
         Args:
             manager_type: Type of storage manager to create. Supported types include:
                           AsyncSimpleStorageManager, KVStorageManager (under development), etc.
-            config: Configuration dictionary for the storage manager. Must contain the
-                    following required keys:
-                    - data_system_controller_infos: ZMQ server information about the controllers
-                    - data_system_storage_unit_infos: ZMQ server information about the storage units
+            config: Configuration dictionary for the storage manager.
+                    For AsyncSimpleStorageManager, must contain the following required keys:
+                    - controller_info: ZMQ server information about the controller
+                    - storage_unit_infos: ZMQ server information about the storage units
 
         """
         self.storage_manager = TransferQueueStorageManagerFactory.create(manager_type, config)
-
-    def _register_controllers(
-        self,
-        server_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
-    ):
-        """Register controller servers with this client.
-
-        Args:
-            server_infos: Single controller info or dictionary of controller IDs to ZMQ server information
-        """
-        mapping = self._controllers
-
-        if not isinstance(server_infos, dict):
-            server_infos = {server_infos.id: server_infos}
-
-        for info in server_infos.values():
-            if not isinstance(info, ZMQServerInfo):
-                raise ValueError(f"Invalid server info, expecting ZMQServerInfo, but get type {type(info)}")
-
-            if info.id not in mapping:
-                mapping[info.id] = info
-                logger.info(f"[{self.client_id}]: Registered Controller server {info.id} at {info.ip}")
-            else:
-                logger.warning(f"[{self.client_id}]: Server {info.id} already registered, skipping")
 
     # TODO (TQStorage): Provide a general dynamic socket function for both Client & Storage @huazhong.
     @staticmethod
@@ -123,7 +101,7 @@ class AsyncTransferQueueClient:
         Decorated Function Requirements:
             1. Must be an async class method (needs `self`)
             2. `self` must have:
-               - `_controllers`: Server registries
+               - `_controller`: Server registry
                - `client_id`: Unique client ID for socket identity
             3. Receives ZMQ socket via `socket` keyword argument (injected by decorator)
         """
@@ -131,23 +109,13 @@ class AsyncTransferQueueClient:
         def decorator(func: Callable):
             @wraps(func)
             async def wrapper(self, *args, **kwargs):
-                server_key = kwargs.get("target_controller")
-                if server_key is None:
-                    for arg in args:
-                        if isinstance(arg, str) and arg in self._controllers.keys():
-                            server_key = arg
-                            break
-
-                if server_key is None:
-                    server_key = next(iter(self._controllers.keys()))
-
-                server_info = self._controllers.get(server_key)
+                server_info = self._controller
                 if not server_info:
-                    raise RuntimeError(f"Server {server_key} not found in registered Controller servers")
+                    raise RuntimeError("No controller registered")
 
                 context = zmq.asyncio.Context()
                 address = f"tcp://{server_info.ip}:{server_info.ports.get(socket_name)}"
-                identity = f"{self.client_id}_to_{server_info.id}_{uuid4()}".encode()
+                identity = f"{self.client_id}_to_{server_info.id}_{uuid4().hex[:8]}".encode()
                 sock = create_zmq_socket(context, zmq.DEALER, identity=identity)
 
                 try:
@@ -186,10 +154,9 @@ class AsyncTransferQueueClient:
         mode: str = "fetch",
         get_n_samples: bool = False,
         task_name: Optional[str] = None,
-        target_controller: Optional[str] = None,
         socket: Optional[zmq.asyncio.Socket] = None,
     ) -> BatchMeta:
-        """Asynchronously fetch data metadata from target controller via ZMQ.
+        """Asynchronously fetch data metadata from the controller via ZMQ.
 
         Args:
             data_fields: List of data field names to retrieve metadata for
@@ -202,7 +169,6 @@ class AsyncTransferQueueClient:
             get_n_samples: If True, arrange samples of the same prompt contiguously. In 'fetch' mode,
                           only returns samples where all prompts in the group are ready
             task_name: Optional task name associated with the request
-            target_controller: ID of the target controller to send request to
             socket: ZMQ async socket for message transmission (injected by decorator)
 
         Returns:
@@ -236,7 +202,7 @@ class AsyncTransferQueueClient:
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.GET_META,
             sender_id=self.client_id,
-            receiver_id=target_controller,
+            receiver_id=self._controller.id,
             body={
                 "data_fields": data_fields,
                 "batch_size": batch_size,
@@ -252,7 +218,8 @@ class AsyncTransferQueueClient:
             response = await socket.recv()
             response_msg = ZMQMessage.deserialize(response)
             logger.debug(
-                f"[{self.client_id}]: Client get datameta response: {response_msg} from controller {target_controller}"
+                f"[{self.client_id}]: Client get datameta response: {response_msg} "
+                f"from controller {self._controller.id}"
             )
 
             if response_msg.request_type == ZMQRequestType.GET_META_RESPONSE:
@@ -260,7 +227,7 @@ class AsyncTransferQueueClient:
                 return metadata
             else:
                 raise RuntimeError(
-                    f"[{self.client_id}]: Failed to get metadata from controller {target_controller}: "
+                    f"[{self.client_id}]: Failed to get metadata from controller {self._controller.id}: "
                     f"{response_msg.body.get('message', 'Unknown error')}"
                 )
         except Exception as e:
@@ -318,6 +285,13 @@ class AsyncTransferQueueClient:
             >>> asyncio.run(client.async_put(data=prompts_repeated_batch, global_step=current_step))
 
         """
+
+        if not hasattr(self, "storage_manager") or self.storage_manager is None:
+            raise RuntimeError(
+                f"[{self.client_id}]: Storage manager not initialized. "
+                "Call initialize_storage_manager() before performing storage operations."
+            )
+
         if metadata is None:
             assert global_step is not None, "global_steps must be provided if metadata is not given"
 
@@ -363,6 +337,13 @@ class AsyncTransferQueueClient:
             >>> # TensorDict with fields "prompts", "attention_mask", and sample order matching metadata global_indexes
 
         """
+
+        if not hasattr(self, "storage_manager") or self.storage_manager is None:
+            raise RuntimeError(
+                f"[{self.client_id}]: Storage manager not initialized. "
+                "Call initialize_storage_manager() before performing storage operations."
+            )
+
         if not metadata or metadata.size == 0:
             return TensorDict({}, batch_size=0)
 
@@ -380,33 +361,33 @@ class AsyncTransferQueueClient:
             RuntimeError: If clear operation fails
         """
         try:
-            target_controller = next(iter(self._controllers.keys()))
-            metadata = await self._get_clear_meta(global_step, target_controller)
+            if not hasattr(self, "storage_manager") or self.storage_manager is None:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Storage manager not initialized. "
+                    "Call initialize_storage_manager() before performing storage operations."
+                )
 
-            tasks = []
+            if not self._controller:
+                raise RuntimeError("No controller registered")
 
-            for target_controller in self._controllers.keys():
-                tasks.append(self._clear_controller(global_step, target_controller))
+            metadata = await self._get_clear_meta(global_step)
 
-            tasks.append(self.storage_manager.clear_data(metadata))
+            # Clear the controller metadata
+            await self._clear_controller(global_step)
 
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.error(f"[{self.client_id}]: Error in clear operation task {i}: {result}")
+            # Clear storage unit data
+            await self.storage_manager.clear_data(metadata)
 
             logger.info(f"[{self.client_id}]: Clear operation for global_step {global_step} completed.")
         except Exception as e:
             raise RuntimeError(f"Error in clear operation: {str(e)}") from e
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def _get_clear_meta(self, global_step: int, target_controller=None, socket=None) -> BatchMeta:
+    async def _get_clear_meta(self, global_step: int, socket=None) -> BatchMeta:
         """Get metadata required for clear operation from controller.
 
         Args:
             global_step: Step to get clear metadata for
-            target_controller: Controller to request metadata from
             socket: ZMQ socket (injected by decorator)
 
         Returns:
@@ -418,7 +399,7 @@ class AsyncTransferQueueClient:
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.GET_CLEAR_META,
             sender_id=self.client_id,
-            receiver_id=target_controller,
+            receiver_id=self._controller.id,
             body={"global_step": global_step},
         )
 
@@ -434,12 +415,11 @@ class AsyncTransferQueueClient:
         return response_msg.body["metadata"]
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def _clear_controller(self, global_step, target_controller=None, socket=None):
-        """Clear metadata from specified controller.
+    async def _clear_controller(self, global_step, socket=None):
+        """Clear metadata from controller.
 
         Args:
             global_step: Step to clear metadata for
-            target_controller: Controller to clear metadata from
             socket: ZMQ socket (injected by decorator)
 
         Raises:
@@ -449,7 +429,7 @@ class AsyncTransferQueueClient:
             request_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.CLEAR_META,
                 sender_id=self.client_id,
-                receiver_id=target_controller,
+                receiver_id=self._controller.id,
                 body={"global_step": global_step},
             )
 
@@ -459,15 +439,15 @@ class AsyncTransferQueueClient:
 
             if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
                 raise RuntimeError(
-                    f"Failed to clear controller {target_controller}: "
+                    f"Failed to clear controller {self._controller.id}: "
                     f"{response_msg.body.get('message', 'Unknown error')}"
                 )
 
             logger.info(
-                f"[{self.client_id}]: Successfully clear controller {target_controller} for global_step {global_step}"
+                f"[{self.client_id}]: Successfully clear controller {self._controller.id} for global_step {global_step}"
             )
         except Exception as e:
-            logger.error(f"[{self.client_id}]: Error clearing controller {target_controller}: {str(e)}")
+            logger.error(f"[{self.client_id}]: Error clearing controller {self._controller.id}: {str(e)}")
             raise
 
     @dynamic_socket(socket_name="request_handle_socket")
@@ -492,6 +472,15 @@ class AsyncTransferQueueClient:
         # TODO: Implement this method to check if all samples for the current step is ready for consumption
         pass
 
+    def close(self) -> None:
+        """Close the client and cleanup resources including storage manager."""
+        try:
+            if hasattr(self, "storage_manager") and self.storage_manager:
+                if hasattr(self.storage_manager, "close"):
+                    self.storage_manager.close()
+        except Exception as e:
+            logger.warning(f"Error closing storage manager: {e}")
+
 
 class TransferQueueClient(AsyncTransferQueueClient):
     """Synchronous client wrapper for TransferQueue.
@@ -502,17 +491,17 @@ class TransferQueueClient(AsyncTransferQueueClient):
     def __init__(
         self,
         client_id: str,
-        controller_infos: ZMQServerInfo | dict[Any, ZMQServerInfo],
+        controller_info: ZMQServerInfo,
     ):
         """Initialize the synchronous TransferQueue client.
 
         Args:
             client_id: Unique identifier for this client instance
-            controller_infos: Single controller info or dictionary mapping controller IDs to ZMQ server information
+            controller_info: Single controller ZMQ server information
         """
         super().__init__(
             client_id,
-            controller_infos,
+            controller_info,
         )
 
     def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, global_step: Optional[int] = None):
@@ -576,17 +565,33 @@ class TransferQueueClient(AsyncTransferQueueClient):
 
 
 def process_zmq_server_info(
-    handlers: dict[Any, "TransferQueueController | TransferQueueStorageManager | SimpleStorageUnit"],
+    handlers: dict[Any, Union["TransferQueueController", "TransferQueueStorageManager", "SimpleStorageUnit"]]
+    | Union["TransferQueueController", "TransferQueueStorageManager", "SimpleStorageUnit"],
 ):  # noqa: UP007
     """Extract ZMQ server information from handler objects.
 
     Args:
-        handlers: Dictionary of handler objects (controllers, storage managers, or storage units)
+        handlers: Dictionary of handler objects (controllers, storage managers, or storage units),
+                  or a single handler object
 
     Returns:
-        Dictionary mapping handler names to their ZMQ server information
-    """
-    server_info = {}
-    for name, handler in handlers.items():
-        server_info[name] = ray.get(handler.get_zmq_server_info.remote())  # type: ignore[attr-defined]
-    return server_info
+        If handlers is a dictionary: Dictionary mapping handler names to their ZMQ server information
+        If handlers is a single object: ZMQ server information for that object
+
+    Examples:
+        >>> # Single handler
+        >>> controller = TransferQueueController.remote(...)
+        >>> info = process_zmq_server_info(controller)
+        >>>
+        >>> # Multiple handlers
+        >>> handlers = {"storage_0": storage_0, "storage_1": storage_1}
+        >>> info_dict = process_zmq_server_info(handlers)"""
+    # Handle single handler object case
+    if not isinstance(handlers, dict):
+        return ray.get(handlers.get_zmq_server_info.remote())  # type: ignore[attr-defined]
+    else:
+        # Handle dictionary case
+        server_info = {}
+        for name, handler in handlers.items():
+            server_info[name] = ray.get(handler.get_zmq_server_info.remote())  # type: ignore[attr-defined]
+        return server_info
