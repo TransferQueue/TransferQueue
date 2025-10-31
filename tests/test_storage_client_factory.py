@@ -1,15 +1,7 @@
 import unittest
-#from ..clients.factory import StorageClientFactory
 import torch
-
-import sys
-import os
-
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from transfer_queue.storage.clients.factory import StorageClientFactory
+
 class Test(unittest.TestCase):
     def setUp(self):
         self.cfg = {
@@ -20,11 +12,12 @@ class Test(unittest.TestCase):
     def test_create_client(self):
         self.assertIn("Yuanrong", StorageClientFactory._registry)
         #self.assertIs(StorageClientFactory._registry["Yuanrong"], YRStorageClient)
-        client=StorageClientFactory.create("Yuanrong", self.cfg)
+        StorageClientFactory.create("Yuanrong", self.cfg)
 
         with self.assertRaises(ValueError) as cm:
             StorageClientFactory.create("abc",self.cfg)
         self.assertIn("Unknown StorageClient", str(cm.exception))
+
     def test_client_create_empty_tensorlist(self):
         tensors=[torch.Tensor([2,1]),torch.Tensor([1,5]),torch.Tensor([0]),torch.Tensor([-1.5])]
         shapes=[]
