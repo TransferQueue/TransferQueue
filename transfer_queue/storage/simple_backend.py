@@ -112,7 +112,6 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        # Accept TensorDict or plain dict[str, list-like]
         extracted_data = field_data.to_dict()
 
         for f, values in extracted_data.items():
