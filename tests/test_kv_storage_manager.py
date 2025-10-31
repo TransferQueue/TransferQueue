@@ -72,7 +72,7 @@ class Test(unittest.TestCase):
 
     def test_generate_yr_values(self):
         """测试 _generate_yr_values 按 field-major 扁平化 tensor"""
-        values = KVStorageManager._generate_yr_values(self.data)
+        values = KVStorageManager._generate_values(self.data)
         expected_length = len(self.field_names) * len(self.global_indexes)  # 9
         self.assertEqual(len(values), expected_length)
 
@@ -84,15 +84,15 @@ class Test(unittest.TestCase):
         }, batch_size=2)
 
         with self.assertRaises(TypeError):
-            KVStorageManager._generate_yr_values(bad_data)
+            KVStorageManager._generate_values(bad_data)
 
     def test_merge_kv_to_dict(self):
         """测试 _merge_kv_to_dict 能正确重建 TensorDict"""
         # 先生成 values
-        values = KVStorageManager._generate_yr_values(self.data)
+        values = KVStorageManager._generate_values(self.data)
 
         # 合并回 TensorDict
-        reconstructed = KVStorageManager._merge_kv_to_dict(self.metadata, values)
+        reconstructed = KVStorageManager._merge_kv_to_tensordict(self.metadata, values)
 
         # print(reconstructed)
 
