@@ -49,7 +49,7 @@ class FieldMeta:
 class SampleMeta:
     """Records the metadata of a single data sample (stored as a row in the data system)."""
 
-    global_step: int  # Global step, used for data versioning
+    partition_id: str  # Partition id, used for data versioning
     global_index: int  # Global row index, uniquely identifies a data sample
     fields: dict[str, FieldMeta]  # Fields of interest for this sample
 
@@ -59,7 +59,7 @@ class SampleMeta:
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
 
     def __str__(self) -> str:
-        return f"SampleMeta(global_step={self.global_step}, global_index={self.global_index})"
+        return f"SampleMeta(partition_id={self.partition_id}, global_index={self.global_index})"
 
     @property
     def field_names(self) -> list[str]:
