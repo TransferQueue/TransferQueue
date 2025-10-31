@@ -93,11 +93,9 @@ class TransferQueueController:
 
         if issubclass(sampler, BaseSampler):
             self.sampler = sampler
-        elif callable(sampler):
-            self.sampler = sampler()
         else:
             raise TypeError(
-                f"sampler {getattr(sampler, '__name__', repr(sampler))} must be a subclass of BaseSampler or a function"
+                f"sampler {getattr(sampler, '__name__', repr(sampler))} must be a subclass of BaseSampler"
             )
 
         self._connected_storage_managers: set[str] = set()
