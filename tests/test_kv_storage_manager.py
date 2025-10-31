@@ -71,13 +71,13 @@ class Test(unittest.TestCase):
         self.assertEqual(len(keys), 9)  # 3 fields * 3 indexes
 
     def test_generate_values(self):
-        """测试 _generate_yr_values 按 field-major 扁平化 tensor"""
+        """测试 _generate_values 按 field-major 扁平化 tensor"""
         values = KVStorageManager._generate_values(self.data)
         expected_length = len(self.field_names) * len(self.global_indexes)  # 9
         self.assertEqual(len(values), expected_length)
 
     def test_generate_values_type_check(self):
-        """测试 _generate_yr_values 对非 tensor 输入抛出异常"""
+        """测试 _generate_values 对非 tensor 输入抛出异常"""
         bad_data = TensorDict({
             "text": torch.tensor([1, 2]),
             "label": "not_a_tensor"
@@ -86,8 +86,8 @@ class Test(unittest.TestCase):
         with self.assertRaises(TypeError):
             KVStorageManager._generate_values(bad_data)
 
-    def test_merge_kv_to_dict(self):
-        """测试 _merge_kv_to_dict 能正确重建 TensorDict"""
+    def test_merge_kv_to_tensordict(self):
+        """测试 _merge_kv_to_tensordict 能正确重建 TensorDict"""
         # 先生成 values
         values = KVStorageManager._generate_values(self.data)
 
