@@ -32,10 +32,10 @@ class BaseSampler(ABC):
 
     @abstractmethod
     def sample(
-            self,
-            ready_indexes: list[int],
-            batch_size: int,
-            **kwargs: Any,
+        self,
+        ready_indexes: list[int],
+        batch_size: int,
+        **kwargs: Any,
     ) -> tuple[list[int], list[int]]:
         """Sample a batch of indices from the ready indices.
 
@@ -52,7 +52,6 @@ class BaseSampler(ABC):
             ValueError: If batch_size is invalid or ready_indices is insufficient
         """
         raise NotImplementedError("Subclasses must implement sample")
-
 
     def __call__(self, *args: Any, **kwargs: Any) -> tuple[list[int], list[int]]:
         return self.sample(*args, **kwargs)

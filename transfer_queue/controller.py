@@ -29,6 +29,7 @@ from transfer_queue.metadata import (
     FieldMeta,
     SampleMeta,
 )
+from transfer_queue.sampler import BaseSampler, SequentialSampler
 from transfer_queue.utils.utils import (
     ProductionStatus,
     TransferQueueRole,
@@ -41,8 +42,6 @@ from transfer_queue.utils.zmq_utils import (
     create_zmq_socket,
     get_free_port,
 )
-
-from transfer_queue.sampler import BaseSampler, SequentialSampler
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
@@ -98,8 +97,7 @@ class TransferQueueController:
             self.sampler = sampler()
         else:
             raise TypeError(
-                f"sampler {getattr(sampler, '__name__', repr(sampler))} must be "
-                f"a subclass of BaseSampler or a function"
+                f"sampler {getattr(sampler, '__name__', repr(sampler))} must be a subclass of BaseSampler or a function"
             )
 
         self._connected_storage_managers: set[str] = set()
@@ -303,7 +301,9 @@ class TransferQueueController:
             logger.debug(f"ready for consume idx: {ready_for_consume_idx}")
 
             batch_global_indexes, consumed_indexes = self.sampler(
-                ready_for_consume_idx, batch_size, **sampling_config,
+                ready_for_consume_idx,
+                batch_size,
+                **sampling_config,
             )
         elif mode == "force_fetch":
             start_idx, end_idx = self._step_to_global_index_range(global_step)

@@ -13,11 +13,7 @@
 # limitations under the License.
 
 from .base import BaseSampler
-from .sequential_sampler import SequentialSampler
 from .grpo_group_n_sampler import GR
+from .sequential_sampler import SequentialSampler
 
-__all__ = [
-    "BaseSampler",
-    "SequentialSampler",
-    "GRPO"
-]
+__all__ = ["BaseSampler", "SequentialSampler", "GRPO"]

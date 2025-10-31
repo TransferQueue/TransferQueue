@@ -11,18 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
 
 from transfer_queue.sampler import BaseSampler
 
+
 class SequentialSampler(BaseSampler):
-    def __init__(self,):
+    def __init__(
+        self,
+    ):
         super().__init__()
 
     def sample(
-            self,
-            ready_indexes: list[int],
-            batch_size: int,
+        self,
+        ready_indexes: list[int],
+        batch_size: int,
     ) -> tuple[list[int], list[int]]:
         sampled_indexes = ready_indexes[:batch_size]
         consumed_indexes = sampled_indexes
