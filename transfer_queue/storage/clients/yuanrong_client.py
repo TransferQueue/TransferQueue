@@ -5,7 +5,7 @@ import torch
 import datasystem
 import torch_npu
 
-# TODO: DSTensorClient.dev_mget has wrong
+# TODO: DSTensorClient.dev_mget has wrong behavior: it may require stricter environment to execute
 @StorageClientFactory.register("Yuanrong")
 class YRStorageClient(TransferQueueStorageClient):
     """
