@@ -832,7 +832,6 @@ class TransferQueueController:
             self.create_partition(partition_id)
 
         if mode == "insert":
-            # TODO: Differentiate methods for getting batch_global_indices between initial put_data and clear_meta
             if data_fields:
                 # First put_data call, get_metadata in insert mode
                 batch_global_indices = self.index_manager.allocate_indexes(partition_id, count=batch_size)
@@ -1006,7 +1005,6 @@ class TransferQueueController:
                     production_status=production_status,
                 )
 
-            # TODO: (baichao) Confirm if global_step in SampleMeta needs to be replaced with partition_id
             sample = SampleMeta(
                 partition_id=partition_id,
                 global_index=global_index,
@@ -1176,7 +1174,6 @@ class TransferQueueController:
 
             elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
                 params = request_msg.body
-                # TODO: (baichao) GET_CLEAR_META message body needs to include partition_id
                 partition_id = params.get("partition_id")
                 if partition_id:
                     metadata = self.get_metadata(
@@ -1192,7 +1189,6 @@ class TransferQueueController:
                     )
             elif request_msg.request_type == ZMQRequestType.CLEAR_META:
                 params = request_msg.body
-                # TODO: (baichao) CLEAR_META message body needs to include partition_id
                 partition_id = params.get("partition_id")
                 if partition_id:
                     clear_success = self.clear(partition_id)
@@ -1244,7 +1240,6 @@ class TransferQueueController:
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
                 message_data = request_msg.body
-                # TODO: (baichao) NOTIFY_DATA_UPDATE message body needs to include partition_id
                 partition_id = message_data.get("partition_id")
 
                 # Update production status
