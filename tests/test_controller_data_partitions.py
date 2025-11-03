@@ -245,7 +245,7 @@ def test_data_partition_status_advanced():
     # Verify masks correctly identify ready samples
     ready_field_indices = [partition.field_name_mapping[f] for f in field_names]
     for col_idx in ready_field_indices:
-        assert col_mask[col_idx].item() == True
+        assert col_mask[col_idx].item()
 
     print("✓ Data mask generation with filters works")
 

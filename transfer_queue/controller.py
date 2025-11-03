@@ -63,99 +63,90 @@ TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial nu
 
 class PartitionIndexManager:
     """
-    管理分区与全局索引的映射关系，负责索引的分配和复用
-    修复版本：解决了索引分配可能导致的覆盖问题
+    Manages the mapping relationship between partitions and global indexes,
+    responsible for index allocation and reuse.
     """
 
     def __init__(self):
-        # 记录每个分区使用的global_index集合
+        # Records the set of global_indexes used by each partition
         self.partition_to_indexes = defaultdict(set)
 
-        # 可复用的global_index池 - 使用列表存储
+        # Reusable global_index pool - stored using list
         self.reusable_indexes = []
 
-        # 全局索引计数器，用于分配新的索引
+        # Global index counter for allocating new indexes
         self.global_index_counter = 0
 
-        # 跟踪所有已分配的索引（活跃的 + 可复用的）
+        # Track all allocated indexes (active + reusable)
         self.allocated_indexes = set()
 
-    def allocate_indexes(self, partition_id, count=1):
+    def allocate_indexes(self, partition_id, count=1) -> list:
         """
-        为指定分区分配global_index
-        优先从可复用池中获取，不足时分配新的索引
-
-        修复点：
-        1. 确保新分配的索引不会与现有活跃索引冲突
-        2. 维护allocated_indexes集合跟踪所有已分配的索引
-        3. 智能global_index_counter始终指向最大已分配索引+1
+        Allocate global_indexes for the specified partition.
+        Prioritizes obtaining from reusable pool, allocates new indexes when insufficient.
 
         Args:
-            partition_id: 分区ID
-            count: 需要分配的索引数量
+            partition_id: Partition ID
+            count: Number of indexes needed
 
         Returns:
-            list: 分配的global_index列表
+            list: List of allocated global_indexes
         """
         indexes = []
 
-        # 从可复用池中获取索引
+        # Get indexes from reusable pool
         if self.reusable_indexes and count > 0:
-            # 计算需要从可复用池获取的索引数量
+            # Calculate number of indexes needed from reusable pool
             num_reuse = min(count, len(self.reusable_indexes))
 
-            # 使用切片操作一次性获取多个元素（从开头获取，FIFO原则）
+            # Use slice operation to get multiple elements at once (FIFO principle)
             indexes.extend(self.reusable_indexes[:num_reuse])
             del self.reusable_indexes[:num_reuse]
 
-            # 从allocated_indexes中移除这些索引（它们将重新变为活跃状态）
+            # Remove these indexes from allocated_indexes (they become active again)
             for idx in indexes:
                 self.allocated_indexes.discard(idx)
 
-        # 如果可复用池中的索引不足，分配新的索引
+        # If reusable pool doesn't have enough indexes, allocate new ones
         if len(indexes) < count:
-            # 确保新分配的索引不会与现有索引冲突
+            # Ensure newly allocated indexes don't conflict with existing ones
             needed = count - len(indexes)
             new_indexes = []
 
             while len(new_indexes) < needed:
-                # 检查当前计数器指向的索引是否已被使用
+                # Check if current counter points to an already used index
                 if self.global_index_counter not in self.allocated_indexes:
                     new_indexes.append(self.global_index_counter)
                     self.allocated_indexes.add(self.global_index_counter)
                     self.global_index_counter += 1
                 else:
-                    # 如果已被使用，递增计数器直到找到可用的索引
+                    # If already used, increment counter until finding available index
                     self.global_index_counter += 1
 
             indexes.extend(new_indexes)
 
-        # 记录分区与索引的关系
+        # Record partition-index relationship
         self.partition_to_indexes[partition_id].update(indexes)
 
         return indexes
 
     def release_indexes(self, partition_id):
         """
-        释放指定分区的所有global_index，将其加入可复用池
-
-        修复点：
-        1. 释放的索引添加到allocated_indexes集合
-        2. 不修改global_index_counter，确保其始终指向最大已分配索引+1
+        Release all global_indexes of the specified partition, adding them to reusable pool.
 
         Args:
-            partition_id: 分区ID
+            partition_id: Partition ID
 
         Returns:
-            list: 释放的global_index列表
+            list: List of released global_indexes
         """
         if partition_id in self.partition_to_indexes:
             indexes = self.partition_to_indexes.pop(partition_id)
 
-            # 将释放的索引添加到可复用池
+            # Add released indexes to reusable pool
             self.reusable_indexes.extend(indexes)
 
-            # 将释放的索引添加到allocated_indexes集合
+            # Add released indexes to allocated_indexes set
             self.allocated_indexes.update(indexes)
 
             return indexes
@@ -163,32 +154,32 @@ class PartitionIndexManager:
 
     def get_indexes_for_partition(self, partition_id):
         """
-        获取指定分区的所有global_index
+        Get all global_indexes for the specified partition.
 
         Args:
-            partition_id: 分区ID
+            partition_id: Partition ID
 
         Returns:
-            set: 该分区的global_index集合
+            set: Set of global_indexes for this partition
         """
         return self.partition_to_indexes.get(partition_id, set()).copy()
 
     def get_allocated_indexes(self):
         """
-        获取所有已分配的索引（活跃的 + 可复用的）
+        Get all allocated indexes (active + reusable).
 
         Returns:
-            set: 所有已分配的索引
+            set: All allocated indexes
         """
-        # 活跃索引
+        # Active indexes
         active_indexes = set()
         for indexes in self.partition_to_indexes.values():
             active_indexes.update(indexes)
 
-        # 可复用索引
+        # Reusable indexes
         reusable_indexes = set(self.reusable_indexes)
 
-        # 返回所有已分配的索引
+        # Return all allocated indexes
         return active_indexes.union(reusable_indexes)
 
 
@@ -638,7 +629,7 @@ class TransferQueueController:
         # Partition management
         self.partitions: dict[str, DataPartitionStatus] = {}  # partition_id -> DataPartitionStatus
 
-        # Partition GlobalIndex management
+        # Partition-GlobalIndex management
         self.index_manager = PartitionIndexManager()  # partition_id -> global_indexes
 
         # Connected storage managers tracking
@@ -712,7 +703,17 @@ class TransferQueueController:
         return False
 
     # ==================== Partition Index Management API ====================
-    def get_partition_index_range(self, partition) -> set:
+
+    def get_partition_index_range(self, partition: DataPartitionStatus) -> set:
+        """
+        Get all indexes for a specific partition.
+
+        Args:
+            partition: Partition identifier
+
+        Returns:
+            Set of indexes allocated to the partition
+        """
         return self.index_manager.get_indexes_for_partition(partition)
 
     # ==================== Data Production API ====================
@@ -720,7 +721,7 @@ class TransferQueueController:
     def update_production_status(
         self,
         partition_id: str,
-        sample_indices: list[int],
+        global_indexes: list[int],
         field_names: list[str],
         dtypes: Optional[dict[int, dict[str, Any]]] = None,
         shapes: Optional[dict[int, dict[str, Any]]] = None,
@@ -731,7 +732,7 @@ class TransferQueueController:
 
         Args:
             partition_id: ID of the partition
-            sample_indices: List of sample indices to update
+            global_indexes: List of sample indices to update
             field_names: List of field names to mark as produced
             dtypes: Optional per-sample field dtype information
             shapes: Optional per-sample field shape information
@@ -744,10 +745,10 @@ class TransferQueueController:
             logger.error(f"Partition {partition_id} not found")
             return False
 
-        success = partition.update_production_status(sample_indices, field_names, dtypes, shapes)
+        success = partition.update_production_status(global_indexes, field_names, dtypes, shapes)
         if success:
             logger.debug(
-                f"Updated production status for partition {partition_id}: samples={sample_indices}, "
+                f"Updated production status for partition {partition_id}: samples={global_indexes}, "
                 f"fields={field_names}"
             )
         return success
@@ -801,7 +802,6 @@ class TransferQueueController:
         mode: str = "fetch",
         task_name: str | None = None,
         batch_size: int | None = None,
-        # TODO: get_n_samples作用在哪个步骤？insert模式设置了get_n_samples=True，但是没看到有对应的处理逻辑
         get_n_samples=False,
         *args,
         **kwargs,
@@ -811,13 +811,13 @@ class TransferQueueController:
 
         Args:
             data_fields: List of field names to include in metadata
-            batch_size: Number of samples to retrieve
-            global_step: Global step for which to retrieve metadata
+            partition_id: Partition id for which to retrieve metadata
             mode: Operation mode - 'insert', 'fetch', or 'force_fetch'
                 - mode="insert": Insert metadata for new rows (without checking data status)
                 - mode="fetch": Retrieve metadata for ready data (check data status and sample)
                 - mode="force_fetch": Directly return metadata (without checking data status)
             task_name: Name of the consumer task (required for fetch modes)
+            batch_size: Number of samples to retrieve
             get_n_samples: Whether to retrieve n_samples as groups
             *args: Additional positional arguments
             **kwargs: Additional keyword arguments
@@ -832,12 +832,12 @@ class TransferQueueController:
             self.create_partition(partition_id)
 
         if mode == "insert":
-            # TODO: 区分初次put_data和clear_meta获取batch_global_indices的方法
+            # TODO: Differentiate methods for getting batch_global_indices between initial put_data and clear_meta
             if data_fields:
-                # 初次put_data时，调用insert模式的get_metadata
+                # First put_data call, get_metadata in insert mode
                 batch_global_indices = self.index_manager.allocate_indexes(partition_id, count=batch_size)
             else:
-                # clear metadata时调用get_metadata传入的data_fields为空
+                # clear metadata call passes empty data_fields
                 batch_global_indices = self.index_manager.get_indexes_for_partition(partition_id)
             return self.generate_batch_meta(partition_id, batch_global_indices, data_fields, task_name, mode)
 
@@ -871,10 +871,6 @@ class TransferQueueController:
             consumer_status = self.get_consumption_status(partition_id, task_name)
             not_consumed_idx = [i for i in global_indexes_range if consumer_status[i] == 0]
             batch_global_indices = not_consumed_idx
-
-        # # Mark this batch of data as consumed
-        # consumer_status = self.get_consumption_status(partition_id, task_name)
-        # consumer_status[batch_global_indices] = 1
 
         # Package into metadata
         metadata = self.generate_batch_meta(partition_id, batch_global_indices, data_fields, task_name, mode)
@@ -945,15 +941,15 @@ class TransferQueueController:
         batch_global_indices: list[int],
         data_fields: list[str],
         task_name: str,
-        mode: str = "fetch"
+        mode: str = "fetch",
     ) -> BatchMeta:
         """
         Generate BatchMeta for specific samples in a partition.
 
         Args:
             partition_id: ID of the partition
-            sample_indices: List of sample indices to include
-            field_names: List of field names to include
+            batch_global_indices: List of sample indices to include
+            data_fields: List of field names to include
             task_name: Name of the consumer task
             mode: Operation mode - 'fetch', 'insert', or 'force_fetch'
 
@@ -1010,7 +1006,7 @@ class TransferQueueController:
                     production_status=production_status,
                 )
 
-            # TODO: (baichao) 确认是否需要将SampleMeta中的global_step替换成partition_id
+            # TODO: (baichao) Confirm if global_step in SampleMeta needs to be replaced with partition_id
             sample = SampleMeta(
                 partition_id=partition_id,
                 global_index=global_index,
@@ -1043,7 +1039,6 @@ class TransferQueueController:
         return success
 
     # ==================== ZMQ Communication Methods ====================
-    # These methods are largely unchanged from the original implementation
 
     def _init_zmq_socket(self):
         """Initialize ZMQ sockets for communication."""
@@ -1181,7 +1176,7 @@ class TransferQueueController:
 
             elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
                 params = request_msg.body
-                # TODO: (baichao) GET_CLEAR_META消息体需要包含partition_id
+                # TODO: (baichao) GET_CLEAR_META message body needs to include partition_id
                 partition_id = params.get("partition_id")
                 if partition_id:
                     metadata = self.get_metadata(
@@ -1197,7 +1192,7 @@ class TransferQueueController:
                     )
             elif request_msg.request_type == ZMQRequestType.CLEAR_META:
                 params = request_msg.body
-                # TODO: (baichao) CLEAR_META消息体需要包含partition_id
+                # TODO: (baichao) CLEAR_META message body needs to include partition_id
                 partition_id = params.get("partition_id")
                 if partition_id:
                     self.clear(partition_id)
@@ -1242,13 +1237,13 @@ class TransferQueueController:
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
                 message_data = request_msg.body
-                # TODO: (baichao) NOTIFY_DATA_UPDATE消息体需要包含partition_id
+                # TODO: (baichao) NOTIFY_DATA_UPDATE message body needs to include partition_id
                 partition_id = message_data.get("partition_id")
 
                 # Update production status
                 success = self.update_production_status(
                     partition_id=partition_id,
-                    sample_indices=message_data.get("global_indexes", []),
+                    global_indexes=message_data.get("global_indexes", []),
                     field_names=message_data.get("fields", []),
                     dtypes=message_data.get("dtypes", {}),
                     shapes=message_data.get("shapes", {}),
