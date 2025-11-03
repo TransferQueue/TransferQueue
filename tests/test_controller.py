@@ -19,7 +19,6 @@ from pathlib import Path
 import pytest
 import ray
 import torch
-from tensordict import TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
@@ -96,7 +95,7 @@ class TestTransferQueueController:
         assert partition.production_status.size(1) == TQ_INIT_FIELD_NUM
         assert torch.equal(
             sum(partition.production_status[:, : len(data_fields)]),
-            torch.Tensor([gbs*num_n_samples, gbs * num_n_samples]),
+            torch.Tensor([gbs * num_n_samples, gbs * num_n_samples]),
         )
         assert torch.equal(
             sum(partition.production_status[:, len(data_fields) :]),
@@ -178,6 +177,7 @@ class TestTransferQueueController:
                 field_names=metadata.field_names,
             )
         )
+        assert success
 
         # Test get metadate in fetch mode
         gen_meta = ray.get(
@@ -190,6 +190,7 @@ class TestTransferQueueController:
                 get_n_samples=False,
             )
         )
+        assert gen_meta
 
         # Test get clear meta
         clear_meta = ray.get(
@@ -199,8 +200,9 @@ class TestTransferQueueController:
                 mode="insert",
             )
         )
+        assert clear_meta
 
-        #=========================partition 2=============================#
+        # =========================partition 2=============================#
         data_fields = ["prompt_ids", "attention_mask"]
         val_metadata = ray.get(
             tq_controller.get_metadata.remote(
@@ -218,9 +220,9 @@ class TestTransferQueueController:
         assert sum([int(sample.fields.get("prompt_ids").production_status) for sample in val_metadata.samples]) == int(
             ProductionStatus.NOT_PRODUCED
         )
-        assert sum([int(sample.fields.get("attention_mask").production_status) for sample in val_metadata.samples]) == int(
-            ProductionStatus.NOT_PRODUCED
-        )
+        assert sum(
+            [int(sample.fields.get("attention_mask").production_status) for sample in val_metadata.samples]
+        ) == int(ProductionStatus.NOT_PRODUCED)
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id_2))
         assert partition_index_range == set(range(part1_index_range, part2_index_range + part1_index_range))
 
@@ -268,9 +270,8 @@ class TestTransferQueueController:
             ProductionStatus.NOT_PRODUCED
         )
         assert sum(
-            [int(sample.fields.get("attention_mask").production_status) for sample in metadata_2.samples]) == int(
-            ProductionStatus.NOT_PRODUCED
-        )
+            [int(sample.fields.get("attention_mask").production_status) for sample in metadata_2.samples]
+        ) == int(ProductionStatus.NOT_PRODUCED)
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id_3))
         assert partition_index_range == set(list(range(32)) + list(range(48, 80)))
         print("✓ Correctly assign partition_3")
