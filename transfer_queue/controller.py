@@ -1196,6 +1196,12 @@ class TransferQueueController:
                 partition_id = params.get("partition_id")
                 if partition_id:
                     self.clear(partition_id)
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.CLEAR_META_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"message": f"Clear operation completed by controller {self.controller_id}"},
+                    )
 
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
                 # Handle consumption status checks
