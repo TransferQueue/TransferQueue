@@ -25,13 +25,13 @@ class YRStorageClient(TransferQueueStorageClient):
     def __init__(self, config: dict[str, Any]):
         if not YUANRONG_DATASYSTEM_IMPORTED:
             raise ImportError('YuanRong DataSystem not installed.')
-        if TORCH_NPU_IMPORTED:
+        if not TORCH_NPU_IMPORTED:
             raise ImportError('Torch_npu not installed.')
 
         self.host = config.get("host")
         self.port = config.get("port")
         self.device_id = config.get("device_id")
-        torch_npu.set_device(f'npu:{self.device_id}') #set npu_device
+        torch_npu.npu.set_device(f'npu:{self.device_id}') #set npu_device
         self._ds_client = datasystem.DsTensorClient(self.host, self.port, self.device_id)
         self._ds_client.init()
 
