@@ -2,8 +2,17 @@ from transfer_queue.storage.clients.factory import StorageClientFactory, Transfe
 from typing import Any
 from torch import Tensor
 import torch
-import datasystem
-import torch_npu
+
+YUANRONG_DATASYSTEM_IMPORTED: bool = True
+TORCH_NPU_IMPORTED: bool = True
+try:
+    import datasystem
+except ImportError:
+    YUANRONG_DATASYSTEM_IMPORTED = False
+try:
+    import torch_npu
+except ImportError:
+    TORCH_NPU_IMPORTED = False
 
 # TODO: DSTensorClient.dev_mget has wrong behavior: it may require stricter environment to execute
 @StorageClientFactory.register("Yuanrong")
@@ -14,6 +23,11 @@ class YRStorageClient(TransferQueueStorageClient):
     All tensors must reside on NPU device.
     """
     def __init__(self, config: dict[str, Any]):
+        if not YUANRONG_DATASYSTEM_IMPORTED:
+            raise ImportError('YuanRong DataSystem not installed.')
+        if TORCH_NPU_IMPORTED:
+            raise ImportError('Torch_npu not installed.')
+
         self.host = config.get("host")
         self.port = config.get("port")
         self.device_id = config.get("device_id")

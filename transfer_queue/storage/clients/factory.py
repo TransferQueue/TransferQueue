@@ -73,6 +73,6 @@ class StorageClientFactory:
 # TODO: Dynamically register the storage client class based on the configuration
 # Register storage clients
 try:
-    import transfer_queue.storage.clients.yuanrong_client
+    import transfer_queue.storage.clients.yuanrong_client as _ # noqa: F401
 except ImportError:
     pass
