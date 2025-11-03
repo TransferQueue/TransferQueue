@@ -171,6 +171,7 @@ class TransferQueueStorageManager(ABC):
 
     async def notify_data_update(
         self,
+        partition_id: str,
         fields: list[str],
         global_indexes: list[int],
         dtypes: dict[int, dict[str, Any]],
@@ -180,6 +181,7 @@ class TransferQueueStorageManager(ABC):
         Notify controller that new data is ready.
 
         Args:
+            partition_id: Current data partition id.
             fields: Data update related fields.
             global_indexes: Data update related global_indexes.
             dtypes: Per-field dtypes for each field, in {global_index: {field: dtype}} format.
@@ -202,6 +204,7 @@ class TransferQueueStorageManager(ABC):
                 request_type=ZMQRequestType.NOTIFY_DATA_UPDATE,
                 sender_id=self.storage_manager_id,
                 body={
+                    "partition_id": partition_id,
                     "fields": fields,
                     "global_indexes": global_indexes,
                     "dtypes": dtypes,

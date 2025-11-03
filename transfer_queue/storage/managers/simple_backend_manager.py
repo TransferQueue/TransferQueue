@@ -200,8 +200,12 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 per_field_dtypes[global_idx][field] = data_item.dtype if hasattr(data_item, "dtype") else None
                 per_field_shapes[global_idx][field] = data_item.shape if hasattr(data_item, "shape") else None
 
+        # Get current data partition id
+        partition_id = metadata.samples[0].partition_id
         # notify controller that new data is ready
-        await self.notify_data_update(list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes)
+        await self.notify_data_update(
+            partition_id, list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes
+        )
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
     async def _put_to_single_storage_unit(self, transfer_data: dict[str, Any], target_storage_unit=None, socket=None):

@@ -84,7 +84,7 @@ class TestTransferQueueController:
         success = ray.get(
             tq_controller.update_production_status.remote(
                 partition_id=partition_id,
-                sample_indices=metadata.global_indexes,
+                global_indexes=metadata.global_indexes,
                 field_names=metadata.field_names,
             )
         )
@@ -173,7 +173,7 @@ class TestTransferQueueController:
         success = ray.get(
             tq_controller.update_production_status.remote(
                 partition_id=partition_id_1,
-                sample_indices=metadata.global_indexes,
+                global_indexes=metadata.global_indexes,
                 field_names=metadata.field_names,
             )
         )
@@ -230,7 +230,7 @@ class TestTransferQueueController:
         success = ray.get(
             tq_controller.update_production_status.remote(
                 partition_id=partition_id_2,
-                sample_indices=val_metadata.global_indexes,
+                global_indexes=val_metadata.global_indexes,
                 field_names=val_metadata.field_names,
             )
         )

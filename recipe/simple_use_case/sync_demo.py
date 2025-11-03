@@ -56,11 +56,7 @@ def initialize_data_system(config):
         logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
     # 2. Initialize TransferQueueController (single controller only)
-    data_system_controller = TransferQueueController.remote(
-        global_batch_size=config.global_batch_size,
-        num_global_batch=config.num_global_batch,
-        num_n_samples=config.num_n_samples,
-    )
+    data_system_controller = TransferQueueController.remote()
     logger.info("TransferQueueController has been created.")
 
     # 3. Prepare necessary information
@@ -147,14 +143,14 @@ def fit(config, data_system_client):
                 batch_size=input_ids_repeated.size(0),
             )
 
-            data_system_client.put(data=prompt_batch, global_step=step)
+            data_system_client.put(data=prompt_batch, partition_id=f"train_{step}")
             logger.info("demo put prompts ok! ")
             time.sleep(5)
 
             batch_meta = data_system_client.get_meta(
                 data_fields=["input_ids", "attention_mask"],
                 batch_size=config.global_batch_size,
-                global_step=step,
+                partition_id=f"train_{step}",
                 get_n_samples=False,
                 task_name="generate_sequences",
             )
@@ -166,7 +162,7 @@ def fit(config, data_system_client):
             log_prob_meta = data_system_client.get_meta(
                 data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                 batch_size=config.global_batch_size,
-                global_step=step,
+                partition_id=f"train_{step}",
                 get_n_samples=False,
                 task_name="compute_old_log_prob",
             )
@@ -181,7 +177,7 @@ def fit(config, data_system_client):
             # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；
             # client再根据metadata通知所有storage unit清空
             # client选择一个主controller拿到metadata，其他的controller直接清空不用返回metadata即可
-            data_system_client.clear(global_step=step)
+            data_system_client.clear(partition_id=f"train_{step}")
             logger.info("clear ok! ")
     logger.info("demo done!")
 

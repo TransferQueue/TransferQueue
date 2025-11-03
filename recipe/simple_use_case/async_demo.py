@@ -211,11 +211,7 @@ class Trainer:
             logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
         # 2. Initialize TransferQueueController (single controller only)
-        self.data_system_controller = TransferQueueController.remote(
-            global_batch_size=self.config.global_batch_size,
-            num_global_batch=self.config.num_global_batch,
-            num_n_samples=self.config.num_n_samples,
-        )
+        self.data_system_controller = TransferQueueController.remote()
         logger.info("TransferQueueController has been created.")
 
         # 3. Prepare necessary information
@@ -254,7 +250,7 @@ class Trainer:
                     batch_size=input_ids_repeated.size(0),
                 )
 
-                asyncio.run(self.data_system_client.async_put(data=prompt_batch, global_step=step))
+                asyncio.run(self.data_system_client.async_put(data=prompt_batch, partition_id=f"train_{step}"))
 
                 logger.info("demo put prompts ok! ")
                 time.sleep(5)
@@ -263,7 +259,7 @@ class Trainer:
                     self.data_system_client.async_get_meta(
                         data_fields=["input_ids", "attention_mask"],
                         batch_size=self.config.global_batch_size * self.config.num_n_samples,
-                        global_step=step,
+                        partition_id=f"train_{step}",
                         get_n_samples=False,
                         task_name="generate_sequences",
                     )
@@ -281,7 +277,7 @@ class Trainer:
                     self.data_system_client.async_get_meta(
                         data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                         batch_size=self.config.global_batch_size * self.config.num_n_samples,
-                        global_step=step,
+                        partition_id=f"train_{step}",
                         get_n_samples=False,
                         task_name="compute_old_log_prob",
                     )
@@ -297,7 +293,7 @@ class Trainer:
 
                 # client通知controller进行数据状态清空，controller返回metadata；
                 # client再根据metadata通知所有storage unit清空
-                asyncio.run(self.data_system_client.async_clear(global_step=step))
+                asyncio.run(self.data_system_client.async_clear(partition_id=f"train_{step}"))
                 logger.info("clear ok! ")
         logger.info("demo done!")
 
