@@ -31,6 +31,7 @@ class YRStorageClient(TransferQueueStorageClient):
         self.host = config.get("host")
         self.port = config.get("port")
         self.device_id = config.get("device_id")
+        torch_npu.set_device(f'npu:{self.device_id}') #set npu_device
         self._ds_client = datasystem.DsTensorClient(self.host, self.port, self.device_id)
         self._ds_client.init()
 
