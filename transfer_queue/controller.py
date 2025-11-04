@@ -456,45 +456,6 @@ class DataPartitionStatus:
 
         return ready_sample_indices
 
-    def generate_data_status_mask(
-        self, field_names: list[str], task_name: str
-    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        """
-        Generate data availability mask for this partition.
-        This replaces the original generate_data_status_mask functionality.
-
-        Args:
-            field_names: List of field names to check
-            task_name: Name of the consumer task
-
-        Returns:
-            Tuple of (row_mask, col_mask) tensors, or (None, None) if not available
-        """
-        if self.production_status is None:
-            return None, None
-
-        # Check if all requested fields are registered
-        for field_name in field_names:
-            if field_name not in self.field_name_mapping:
-                return None, None
-
-        # Create row mask
-        row_mask = torch.ones(self.total_samples_num, dtype=torch.bool)
-
-        # Apply consumption filter
-        consumption_status = self.get_consumption_status(task_name)
-        if consumption_status is not None:
-            unconsumed_mask = consumption_status == 0
-            row_mask &= unconsumed_mask
-
-        # Create column mask for requested fields
-        col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
-        field_indices = [self.field_name_mapping[field] for field in field_names]
-        if field_indices:
-            col_mask[field_indices] = True
-
-        return row_mask, col_mask
-
     # ==================== Field Metadata Methods ====================
 
     def get_field_dtype(self, sample_idx: int, field_name: str) -> Optional[Any]:
