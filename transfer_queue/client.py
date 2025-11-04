@@ -248,7 +248,7 @@ class AsyncTransferQueueClient:
             data: Data to write as TensorDict
             metadata: Records the metadata of a batch of data samples, containing index and
                       storage unit information. If None, metadata will be auto-generated.
-            partition_id: Current data partition id (required if metadata is not provided)
+            partition_id: Target data partition id (required if metadata is not provided)
 
         Raises:
             ValueError: If metadata is None or empty, or if partition_id is None when metadata is not provided
@@ -293,7 +293,8 @@ class AsyncTransferQueueClient:
             )
 
         if metadata is None:
-            assert partition_id is not None, "partition_id must be provided if metadata is not given"
+            if partition_id is None:
+                raise ValueError("partition_id must be provided if metadata is not given")
 
             metadata = await self.async_get_meta(
                 data_fields=list(data.keys()),
@@ -452,7 +453,7 @@ class AsyncTransferQueueClient:
             raise
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_current_step_consumption(self, task_name: str, partition_id: str):
+    async def check_data_consumption_status(self, task_name: str, partition_id: str):
         """Check if all samples for current step have been consumed.
 
         Args:
@@ -463,7 +464,7 @@ class AsyncTransferQueueClient:
         pass
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_current_step_production(self, data_fields: list[str], partition_id: str):
+    async def check_data_production_status(self, data_fields: list[str], partition_id: str):
         """Check if all samples for current partition are ready for consumption.
 
         Args:
@@ -511,7 +512,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
         Args:
             data: Data to write as TensorDict
             metadata: Optional metadata containing index and storage unit information
-            partition_id: Current data partition id (required if metadata is not provided)
+            partition_id: Target data partition id (required if metadata is not provided)
         """
         return asyncio.run(self.async_put(data, metadata, partition_id))
 
@@ -528,7 +529,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
         Args:
             data_fields: List of data field names to retrieve metadata for
             batch_size: Number of samples to request in the batch
-            partition_id: Current data partition id
+            partition_id: Target data partition id
             get_n_samples: If True, arrange samples of the same prompt contiguously
             task_name: Optional task name associated with the request
 

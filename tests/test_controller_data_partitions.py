@@ -22,24 +22,24 @@ def test_data_partition_status():
     partition = DataPartitionStatus(partition_id="test@partition_1")
 
     # Test initial state
-    assert partition.total_samples == 0
-    assert partition.total_fields == 0
-    assert partition.allocated_fields == 0
+    assert partition.total_samples_num == 0
+    assert partition.total_fields_num == 0
+    assert partition.allocated_fields_num == 0
     assert partition.production_status is None
 
     print("✓ Initial state correct")
 
     # Test dynamic expansion through update_production_status
     success = partition.update_production_status(
-        sample_indices=[0, 1, 2],
+        global_indices=[0, 1, 2],
         field_names=["input_ids", "attention_mask"],
         dtypes={0: {"input_ids": "torch.int32"}, 1: {"attention_mask": "torch.bool"}},
         shapes={0: {"input_ids": (512,)}, 1: {"attention_mask": (512,)}},
     )
 
     assert success
-    assert partition.total_samples >= 3  # Should expand to accommodate index 2 (likely to TQ_INIT_FIELD_NUM)
-    assert partition.total_fields == 2  # Two fields registered
+    assert partition.total_samples_num >= 3  # Should expand to accommodate index 2 (likely to TQ_INIT_FIELD_NUM)
+    assert partition.total_fields_num == 2  # Two fields registered
     assert partition.production_status is not None
     assert partition.production_status.shape[0] >= 3
     assert partition.production_status.shape[1] >= 2
@@ -57,7 +57,7 @@ def test_data_partition_status():
     # Test consumption status
     consumption_tensor = partition.get_consumption_status("test_task")
     assert consumption_tensor is not None
-    assert consumption_tensor.shape[0] == partition.total_samples
+    assert consumption_tensor.shape[0] == partition.total_samples_num
 
     print("✓ Consumption status creation works")
 
@@ -82,8 +82,8 @@ def test_data_partition_status():
     # Test statistics
     stats = partition.get_statistics()
     assert stats["partition_id"] == "test@partition_1"
-    assert stats["total_samples"] == partition.total_samples
-    assert stats["total_fields"] == 2
+    assert stats["total_samples_num"] == partition.total_samples_num
+    assert stats["total_fields_num"] == 2
     assert "consumption_statistics" in stats
 
     print("✓ Statistics generation works")
@@ -133,7 +133,7 @@ def test_dynamic_expansion_scenarios():
 
     # Scenario 1: Adding samples with large gaps
     partition.update_production_status([0, 5, 10], ["field1"])
-    assert partition.total_samples >= 11  # Should accommodate index 10
+    assert partition.total_samples_num >= 11  # Should accommodate index 10
 
     print("✓ Large index gaps handled correctly")
 
@@ -141,8 +141,8 @@ def test_dynamic_expansion_scenarios():
     for i in range(15):
         partition.update_production_status([0], [f"field_{i}"])
 
-    assert partition.total_fields == 16  # Original + 15 new fields
-    assert partition.allocated_fields >= 16
+    assert partition.total_fields_num == 16  # Original + 15 new fields
+    assert partition.allocated_fields_num >= 16
 
     print("✓ Dynamic field expansion works")
 
@@ -172,17 +172,17 @@ def test_data_partition_status_advanced():
     partition = DataPartitionStatus(partition_id="advanced_test")
 
     # Initially empty
-    assert partition.total_samples == 0
-    assert partition.total_fields == 0
-    assert partition.allocated_fields == 0
+    assert partition.total_samples_num == 0
+    assert partition.total_fields_num == 0
+    assert partition.allocated_fields_num == 0
 
     # Add data to trigger expansion
     partition.update_production_status([0, 1, 2, 3, 4], ["field_a", "field_b", "field_c"])
 
     # Properties should reflect current state
-    assert partition.total_samples >= 5  # At least 5 samples
-    assert partition.total_fields == 3  # Exactly 3 fields registered
-    assert partition.allocated_fields >= 3  # At least 3 columns allocated
+    assert partition.total_samples_num >= 5  # At least 5 samples
+    assert partition.total_fields_num == 3  # Exactly 3 fields registered
+    assert partition.allocated_fields_num >= 3  # At least 3 columns allocated
 
     print("✓ Property-based capacity tracking works")
 
@@ -218,46 +218,20 @@ def test_data_partition_status_advanced():
         assert field in partition.field_name_mapping
 
     expected_fields = 1 + len(new_fields)
-    assert partition.total_fields >= expected_fields  # Should be at least this many fields
-    assert partition.allocated_fields >= partition.total_fields
+    assert partition.total_fields_num >= expected_fields  # Should be at least this many fields
+    assert partition.allocated_fields_num >= partition.total_fields_num
 
     print("✓ Complex field addition scenarios work")
 
-    # Test 4: Data mask generation with filters
-    # Set up production and consumption data
-    sample_indices = list(range(10))
-    field_names = ["mask_test_field_1", "mask_test_field_2"]
-    partition.update_production_status(sample_indices, field_names)
-
-    task_name = "mask_test_task"
-    # Mark some samples as consumed
-    partition.mark_consumed(task_name, [2, 5, 8])
-
-    # Generate mask with sample filter
-    sample_filter = [1, 3, 4, 6, 7, 9]  # Exclude consumed samples
-    row_mask, col_mask = partition.generate_data_status_mask(field_names, task_name, sample_filter)
-
-    assert row_mask is not None
-    assert col_mask is not None
-    assert row_mask.shape[0] >= 10
-    assert col_mask.shape[0] >= partition.total_fields
-
-    # Verify masks correctly identify ready samples
-    ready_field_indices = [partition.field_name_mapping[f] for f in field_names]
-    for col_idx in ready_field_indices:
-        assert col_mask[col_idx].item()
-
-    print("✓ Data mask generation with filters works")
-
-    # Test 5: Statistics and monitoring
+    # Test 4: Statistics and monitoring
     stats = partition.get_statistics()
 
     required_keys = [
         "partition_id",
         "created_at",
-        "total_samples",
-        "total_fields",
-        "allocated_fields",
+        "total_samples_num",
+        "total_fields_num",
+        "allocated_fields_num",
         "registered_tasks",
         "produced_samples",
         "production_progress",
@@ -269,13 +243,13 @@ def test_data_partition_status_advanced():
         assert key in stats, f"Missing key in statistics: {key}"
 
     assert stats["partition_id"] == "advanced_test"
-    assert stats["total_fields"] > 0
+    assert stats["total_fields_num"] > 0
     assert isinstance(stats["field_statistics"], dict)
     assert isinstance(stats["consumption_statistics"], dict)
 
     print("✓ Statistics generation comprehensive")
 
-    # Test 6: Data clearing functionality
+    # Test 5: Data clearing functionality
     initial_consumption_sum = sum(t.sum().item() for t in partition.consumption_status.values())
 
     # Clear only production data
@@ -305,24 +279,9 @@ def test_edge_cases_and_error_handling():
     ready_samples = partition.scan_data_status(["nonexistent_field"], "task")
     assert ready_samples == []
 
-    # Mask generation on empty partition should return None
-    row_mask, col_mask = partition.generate_data_status_mask(["field"], "task")
-    assert row_mask is None
-    assert col_mask is None
-
     print("✓ Empty partition operations handled gracefully")
 
-    # Test 2: Invalid sample indices
-    partition.update_production_status([5, 10, 15], ["field"])  # Large gaps
-
-    # Should handle out-of-bounds gracefully in filters
-    invalid_filter = [20, 25, 30]  # Indices beyond current capacity
-    ready_samples = partition.scan_data_status(["field"], "task", invalid_filter)
-    assert ready_samples == []  # Should return empty, not crash
-
-    print("✓ Invalid sample indices handled gracefully")
-
-    # Test 3: Field metadata operations
+    # Test 2: Field metadata operations
     # Test metadata retrieval for non-existent samples/fields
     dtype = partition.get_field_dtype(999, "nonexistent_field")
     shape = partition.get_field_shape(999, "nonexistent_field")
@@ -331,12 +290,12 @@ def test_edge_cases_and_error_handling():
 
     print("✓ Metadata retrieval for non-existent data handled correctly")
 
-    # Test 4: Consumption status edge cases
+    # Test 3: Consumption status edge cases
     # Test consumption status creation before production status
     task_name = "early_task"
     consumption_tensor = partition.get_consumption_status(task_name)
     assert consumption_tensor is not None
-    assert consumption_tensor.shape[0] == partition.total_samples
+    assert consumption_tensor.shape[0] == partition.total_samples_num
 
     # Mark consumed samples that don't exist yet - this may fail gracefully
     success = partition.mark_consumed(task_name, [1000])  # Very large index
@@ -345,7 +304,7 @@ def test_edge_cases_and_error_handling():
 
     print("✓ Consumption status edge cases handled correctly")
 
-    # Test 5: Production status update error conditions
+    # Test 4: Production status update error conditions
     # Test with empty lists
     success = partition.update_production_status([], [])
     assert success  # Should handle empty lists gracefully
@@ -393,7 +352,7 @@ def test_backward_compatibility():
         assert field in partition.field_name_mapping
         field_idx = partition.field_name_mapping[field]
         assert field_idx >= 0
-        assert field_idx < partition.allocated_fields
+        assert field_idx < partition.allocated_fields_num
 
     print("✓ Field mapping consistency maintained")
 
@@ -411,14 +370,14 @@ def test_backward_compatibility():
 
     # Test 4: Statistics format should be familiar
     stats = partition.get_statistics()
-    familiar_keys = ["partition_id", "total_samples", "total_fields"]
+    familiar_keys = ["partition_id", "total_samples_num", "total_fields_num"]
     for key in familiar_keys:
         assert key in stats
 
-    assert isinstance(stats["total_samples"], int)
-    assert isinstance(stats["total_fields"], int)
-    assert stats["total_samples"] > 0
-    assert stats["total_fields"] == len(field_names)
+    assert isinstance(stats["total_samples_num"], int)
+    assert isinstance(stats["total_fields_num"], int)
+    assert stats["total_samples_num"] > 0
+    assert stats["total_fields_num"] == len(field_names)
 
     print("✓ Statistics format maintains familiarity")
 
@@ -440,7 +399,7 @@ def test_performance_characteristics():
     partition.update_production_status([0], many_fields)
     field_creation_time = time.time() - start_time
 
-    assert partition.total_fields == field_count
+    assert partition.total_fields_num == field_count
     assert field_creation_time < 5.0  # Should complete within 5 seconds
     print(f"✓ Large field creation: {field_creation_time:.3f}s for {field_count} fields")
 
@@ -450,7 +409,7 @@ def test_performance_characteristics():
     partition.update_production_status(many_samples, ["test_field"])
     sample_creation_time = time.time() - start_time
 
-    assert partition.total_samples >= 5000
+    assert partition.total_samples_num >= 5000
     assert sample_creation_time < 5.0  # Should complete within 5 seconds
     print(f"✓ Large sample creation: {sample_creation_time:.3f}s for 5000 samples")
 
@@ -469,15 +428,15 @@ def test_performance_characteristics():
 
     # Test 4: Memory usage pattern
     # The implementation should not grow memory excessively
-    initial_allocated = partition.allocated_fields
-    initial_samples = partition.total_samples
+    initial_allocated = partition.allocated_fields_num
+    initial_samples = partition.total_samples_num
 
     # Add more data (should reuse existing space where possible)
     partition.update_production_status([100], ["new_field"])
 
     # Memory growth should be reasonable
-    final_allocated = partition.allocated_fields
-    final_samples = partition.total_samples
+    final_allocated = partition.allocated_fields_num
+    final_samples = partition.total_samples_num
 
     # Should not double the allocation for small additions
     if final_samples == initial_samples:  # If sample count didn't change

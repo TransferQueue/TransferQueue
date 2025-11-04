@@ -201,7 +201,10 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 per_field_shapes[global_idx][field] = data_item.shape if hasattr(data_item, "shape") else None
 
         # Get current data partition id
+        # Note: Currently we only support putting to & getting data from a single data partition simultaneously,
+        # but in the future we may support putting to & getting data from multiple data partitions concurrently.
         partition_id = metadata.samples[0].partition_id
+
         # notify controller that new data is ready
         await self.notify_data_update(
             partition_id, list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes

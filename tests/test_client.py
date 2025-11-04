@@ -419,5 +419,5 @@ def test_put_without_required_params(client_setup):
     test_data = TensorDict({"tokens": torch.randint(0, 100, (5, 128))}, batch_size=5)
 
     # Test put without partition id (should fail)
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         client.put(data=test_data)

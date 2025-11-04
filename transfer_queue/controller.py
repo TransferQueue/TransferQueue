@@ -49,6 +49,8 @@ logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 300))
 TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))
 TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL", 2))
+
+TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
 TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
 
 # Expansion configuration - Unified approach using minimum expansion sizes
@@ -58,7 +60,6 @@ TQ_SAMPLE_MIN_EXPANSION_SIZE = int(
 TQ_FIELD_MIN_EXPANSION_SIZE = int(
     os.environ.get("TQ_FIELD_MIN_EXPANSION_SIZE", 5)
 )  # Minimum expansion size for fields (columns)
-TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
 
 
 class PartitionIndexManager:
@@ -77,7 +78,7 @@ class PartitionIndexManager:
         # Global index counter for allocating new indexes
         self.global_index_counter = 0
 
-        # Track all allocated indexes (active + reusable)
+        # Track all active indexes
         self.allocated_indexes = set()
 
     def allocate_indexes(self, partition_id, count=1) -> list:
@@ -92,6 +93,8 @@ class PartitionIndexManager:
         Returns:
             list: List of allocated global_indexes
         """
+        if count <= 0:
+            raise ValueError(f"Number of indexes needed must larger than 0, but got {count}")
         indexes = []
 
         # Get indexes from reusable pool
@@ -103,25 +106,20 @@ class PartitionIndexManager:
             indexes.extend(self.reusable_indexes[:num_reuse])
             del self.reusable_indexes[:num_reuse]
 
-            # Remove these indexes from allocated_indexes (they become active again)
-            for idx in indexes:
-                self.allocated_indexes.discard(idx)
-
         # If reusable pool doesn't have enough indexes, allocate new ones
         if len(indexes) < count:
             # Ensure newly allocated indexes don't conflict with existing ones
             needed = count - len(indexes)
-            new_indexes = []
+            # Batch allocate consecutive index ranges
+            start_index = self.global_index_counter
+            end_index = start_index + needed
 
-            while len(new_indexes) < needed:
-                # Check if current counter points to an already used index
-                if self.global_index_counter not in self.allocated_indexes:
-                    new_indexes.append(self.global_index_counter)
-                    self.allocated_indexes.add(self.global_index_counter)
-                    self.global_index_counter += 1
-                else:
-                    # If already used, increment counter until finding available index
-                    self.global_index_counter += 1
+            # Directly generate consecutive index list
+            new_indexes = list(range(start_index, end_index))
+
+            # Batch update status
+            self.allocated_indexes.update(new_indexes)
+            self.global_index_counter = end_index
 
             indexes.extend(new_indexes)
 
@@ -146,8 +144,9 @@ class PartitionIndexManager:
             # Add released indexes to reusable pool
             self.reusable_indexes.extend(indexes)
 
-            # Add released indexes to allocated_indexes set
-            self.allocated_indexes.update(indexes)
+            # Remove these indexes from allocated_indexes
+            for idx in indexes:
+                self.allocated_indexes.discard(idx)
 
             return indexes
         return []
@@ -163,24 +162,6 @@ class PartitionIndexManager:
             set: Set of global_indexes for this partition
         """
         return self.partition_to_indexes.get(partition_id, set()).copy()
-
-    def get_allocated_indexes(self):
-        """
-        Get all allocated indexes (active + reusable).
-
-        Returns:
-            set: All allocated indexes
-        """
-        # Active indexes
-        active_indexes = set()
-        for indexes in self.partition_to_indexes.values():
-            active_indexes.update(indexes)
-
-        # Reusable indexes
-        reusable_indexes = set(self.reusable_indexes)
-
-        # Return all allocated indexes
-        return active_indexes.union(reusable_indexes)
 
 
 @dataclass
@@ -206,22 +187,22 @@ class DataPartitionStatus:
 
     # Field metadata
     field_name_mapping: dict[str, int] = field(default_factory=dict)  # field_name -> column_index
-    field_dtypes: dict[int, dict[str, Any]] = field(default_factory=dict)  # sample_idx -> {field: dtype}
-    field_shapes: dict[int, dict[str, Any]] = field(default_factory=dict)  # sample_idx -> {field: shape}
+    field_dtypes: dict[int, dict[str, Any]] = field(default_factory=dict)  # global_idx -> {field: dtype}
+    field_shapes: dict[int, dict[str, Any]] = field(default_factory=dict)  # global_idx -> {field: shape}
 
     # Dynamic configuration - these are computed from the current state
     @property
-    def total_samples(self) -> int:
+    def total_samples_num(self) -> int:
         """Current number of samples (rows) in the partition."""
         return self.production_status.shape[0] if self.production_status is not None else 0
 
     @property
-    def total_fields(self) -> int:
+    def total_fields_num(self) -> int:
         """Current number of fields (columns) in the partition."""
         return len(self.field_name_mapping)
 
     @property
-    def allocated_fields(self) -> int:
+    def allocated_fields_num(self) -> int:
         """Current number of allocated columns in the tensor."""
         return self.production_status.shape[1] if self.production_status is not None else 0
 
@@ -313,7 +294,7 @@ class DataPartitionStatus:
 
     def update_production_status(
         self,
-        sample_indices: list[int],
+        global_indices: list[int],
         field_names: list[str],
         dtypes: Optional[dict[int, dict[str, Any]]] = None,
         shapes: Optional[dict[int, dict[str, Any]]] = None,
@@ -323,7 +304,7 @@ class DataPartitionStatus:
         Handles dynamic expansion of both samples and fields.
 
         Args:
-            sample_indices: List of sample indices to update
+            global_indices: List of sample indices to update
             field_names: List of field names to mark as produced
             dtypes: Optional per-sample field dtype information
             shapes: Optional per-sample field shape information
@@ -333,7 +314,7 @@ class DataPartitionStatus:
         """
         try:
             # Determine required capacity
-            max_sample_idx = max(sample_indices) if sample_indices else -1
+            max_sample_idx = max(global_indices) if global_indices else -1
             required_samples = max_sample_idx + 1
 
             # Register new fields if needed
@@ -350,12 +331,12 @@ class DataPartitionStatus:
             self.ensure_samples_capacity(required_samples)
 
             # Update production status
-            if self.production_status is not None and sample_indices and field_names:
+            if self.production_status is not None and global_indices and field_names:
                 field_indices = [self.field_name_mapping.get(field) for field in field_names]
-                self.production_status[torch.tensor(sample_indices)[:, None], torch.tensor(field_indices)] = 1
+                self.production_status[torch.tensor(global_indices)[:, None], torch.tensor(field_indices)] = 1
 
             # Update field metadata
-            self._update_field_metadata(sample_indices, field_names, dtypes, shapes)
+            self._update_field_metadata(global_indices, field_names, dtypes, shapes)
 
             return True
 
@@ -363,25 +344,26 @@ class DataPartitionStatus:
             logger.error(f"Error updating production status for partition {self.partition_id}: {e}")
             return False
 
+    # TODO: Need to optimize, now it will be very slow
     def _update_field_metadata(
         self,
-        sample_indices: list[int],
+        global_indices: list[int],
         field_names: list[str],
         dtypes: Optional[dict[int, dict[str, Any]]] = None,
         shapes: Optional[dict[int, dict[str, Any]]] = None,
     ):
         """Update field dtype and shape metadata."""
-        for sample_idx in sample_indices:
-            if sample_idx not in self.field_dtypes:
-                self.field_dtypes[sample_idx] = {}
-            if sample_idx not in self.field_shapes:
-                self.field_shapes[sample_idx] = {}
+        for global_idx in global_indices:
+            if global_idx not in self.field_dtypes:
+                self.field_dtypes[global_idx] = {}
+            if global_idx not in self.field_shapes:
+                self.field_shapes[global_idx] = {}
 
             for field_name in field_names:
-                if dtypes and sample_idx in dtypes and field_name in dtypes[sample_idx]:
-                    self.field_dtypes[sample_idx][field_name] = dtypes[sample_idx][field_name]
-                if shapes and sample_idx in shapes and field_name in shapes[sample_idx]:
-                    self.field_shapes[sample_idx][field_name] = shapes[sample_idx][field_name]
+                if dtypes and global_idx in dtypes and field_name in dtypes[global_idx]:
+                    self.field_dtypes[global_idx][field_name] = dtypes[global_idx][field_name]
+                if shapes and global_idx in shapes and field_name in shapes[global_idx]:
+                    self.field_shapes[global_idx][field_name] = shapes[global_idx][field_name]
 
     # ==================== Consumption Status Interface ====================
 
@@ -398,34 +380,28 @@ class DataPartitionStatus:
         """
         if task_name not in self.consumption_status:
             if self.production_status is not None:
-                self.consumption_status[task_name] = torch.zeros(self.total_samples, dtype=torch.int8)
+                self.consumption_status[task_name] = torch.zeros(self.total_samples_num, dtype=torch.int8)
             else:
                 self.consumption_status[task_name] = torch.zeros(0, dtype=torch.int8)
 
-        # Ensure consumption tensor has same number of rows as production tensor
-        consumption_tensor = self.consumption_status[task_name]
-        if self.production_status is not None and consumption_tensor.shape[0] < self.total_samples:
-            expanded_consumption = torch.zeros(self.total_samples, dtype=torch.int8)
-            expanded_consumption[: consumption_tensor.shape[0]] = consumption_tensor
-            self.consumption_status[task_name] = expanded_consumption
-
         return self.consumption_status[task_name]
 
-    def mark_consumed(self, task_name: str, sample_indices: list[int]) -> bool:
+    # TODO: No need return, just raise error. Same With other function
+    def mark_consumed(self, task_name: str, global_indices: list[int]) -> bool:
         """
         Mark specific samples as consumed by a task.
 
         Args:
             task_name: Name of the consumer task
-            sample_indices: List of sample indices to mark as consumed
+            global_indices: List of sample indices to mark as consumed
 
         Returns:
             True if successful, False on error
         """
         try:
             consumption_status = self.get_consumption_status(task_name)
-            if consumption_status is not None and sample_indices:
-                consumption_status[sample_indices] = 1
+            if consumption_status is not None and global_indices:
+                consumption_status[global_indices] = 1
             return True
         except Exception as e:
             logger.error(f"Error marking samples consumed for partition {self.partition_id}, task {task_name}: {e}")
@@ -434,8 +410,7 @@ class DataPartitionStatus:
     # ==================== Data Scanning and Query Methods ====================
 
     def scan_data_status(
-        self, field_names: list[str], task_name: str, sample_filter: Optional[list[int]] = None
-    ) -> list[int]:
+        self, field_names: list[str], task_name: str) -> list[int]:
         """
         Scan data status to find samples ready for consumption.
         This replaces the original _scan_data_status functionality.
@@ -443,7 +418,6 @@ class DataPartitionStatus:
         Args:
             field_names: List of required field names
             task_name: Name of the consumer task
-            sample_filter: Optional list of specific sample indices to consider
 
         Returns:
             List of sample indices that are ready for consumption
@@ -456,14 +430,7 @@ class DataPartitionStatus:
             if field_name not in self.field_name_mapping:
                 return []
 
-        # Create row mask
-        if sample_filter is not None:
-            row_mask = torch.zeros(self.total_samples, dtype=torch.bool)
-            valid_indices = [idx for idx in sample_filter if idx < self.total_samples]
-            if valid_indices:
-                row_mask[valid_indices] = True
-        else:
-            row_mask = torch.ones(self.total_samples, dtype=torch.bool)
+        row_mask = torch.ones(self.total_samples_num, dtype=torch.bool)
 
         # Apply consumption filter (exclude already consumed samples)
         consumption_status = self.get_consumption_status(task_name)
@@ -472,7 +439,7 @@ class DataPartitionStatus:
             row_mask &= unconsumed_mask
 
         # Create column mask for requested fields
-        col_mask = torch.zeros(self.allocated_fields, dtype=torch.bool)
+        col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
         field_indices = [self.field_name_mapping[field] for field in field_names]
         if field_indices:
             col_mask[field_indices] = True
@@ -491,8 +458,7 @@ class DataPartitionStatus:
         return ready_sample_indices
 
     def generate_data_status_mask(
-        self, field_names: list[str], task_name: str, sample_filter: Optional[list[int]] = None
-    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        self, field_names: list[str], task_name: str) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Generate data availability mask for this partition.
         This replaces the original generate_data_status_mask functionality.
@@ -500,7 +466,6 @@ class DataPartitionStatus:
         Args:
             field_names: List of field names to check
             task_name: Name of the consumer task
-            sample_filter: Optional list of specific sample indices to consider
 
         Returns:
             Tuple of (row_mask, col_mask) tensors, or (None, None) if not available
@@ -514,13 +479,7 @@ class DataPartitionStatus:
                 return None, None
 
         # Create row mask
-        if sample_filter is not None:
-            row_mask = torch.zeros(self.total_samples, dtype=torch.bool)
-            valid_indices = [idx for idx in sample_filter if idx < self.total_samples]
-            if valid_indices:
-                row_mask[valid_indices] = True
-        else:
-            row_mask = torch.ones(self.total_samples, dtype=torch.bool)
+        row_mask = torch.ones(self.total_samples_num, dtype=torch.bool)
 
         # Apply consumption filter
         consumption_status = self.get_consumption_status(task_name)
@@ -529,7 +488,7 @@ class DataPartitionStatus:
             row_mask &= unconsumed_mask
 
         # Create column mask for requested fields
-        col_mask = torch.zeros(self.allocated_fields, dtype=torch.bool)
+        col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
         field_indices = [self.field_name_mapping[field] for field in field_names]
         if field_indices:
             col_mask[field_indices] = True
@@ -553,16 +512,17 @@ class DataPartitionStatus:
         stats = {
             "partition_id": self.partition_id,
             "created_at": self.created_at,
-            "total_samples": self.total_samples,
-            "total_fields": self.total_fields,
-            "allocated_fields": self.allocated_fields,
+            "total_samples_num": self.total_samples_num,
+            "total_fields_num": self.total_fields_num,
+            "allocated_fields_num": self.allocated_fields_num,
             "registered_tasks": list(self.consumption_status.keys()),
         }
 
         if self.production_status is not None:
             produced_samples = torch.any(self.production_status == 1, dim=1).sum().item()
             stats["produced_samples"] = produced_samples
-            stats["production_progress"] = produced_samples / self.total_samples if self.total_samples > 0 else 0
+            stats[
+                "production_progress"] = produced_samples / self.total_samples_num if self.total_samples_num > 0 else 0
 
             # Field-wise production statistics
             field_stats = {}
@@ -570,7 +530,7 @@ class DataPartitionStatus:
                 field_produced = (self.production_status[:, field_idx] == 1).sum().item()
                 field_stats[field_name] = {
                     "produced_samples": field_produced,
-                    "production_progress": field_produced / self.total_samples if self.total_samples > 0 else 0,
+                    "production_progress": field_produced / self.total_samples_num if self.total_samples_num > 0 else 0,
                 }
             stats["field_statistics"] = field_stats
 
@@ -580,7 +540,7 @@ class DataPartitionStatus:
             consumed_samples = (consumption_tensor == 1).sum().item()
             consumption_stats[task_name] = {
                 "consumed_samples": consumed_samples,
-                "consumption_progress": consumed_samples / self.total_samples if self.total_samples > 0 else 0,
+                "consumption_progress": consumed_samples / self.total_samples_num if self.total_samples_num > 0 else 0,
             }
         stats["consumption_statistics"] = consumption_stats
 
@@ -718,6 +678,7 @@ class TransferQueueController:
 
     # ==================== Data Production API ====================
 
+    # TODO: Modify dtypes & shapes to be required
     def update_production_status(
         self,
         partition_id: str,
@@ -772,28 +733,6 @@ class TransferQueueController:
             return None
 
         return partition.get_consumption_status(task_name)
-
-    def generate_data_status_mask(
-        self, partition_id: str, field_names: list[str], task_name: str, sample_filter: Optional[list[int]] = None
-    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-        """
-        Generate data availability mask for a specific partition.
-        Delegates to the partition's own method.
-
-        Args:
-            partition_id: ID of the partition
-            field_names: List of field names to check
-            task_name: Name of the consumer task
-            sample_filter: Optional list of specific sample indices to consider
-
-        Returns:
-            Tuple of (row_mask, col_mask) tensors if partition exists, (None, None) otherwise
-        """
-        partition = self.get_partition(partition_id)
-        if not partition:
-            return None, None
-
-        return partition.generate_data_status_mask(field_names, task_name, sample_filter)
 
     def get_metadata(
         self,
@@ -915,7 +854,7 @@ class TransferQueueController:
                 continue
 
             # Use partition's own scanning method
-            ready_sample_indices = partition.scan_data_status(data_fields, task_name, sample_filter)
+            ready_sample_indices = partition.scan_data_status(data_fields, task_name)
 
             if len(ready_sample_indices) >= batch_size:
                 return ready_sample_indices[:batch_size]
@@ -1014,6 +953,7 @@ class TransferQueueController:
 
         return BatchMeta(samples=samples)
 
+    # TODO: No need return, just raise error. Same With other function
     def clear(self, partition_id: str, clear_consumption: bool = True) -> bool:
         """
         Clear data for a specific partition.
