@@ -3,7 +3,8 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from transfer_queue.storage.clients.factory import StorageClientFactory, TransferQueueStorageClient
+from transfer_queue.storage.clients.base import TransferQueueStorageKVClient
+from transfer_queue.storage.clients.factory import StorageClientFactory
 
 YUANRONG_DATASYSTEM_IMPORTED: bool = True
 TORCH_NPU_IMPORTED: bool = True
@@ -19,7 +20,7 @@ except ImportError:
 
 # TODO: DSTensorClient.dev_mget has wrong behavior: it may require stricter environment to execute
 @StorageClientFactory.register("Yuanrong")
-class YRStorageClient(TransferQueueStorageClient):
+class YRStorageClient(TransferQueueStorageKVClient):
     """
     Storage client for YuanRong DataSystem.
     Communicates with the remote tensor storage service via DsTensorClient.

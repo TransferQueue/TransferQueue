@@ -1,6 +1,5 @@
 import unittest
 
-# from ..clients.factory import StorageClientFactory
 import torch
 from tensordict import TensorDict
 
@@ -48,46 +47,44 @@ class Test(unittest.TestCase):
     #     self.sm = YuanrongStorageManager(self.cfg)
 
     def test_generate_keys(self):
-        """测试 _generate_keys 生成正确的 key 列表"""
+        """Test whether _generate_keys can generate the correct key list."""
         keys = KVStorageManager._generate_keys(self.metadata)
         expected = ["8@label", "9@label", "10@label", "8@mask", "9@mask", "10@mask", "8@text", "9@text", "10@text"]
         self.assertEqual(keys, expected)
         self.assertEqual(len(keys), 9)  # 3 fields * 3 indexes
 
     def test_generate_values(self):
-        """测试 _generate_values 按 field-major 扁平化 tensor"""
+        """
+        Test whether _generate_values can flatten the TensorDict into an ordered list of tensors,
+        using field_name as the primary key and global_index as the secondary key.
+        """
         values = KVStorageManager._generate_values(self.data)
         expected_length = len(self.field_names) * len(self.global_indexes)  # 9
         self.assertEqual(len(values), expected_length)
 
     def test_generate_values_type_check(self):
-        """测试 _generate_values 对非 tensor 输入抛出异常"""
+        """Test whether _generate_values raises an exception for non-tensor inputs."""
         bad_data = TensorDict({"text": torch.tensor([1, 2]), "label": "not_a_tensor"}, batch_size=2)
 
         with self.assertRaises(TypeError):
             KVStorageManager._generate_values(bad_data)
 
     def test_merge_kv_to_tensordict(self):
-        """测试 _merge_kv_to_tensordict 能正确重建 TensorDict"""
-        # 先生成 values
+        """Test whether _merge_kv_to_tensordict can correctly reconstruct the TensorDict."""
+        # generate values firstly
         values = KVStorageManager._generate_values(self.data)
 
-        # 合并回 TensorDict
+        # merge values to TensorDict
         reconstructed = KVStorageManager._merge_kv_to_tensordict(self.metadata, values)
 
-        # print(reconstructed)
-
-        # 检查字段
         self.assertIn("text", reconstructed)
         self.assertIn("label", reconstructed)
         self.assertIn("mask", reconstructed)
 
-        # 检查值是否一致
         self.assertTrue(torch.equal(reconstructed["text"], self.data["text"]))
         self.assertTrue(torch.equal(reconstructed["label"], self.data["label"]))
         self.assertTrue(torch.equal(reconstructed["mask"], self.data["mask"]))
 
-        # 检查 batch_size
         self.assertEqual(reconstructed.batch_size, torch.Size([3]))
 
 
