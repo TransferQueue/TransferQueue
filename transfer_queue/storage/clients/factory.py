@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from abc import ABC, abstractmethod
+
 from torch import Tensor
+
 
 class TransferQueueStorageClient(ABC):
     """
     Abstract base class for storage client.
     Subclasses must implement the core methods: put, get, and clear.
     """
+
     @abstractmethod
     def put(self, keys: list[str], values: list[Tensor]) -> None:
         raise NotImplementedError("Subclasses must implement put")
@@ -50,9 +53,11 @@ class StorageClientFactory:
         Returns:
             Callable: The decorator function that returns the original class
         """
+
         def decorator(client_class: TransferQueueStorageClient) -> TransferQueueStorageClient:
             cls._registry[client_type] = client_class
             return client_class
+
         return decorator
 
     @classmethod
@@ -70,9 +75,10 @@ class StorageClientFactory:
             raise ValueError(f"Unknown StorageClient: {client_type}")
         return cls._registry[client_type](config)
 
+
 # TODO: Dynamically register the storage client class based on the configuration
 # Register storage clients
 try:
-    import transfer_queue.storage.clients.yuanrong_client as _ # noqa: F401
+    import transfer_queue.storage.clients.yuanrong_client as _  # noqa: F401
 except ImportError:
     pass

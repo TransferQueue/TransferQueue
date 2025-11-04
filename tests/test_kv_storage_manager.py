@@ -1,52 +1,40 @@
 import unittest
+
 # from ..clients.factory import StorageClientFactory
 import torch
+from tensordict import TensorDict
+
 from transfer_queue.metadata import (
     BatchMeta,
     FieldMeta,
     SampleMeta,
 )
-
-from tensordict import TensorDict
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from transfer_queue.storage.managers.base import KVStorageManager
-from transfer_queue.storage.managers.yuanrong_manager import YuanrongStorageManager
 
 
 class Test(unittest.TestCase):
     def setUp(self):
-        self.cfg = {
-            "client_name": "Yuanrong",
-            "host": "127.0.0.1",
-            "port": 31501,
-            "device_id": 0
-        }
+        self.cfg = {"client_name": "Yuanrong", "host": "127.0.0.1", "port": 31501, "device_id": 0}
         # metadata
         self.field_names = ["text", "label", "mask"]
         self.global_indexes = [8, 9, 10]
 
         # data: TensorDict
-        self.data = TensorDict({
-            "text": torch.tensor([[1, 2], [3, 4], [5, 6]]),  # shape: [3, 2]
-            "label": torch.tensor([0, 1, 2]),  # shape: [3]
-            "mask": torch.tensor([[1], [1], [0]]),  # shape: [3, 1]
-        }, batch_size=3)
+        self.data = TensorDict(
+            {
+                "text": torch.tensor([[1, 2], [3, 4], [5, 6]]),  # shape: [3, 2]
+                "label": torch.tensor([0, 1, 2]),  # shape: [3]
+                "mask": torch.tensor([[1], [1], [0]]),  # shape: [3, 1]
+            },
+            batch_size=3,
+        )
         samples = []
 
         for sample_id in range(self.data.batch_size[0]):
             fields_dict = {}
             for field_name in self.data.keys():
                 tensor = self.data[field_name][sample_id]
-                field_meta = FieldMeta(
-                    name=field_name,
-                    dtype=tensor.dtype,
-                    shape=tensor.shape,
-                    production_status=1
-
-                )
+                field_meta = FieldMeta(name=field_name, dtype=tensor.dtype, shape=tensor.shape, production_status=1)
                 fields_dict[field_name] = field_meta
             sample = SampleMeta(
                 global_step=0,
@@ -62,11 +50,7 @@ class Test(unittest.TestCase):
     def test_generate_keys(self):
         """测试 _generate_keys 生成正确的 key 列表"""
         keys = KVStorageManager._generate_keys(self.metadata)
-        expected = [
-            '8@label', '9@label', '10@label',
-            '8@mask', '9@mask', '10@mask',
-            '8@text', '9@text', '10@text'
-        ]
+        expected = ["8@label", "9@label", "10@label", "8@mask", "9@mask", "10@mask", "8@text", "9@text", "10@text"]
         self.assertEqual(keys, expected)
         self.assertEqual(len(keys), 9)  # 3 fields * 3 indexes
 
@@ -78,10 +62,7 @@ class Test(unittest.TestCase):
 
     def test_generate_values_type_check(self):
         """测试 _generate_values 对非 tensor 输入抛出异常"""
-        bad_data = TensorDict({
-            "text": torch.tensor([1, 2]),
-            "label": "not_a_tensor"
-        }, batch_size=2)
+        bad_data = TensorDict({"text": torch.tensor([1, 2]), "label": "not_a_tensor"}, batch_size=2)
 
         with self.assertRaises(TypeError):
             KVStorageManager._generate_values(bad_data)

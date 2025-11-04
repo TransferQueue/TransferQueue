@@ -19,16 +19,14 @@ from abc import ABC, abstractmethod
 from typing import Any
 from uuid import uuid4
 
+import torch
 import zmq
 from tensordict import TensorDict
-import torch
 from torch import Tensor
 
-
 from transfer_queue.metadata import BatchMeta
-from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
-
 from transfer_queue.storage.clients.factory import StorageClientFactory
+from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
@@ -300,7 +298,7 @@ class KVStorageManager(TransferQueueStorageManager):
             list[str]: List of keys, e.g., ['0@field_a', '1@field_a', '0@field_b', ...]
         """
         return [
-            f'{index}@{field}'
+            f"{index}@{field}"
             for field, index in itertools.product(sorted(metadata.field_names), metadata.global_indexes)
         ]
 
@@ -313,8 +311,6 @@ class KVStorageManager(TransferQueueStorageManager):
 
         Args:
             data (TensorDict): Input data where keys are field names and values are tensors.
-        Raises:
-            TypeError: If any value in the TensorDict is not a torch.Tensor.
         Returns:
             list[Tensor]: Flattened list of tensors, e.g.,
                           [data[field_a][0], data[field_a][1], data[field_a][2], ..., data[field_b][0], ...]
@@ -324,11 +320,7 @@ class KVStorageManager(TransferQueueStorageManager):
             if not torch.is_tensor(v):
                 raise TypeError(f"TensorDict values must be torch.Tensor, but got {type(v)}")
 
-        return [
-            row_data
-            for field in sorted(data.keys())
-            for row_data in data[field]
-        ]
+        return [row_data for field in sorted(data.keys()) for row_data in data[field]]
 
     @staticmethod
     def _merge_kv_to_tensordict(metadata: BatchMeta, values: list[Tensor]) -> TensorDict:
@@ -340,8 +332,6 @@ class KVStorageManager(TransferQueueStorageManager):
         Args:
             metadata (BatchMeta): Metadata containing global indexes and field names.
             values (list[Tensor]): List of tensors in field-major order.
-        Raises:
-            ValueError: If the length of values does not match expected (num_samples * num_fields).
         Returns:
             TensorDict: Reconstructed tensor dictionary with batch size equal to number of samples.
         """
@@ -349,7 +339,7 @@ class KVStorageManager(TransferQueueStorageManager):
         field_names = sorted(metadata.field_names)
         expected_length = len(global_indexes) * len(field_names)
         if len(values) != expected_length:
-            raise ValueError(f'Length of values ({len(values)}) does not match expected ({expected_length})')
+            raise ValueError(f"Length of values ({len(values)}) does not match expected ({expected_length})")
 
         if len(values) == 0:
             return TensorDict({}, batch_size=len(global_indexes))
@@ -368,7 +358,7 @@ class KVStorageManager(TransferQueueStorageManager):
         for field, tensor_list in merged_data.items():
             try:
                 tensor_data[field] = torch.stack(tensor_list)
-            except RuntimeError as re:
+            except RuntimeError:
                 # Fallback to nested tensor if shapes are irregular
                 tensor_data[field] = torch.nested.as_nested_tensor(tensor_list)
 

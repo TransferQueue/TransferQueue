@@ -1,7 +1,9 @@
-from transfer_queue.storage.clients.factory import StorageClientFactory, TransferQueueStorageClient
 from typing import Any
-from torch import Tensor
+
 import torch
+from torch import Tensor
+
+from transfer_queue.storage.clients.factory import StorageClientFactory, TransferQueueStorageClient
 
 YUANRONG_DATASYSTEM_IMPORTED: bool = True
 TORCH_NPU_IMPORTED: bool = True
@@ -14,6 +16,7 @@ try:
 except ImportError:
     TORCH_NPU_IMPORTED = False
 
+
 # TODO: DSTensorClient.dev_mget has wrong behavior: it may require stricter environment to execute
 @StorageClientFactory.register("Yuanrong")
 class YRStorageClient(TransferQueueStorageClient):
@@ -22,16 +25,17 @@ class YRStorageClient(TransferQueueStorageClient):
     Communicates with the remote tensor storage service via DsTensorClient.
     All tensors must reside on NPU device.
     """
+
     def __init__(self, config: dict[str, Any]):
         if not YUANRONG_DATASYSTEM_IMPORTED:
-            raise ImportError('YuanRong DataSystem not installed.')
+            raise ImportError("YuanRong DataSystem not installed.")
         if not TORCH_NPU_IMPORTED:
-            raise ImportError('Torch_npu not installed.')
+            raise ImportError("Torch_npu not installed.")
 
         self.host = config.get("host")
         self.port = config.get("port")
         self.device_id = config.get("device_id")
-        torch_npu.npu.set_device(f'npu:{self.device_id}') #set npu_device
+        torch_npu.npu.set_device(f"npu:{self.device_id}")  # set npu_device
         self._ds_client = datasystem.DsTensorClient(self.host, self.port, self.device_id)
         self._ds_client.init()
 
@@ -45,11 +49,11 @@ class YRStorageClient(TransferQueueStorageClient):
             list: List of uninitialized NPU tensors
         """
         if len(dtypes) != len(shapes):
-            raise ValueError('Length of dtypes must equal length of shapes')
+            raise ValueError("Length of dtypes must equal length of shapes")
 
         tensors: list[Tensor] = []
-        for dtype, shape in zip(dtypes, shapes):
-            tensor = torch.empty(shape, dtype=dtype).to(f'npu:{self.device_id}')
+        for dtype, shape in zip(dtypes, shapes, strict=False):
+            tensor = torch.empty(shape, dtype=dtype).to(f"npu:{self.device_id}")
             tensors.append(tensor)
         return tensors
 
@@ -67,12 +71,12 @@ class YRStorageClient(TransferQueueStorageClient):
 
         # TODO: Support the situation when the number of keys is greater than 10000
         if len(keys) > 10000:
-            raise NotImplementedError('We will support the number of keys greater than 10000 int the future')
+            raise NotImplementedError("We will support the number of keys greater than 10000 int the future")
 
         for value in values:
             if not isinstance(value, torch.Tensor):
                 raise ValueError(f"Expected torch.Tensor, got {type(value)}")
-            if value.device.type != 'npu':
+            if value.device.type != "npu":
                 raise ValueError(f"Tensor is on {value.device}, not on NPU")
 
         self._ds_client.dev_mset(keys, values)
@@ -88,17 +92,17 @@ class YRStorageClient(TransferQueueStorageClient):
             list: List of retrieved NPU tensors
         """
         if shapes is None:
-            raise ValueError('Yuanrong storage client needs Expected shapes of returned tensors')
+            raise ValueError("Yuanrong storage client needs Expected shapes of returned tensors")
         if dtypes is None:
-            raise ValueError('Yuanrong storage client needs Expected dtypes of returned tensors')
+            raise ValueError("Yuanrong storage client needs Expected dtypes of returned tensors")
         if len(dtypes) != len(shapes):
-            raise ValueError('Length of dtypes must equal length of shapes')
+            raise ValueError("Length of dtypes must equal length of shapes")
 
         values: list[Tensor] = self._create_empty_tensorlist(shapes=shapes, dtypes=dtypes)
 
         # TODO: Support the situation when the number of keys is greater than 10000
         if len(keys) > 10000:
-            raise NotImplementedError('We will support the number of keys greater than 10000 int the future')
+            raise NotImplementedError("We will support the number of keys greater than 10000 int the future")
 
         # Timeout set to 2000ms
         self._ds_client.dev_mget(keys, values, 2000)
