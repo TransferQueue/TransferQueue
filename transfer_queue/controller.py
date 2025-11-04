@@ -409,8 +409,7 @@ class DataPartitionStatus:
 
     # ==================== Data Scanning and Query Methods ====================
 
-    def scan_data_status(
-        self, field_names: list[str], task_name: str) -> list[int]:
+    def scan_data_status(self, field_names: list[str], task_name: str) -> list[int]:
         """
         Scan data status to find samples ready for consumption.
         This replaces the original _scan_data_status functionality.
@@ -458,7 +457,8 @@ class DataPartitionStatus:
         return ready_sample_indices
 
     def generate_data_status_mask(
-        self, field_names: list[str], task_name: str) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+        self, field_names: list[str], task_name: str
+    ) -> tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
         """
         Generate data availability mask for this partition.
         This replaces the original generate_data_status_mask functionality.
@@ -521,8 +521,9 @@ class DataPartitionStatus:
         if self.production_status is not None:
             produced_samples = torch.any(self.production_status == 1, dim=1).sum().item()
             stats["produced_samples"] = produced_samples
-            stats[
-                "production_progress"] = produced_samples / self.total_samples_num if self.total_samples_num > 0 else 0
+            stats["production_progress"] = (
+                produced_samples / self.total_samples_num if self.total_samples_num > 0 else 0
+            )
 
             # Field-wise production statistics
             field_stats = {}
