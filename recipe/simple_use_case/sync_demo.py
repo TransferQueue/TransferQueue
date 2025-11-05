@@ -151,7 +151,6 @@ def fit(config, data_system_client):
                 data_fields=["input_ids", "attention_mask"],
                 batch_size=config.global_batch_size,
                 partition_id=f"train_{step}",
-                get_n_samples=False,
                 task_name="generate_sequences",
             )
             # Set output fields for RL training - in this case, we want to generate sequences from input_ids
@@ -163,7 +162,6 @@ def fit(config, data_system_client):
                 data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                 batch_size=config.global_batch_size,
                 partition_id=f"train_{step}",
-                get_n_samples=False,
                 task_name="compute_old_log_prob",
             )
             # Set output fields for RL training - we want to compute log probs for the generated sequences
@@ -196,6 +194,17 @@ def main(config):
 
 
 if __name__ == "__main__":
+    # For GRPO grouped sampling, you can initialize the controller with GRPOGroupNSampler:
+    # Option 1: Pass sampler class (will be instantiated automatically)
+    # data_system_controller = TransferQueueController.remote(sampler=GRPOGroupNSampler)
+
+    # Option 2: Pass sampler instance (if you need custom configuration)
+    # grpo_sampler = GRPOGroupNSampler()
+    # data_system_controller = TransferQueueController.remote(sampler=grpo_sampler)
+
+    # Then use sampling_config in get_meta calls:
+    # sampling_config={"n_samples_per_prompt": 4}
+
     config_str = """
       global_batch_size: 6
       num_global_batch: 1

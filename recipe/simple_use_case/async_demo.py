@@ -260,7 +260,6 @@ class Trainer:
                         data_fields=["input_ids", "attention_mask"],
                         batch_size=self.config.global_batch_size * self.config.num_n_samples,
                         partition_id=f"train_{step}",
-                        get_n_samples=False,
                         task_name="generate_sequences",
                     )
                 )
@@ -278,7 +277,6 @@ class Trainer:
                         data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                         batch_size=self.config.global_batch_size * self.config.num_n_samples,
                         partition_id=f"train_{step}",
-                        get_n_samples=False,
                         task_name="compute_old_log_prob",
                     )
                 )
@@ -305,6 +303,17 @@ class Trainer:
 if __name__ == "__main__":
     # NOTE: you may choose to set async_rollout_mode=True to test the async rollout mode that mimics
     # AgentLoopManager in verl
+
+    # For GRPO grouped sampling, you can initialize the controller with GRPOGroupNSampler:
+    # Option 1: Pass sampler class (will be instantiated automatically)
+    # self.data_system_controller = TransferQueueController.remote(sampler=GRPOGroupNSampler)
+
+    # Option 2: Pass sampler instance (if you need custom configuration)
+    # grpo_sampler = GRPOGroupNSampler()
+    # self.data_system_controller = TransferQueueController.remote(sampler=grpo_sampler)
+
+    # Then use sampling_config in get_meta calls:
+    # sampling_config={"n_samples_per_prompt": 4}
 
     config_str = """
       global_batch_size: 8

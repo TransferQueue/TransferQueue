@@ -21,6 +21,9 @@ from .client import (
 )
 from .controller import TransferQueueController
 from .metadata import BatchMeta
+from .sampler import BaseSampler
+from .sampler.grpo_group_n_sampler import GRPOGroupNSampler
+from .sampler.sequential_sampler import SequentialSampler
 from .storage import SimpleStorageUnit
 from .utils.utils import get_placement_group
 from .utils.zmq_utils import ZMQServerInfo
@@ -34,6 +37,9 @@ __all__ = [
     "ZMQServerInfo",
     "process_zmq_server_info",
     "get_placement_group",
+    "BaseSampler",
+    "GRPOGroupNSampler",
+    "SequentialSampler",
 ]
 
 version_folder = os.path.dirname(os.path.join(os.path.abspath(__file__)))
