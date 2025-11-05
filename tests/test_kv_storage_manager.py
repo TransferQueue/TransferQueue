@@ -75,7 +75,7 @@ class Test(unittest.TestCase):
         values = KVStorageManager._generate_values(self.data)
 
         # merge values to TensorDict
-        reconstructed = KVStorageManager._merge_kv_to_tensordict(self.metadata, values)
+        reconstructed = KVStorageManager._merge_tensors_to_tensordict(self.metadata, values)
 
         self.assertIn("text", reconstructed)
         self.assertIn("label", reconstructed)
