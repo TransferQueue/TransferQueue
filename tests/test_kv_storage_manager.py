@@ -36,7 +36,7 @@ class Test(unittest.TestCase):
                 field_meta = FieldMeta(name=field_name, dtype=tensor.dtype, shape=tensor.shape, production_status=1)
                 fields_dict[field_name] = field_meta
             sample = SampleMeta(
-                global_step=0,
+                partition_id=0,
                 global_index=self.global_indexes[sample_id],
                 fields=fields_dict,
             )
