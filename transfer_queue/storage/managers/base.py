@@ -283,7 +283,7 @@ class TransferQueueStorageManager(ABC):
                 logger.error(f"[{self.storage_manager_id}]: Error closing socket {sock}: {str(e)}")
 
         try:
-            if self.zmq_context:
+            if self.zmq_context and self.z:
                 self.zmq_context.term()
         except Exception as e:
             logger.error(f"[{self.storage_manager_id}]: Error terminating zmq_context: {str(e)}")
@@ -292,8 +292,8 @@ class TransferQueueStorageManager(ABC):
         """Destructor to ensure resources are cleaned up."""
         try:
             self.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[{self.storage_manager_id}]: Exception during __del__: {str(e)}")
 
 
 class KVStorageManager(TransferQueueStorageManager):

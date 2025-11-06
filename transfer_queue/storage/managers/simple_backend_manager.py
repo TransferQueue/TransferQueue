@@ -405,15 +405,6 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
     def close(self) -> None:
         """Close all ZMQ sockets and context to prevent resource leaks."""
-        # Close any additional sockets specific to AsyncSimpleStorageManager
-        put_get_socket = getattr(self, "put_get_socket", None)
-        if put_get_socket and not put_get_socket.closed:
-            try:
-                put_get_socket.close(linger=0)
-            except Exception as e:
-                logger.error(f"[{self.storage_manager_id}]: Error closing put_get_socket: {str(e)}")
-
-        # Call parent close method to handle base class sockets and context
         super().close()
 
 
