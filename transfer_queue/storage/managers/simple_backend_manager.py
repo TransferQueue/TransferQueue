@@ -149,8 +149,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 finally:
                     try:
                         if not sock.closed:
-                            sock.setsockopt(zmq.LINGER, 0)
-                            sock.close()
+                            sock.close(linger=1000)
                     except Exception as e:
                         logger.warning(
                             f"[{self.storage_manager_id}]: Error closing socket to StorageUnit {server_info.id}: {e}"
@@ -406,22 +405,16 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
     def close(self) -> None:
         """Close all ZMQ sockets and context to prevent resource leaks."""
-        for sock in (
-            self.controller_handshake_socket,
-            self.data_status_update_socket,
-            getattr(self, "put_get_socket", None),
-        ):
+        # Close any additional sockets specific to AsyncSimpleStorageManager
+        put_get_socket = getattr(self, "put_get_socket", None)
+        if put_get_socket and not put_get_socket.closed:
             try:
-                if sock and not sock.closed:
-                    sock.setsockopt(zmq.LINGER, 0)
-                    sock.close()
+                put_get_socket.close(linger=0)
             except Exception as e:
-                logger.error(f"[{self.storage_manager_id}]: Error closing socket {sock}: {str(e)}")
-        try:
-            if hasattr(self, "zmq_context") and self.zmq_context:
-                self.zmq_context.term()
-        except Exception as e:
-            logger.error(f"[{self.storage_manager_id}]: Error terminating zmq_context: {str(e)}")
+                logger.error(f"[{self.storage_manager_id}]: Error closing put_get_socket: {str(e)}")
+
+        # Call parent close method to handle base class sockets and context
+        super().close()
 
 
 def get_transfer_data(

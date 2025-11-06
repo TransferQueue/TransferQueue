@@ -133,9 +133,7 @@ class AsyncTransferQueueClient:
                 finally:
                     try:
                         if not sock.closed:
-                            sock.setsockopt(zmq.LINGER, -1)
-                            sock.close()
-                        sock.close(linger=0)
+                            sock.close(linger=1000)
                     except Exception as e:
                         logger.warning(f"[{self.client_id}]: Error closing socket to Controller {server_info.id}: {e}")
 
