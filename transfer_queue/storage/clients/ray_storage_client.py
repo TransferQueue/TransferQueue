@@ -48,12 +48,12 @@ class RayStorageClient(TransferQueueStorageKVClient):
 
     def _create_empty_tensorlist(self, shapes, dtypes):
         """
-        Create a list of empty NPU tensors with given shapes and dtypes.
+        Create a list of empty GPU tensors with given shapes and dtypes.
         Args:
             shapes (list): List of tensor shapes (e.g., [(3,), (2, 4)])
             dtypes (list): List of torch dtypes (e.g., [torch.float32, torch.int64])
         Returns:
-            list: List of uninitialized NPU tensors
+            list: List of uninitialized GPU tensors
         """
         if len(dtypes) != len(shapes):
             raise ValueError("Length of dtypes must equal length of shapes")
