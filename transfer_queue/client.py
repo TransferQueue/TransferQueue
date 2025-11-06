@@ -133,7 +133,7 @@ class AsyncTransferQueueClient:
                 finally:
                     try:
                         if not sock.closed:
-                            sock.close(linger=1000)
+                            sock.close(linger=-1)
                     except Exception as e:
                         logger.warning(f"[{self.client_id}]: Error closing socket to Controller {server_info.id}: {e}")
 
