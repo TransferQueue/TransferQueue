@@ -16,9 +16,11 @@
 from .base import TransferQueueStorageKVClient
 from .factory import StorageClientFactory
 from .yuanrong_client import YRStorageClient
+from .ray_storage_client import RayStorageClient
 
 __all__ = [
     "TransferQueueStorageKVClient",
     "StorageClientFactory",
     "YRStorageClient",
+    "RayStorageClient",
 ]
