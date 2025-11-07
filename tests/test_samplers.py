@@ -53,7 +53,7 @@ class TestBaseSampler:
 
         sampler = TestSampler()
         assert hasattr(sampler, "_states")
-        assert sampler._states is None
+        assert sampler._states == {}
 
 
 class TestSequentialSampler:
@@ -64,7 +64,7 @@ class TestSequentialSampler:
         sampler = SequentialSampler()
         assert isinstance(sampler, BaseSampler)
         assert hasattr(sampler, "_states")
-        assert sampler._states is None
+        assert sampler._states == {}
 
     def test_sequential_sampler_basic_functionality(self):
         """Test basic sampling functionality."""
@@ -160,16 +160,16 @@ class TestSequentialSampler:
         assert consumed == [0, 1]
 
     def test_sequential_sampler_with_extra_kwargs(self):
-        """Test that SequentialSampler doesn't accept extra kwargs."""
+        """Test that SequentialSampler accepts extra kwargs but ignores them."""
         sampler = SequentialSampler()
         ready_indexes = [0, 1, 2, 3]
         batch_size = 2
 
-        # SequentialSampler should reject extra kwargs
-        with pytest.raises(TypeError) as exc_info:
-            sampler.sample(ready_indexes, batch_size, extra_param="ignored")
+        # SequentialSampler should accept extra kwargs but ignore them
+        sampled, consumed = sampler.sample(ready_indexes, batch_size, extra_param="ignored")
 
-        assert "unexpected keyword argument" in str(exc_info.value)
+        assert sampled == [0, 1]
+        assert consumed == [0, 1]
 
 
 class TestGRPOGroupNSampler:
@@ -180,7 +180,7 @@ class TestGRPOGroupNSampler:
         sampler = GRPOGroupNSampler()
         assert isinstance(sampler, BaseSampler)
         assert hasattr(sampler, "_states")
-        assert sampler._states is None
+        assert sampler._states == {}
 
     def test_grpo_sampler_basic_functionality(self):
         """Test basic grouped sampling functionality."""
@@ -228,12 +228,14 @@ class TestGRPOGroupNSampler:
     def test_grpo_sampler_batch_size_divisibility(self):
         """Test that batch_size must be divisible by n_samples_per_prompt."""
         sampler = GRPOGroupNSampler()
-        ready_indexes = [0, 1, 2, 3, 4, 5]
+        ready_indexes = [0, 1, 2, 3, 4, 5, 6, 7]  # 8 indexes, sufficient for batch_size=7
         batch_size = 7
         n_samples_per_prompt = 4
 
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError) as exc_info:
             sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+
+        assert "must be a multiple of n_samples_per_prompt" in str(exc_info.value)
 
     def test_grpo_sampler_insufficient_ready_indexes(self):
         """Test behavior when not enough ready indexes are available."""
@@ -242,9 +244,11 @@ class TestGRPOGroupNSampler:
         batch_size = 8
         n_samples_per_prompt = 4
 
-        # This should fail due to insufficient indexes for the requested groups
-        with pytest.raises(IndexError):
+        # This should fail due to insufficient ready samples
+        with pytest.raises(ValueError) as exc_info:
             sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+
+        assert "Insufficient ready samples" in str(exc_info.value)
 
     def test_grpo_sampler_exact_multiple_available(self):
         """Test when ready_indexes length is exactly a multiple of n_samples_per_prompt."""
@@ -320,17 +324,19 @@ class TestGRPOGroupNSampler:
         assert consumed1 == consumed2
 
     def test_grpo_sampler_with_extra_kwargs(self):
-        """Test that GRPOGroupNSampler doesn't accept extra kwargs."""
+        """Test that GRPOGroupNSampler accepts extra kwargs but ignores them."""
         sampler = GRPOGroupNSampler()
         ready_indexes = [0, 1, 2, 3, 4, 5, 6, 7]
         batch_size = 8
         n_samples_per_prompt = 4
 
-        # GRPOGroupNSampler should reject extra kwargs
-        with pytest.raises(TypeError) as exc_info:
-            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt, extra_param="ignored", another_param=42)
+        # GRPOGroupNSampler should accept extra kwargs but ignore them
+        sampled, consumed = sampler.sample(
+            ready_indexes, batch_size, n_samples_per_prompt, extra_param="ignored", another_param=42
+        )
 
-        assert "unexpected keyword argument" in str(exc_info.value)
+        assert sampled == [0, 1, 2, 3, 4, 5, 6, 7]
+        assert consumed == [0, 1, 2, 3, 4, 5, 6, 7]
 
     def test_grpo_sampler_non_sequential_indexes(self):
         """Test with non-sequential ready indexes."""
@@ -348,6 +354,53 @@ class TestGRPOGroupNSampler:
 
         assert sampled == expected
         assert consumed == expected
+
+    def test_grpo_sampler_invalid_n_samples_per_prompt(self):
+        """Test behavior with invalid n_samples_per_prompt values."""
+        sampler = GRPOGroupNSampler()
+        ready_indexes = [0, 1, 2, 3, 4, 5, 6, 7]
+        batch_size = 8
+
+        # Test zero n_samples_per_prompt
+        with pytest.raises(ValueError) as exc_info:
+            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt=0)
+        assert "must be positive" in str(exc_info.value)
+
+        # Test negative n_samples_per_prompt
+        with pytest.raises(ValueError) as exc_info:
+            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt=-2)
+        assert "must be positive" in str(exc_info.value)
+
+    def test_grpo_sampler_ready_indexes_not_divisible(self):
+        """Test behavior when ready_indexes length is not divisible by n_samples_per_prompt."""
+        sampler = GRPOGroupNSampler()
+        ready_indexes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # 10 indexes, not divisible by 4
+        batch_size = 8  # Request only 8, which is available
+        n_samples_per_prompt = 4
+
+        with pytest.raises(ValueError) as exc_info:
+            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+
+        assert "must be divisible by n_samples_per_prompt" in str(exc_info.value)
+
+    def test_grpo_sampler_insufficient_groups(self):
+        """Test behavior when requesting more groups than available."""
+        sampler = GRPOGroupNSampler()
+        ready_indexes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]  # 4 groups of 4
+        batch_size = 12  # Requesting 3 groups of 4 - this should work
+        n_samples_per_prompt = 4
+
+        # This should actually work fine since we have 4 groups and request 3
+        sampled, consumed = sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+        assert len(sampled) == 12
+        assert len(consumed) == 12
+
+        # Now test requesting more than available
+        batch_size = 20  # Requesting 5 groups of 4, but only have 4
+        with pytest.raises(ValueError) as exc_info:
+            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+
+        assert "Insufficient ready samples" in str(exc_info.value)
 
 
 class TestSamplerIntegration:

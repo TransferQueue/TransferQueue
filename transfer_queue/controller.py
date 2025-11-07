@@ -401,7 +401,7 @@ class DataPartitionStatus:
         """
         try:
             consumption_status = self.get_consumption_status(task_name)
-            if len(consumption_status) > 0 and global_indices:
+            if consumption_status.numel() > 0 and global_indices:
                 consumption_status[global_indices] = 1
             return True
         except Exception as e:
@@ -555,7 +555,7 @@ class TransferQueueController:
         """
         if isinstance(sampler, BaseSampler):
             self.sampler = sampler
-        elif issubclass(sampler, BaseSampler):
+        elif isinstance(sampler, type) and issubclass(sampler, BaseSampler):
             self.sampler = sampler()
         else:
             raise TypeError(
@@ -757,7 +757,7 @@ class TransferQueueController:
             else:
                 # clear metadata call passes empty data_fields
                 batch_global_indexes = self.index_manager.get_indexes_for_partition(partition_id)
-            return self.generate_batch_meta(partition_id, batch_global_indexes, [], data_fields, task_name, mode)
+            return self.generate_batch_meta(partition_id, batch_global_indexes, data_fields, mode)
 
         assert task_name is not None
         if mode == "fetch":
@@ -793,11 +793,16 @@ class TransferQueueController:
             consumer_status = self.get_consumption_status(partition_id, task_name)
             not_consumed_idx = [i for i in global_indexes_range if consumer_status[i] == 0]
             batch_global_indexes = not_consumed_idx
+            consumed_indexes = list(batch_global_indexes)
 
         # Package into metadata
-        metadata = self.generate_batch_meta(
-            partition_id, batch_global_indexes, consumed_indexes, data_fields, task_name, mode
-        )
+        metadata = self.generate_batch_meta(partition_id, batch_global_indexes, data_fields, mode)
+
+        # Mark samples as consumed if in fetch or force_fetch mode
+        if mode in ["fetch", "force_fetch"] and consumed_indexes:
+            partition = self.partitions[partition_id]
+            partition.mark_consumed(task_name, consumed_indexes)
+
         logger.debug(f"get_metadata: {metadata}")
 
         return metadata
@@ -863,20 +868,19 @@ class TransferQueueController:
         self,
         partition_id: str,
         batch_global_indexes: list[int],
-        consumed_indexes: list[int],
         data_fields: list[str],
-        task_name: str,
         mode: str = "fetch",
     ) -> BatchMeta:
         """
         Generate BatchMeta for specific samples in a partition.
 
+        This function is responsible only for metadata generation and does not
+        modify consumption state. State management is handled by the calling function.
+
         Args:
             partition_id: ID of the partition
             batch_global_indexes: List of sample indices to include in the batch
-            consumed_indexes: List of sample indices to mark as consumed
             data_fields: List of field names to include
-            task_name: Name of the consumer task
             mode: Operation mode - 'fetch', 'insert', or 'force_fetch'
 
         Returns:
@@ -891,10 +895,6 @@ class TransferQueueController:
 
         if mode not in ["fetch", "insert", "force_fetch"]:
             raise ValueError(f"Invalid mode: {mode}")
-
-        # Mark samples as consumed if in fetch or force_fetch mode
-        if mode in ["fetch", "force_fetch"]:
-            partition.mark_consumed(task_name, consumed_indexes)
 
         # Generate sample metadata
         samples = []
@@ -963,129 +963,6 @@ class TransferQueueController:
         if success:
             logger.info(f"Cleared data for partition {partition_id}")
         return success
-
-    # ==================== Parameter Validation Methods ====================
-
-    def _validate_partition_id(self, params: dict) -> str:
-        """
-        Validate and extract partition_id from parameters.
-
-        Args:
-            params: Request parameters dictionary
-
-        Returns:
-            partition_id string
-
-        Raises:
-            ValueError: If partition_id is missing or invalid
-        """
-        partition_id = params.get("partition_id")
-        if not partition_id:
-            raise ValueError("Please set the correct partition_id, for example: train_$global_step")
-        return partition_id
-
-    def _validate_required_params(self, params: dict, required_params: list[str]) -> dict:
-        """
-        Validate that all required parameters are present.
-
-        Args:
-            params: Request parameters dictionary
-            required_params: List of required parameter names
-
-        Returns:
-            Dictionary of validated parameters
-
-        Raises:
-            ValueError: If any required parameter is missing
-        """
-        validated = {}
-        for param_name in required_params:
-            param_value = params.get(param_name)
-            if param_value is None:
-                raise ValueError(f"Missing required parameter: {param_name}")
-            validated[param_name] = param_value
-        return validated
-
-    def _extract_optional_params(self, params: dict, optional_params: dict[str, Any]) -> dict:
-        """
-        Extract optional parameters with their default values.
-
-        Args:
-            params: Request parameters dictionary
-            optional_params: Dictionary mapping param names to default values
-
-        Returns:
-            Dictionary of extracted optional parameters
-        """
-        extracted = {}
-        for param_name, default_value in optional_params.items():
-            extracted[param_name] = params.get(param_name, default_value)
-        return extracted
-
-    def _validate_get_meta_params(self, params: dict) -> dict:
-        """
-        Validate parameters for GET_META request type.
-
-        Args:
-            params: Request parameters dictionary
-
-        Returns:
-            Dictionary of validated parameters
-
-        Raises:
-            ValueError: If required parameters are missing
-        """
-        # Validate partition_id
-        partition_id = self._validate_partition_id(params)
-
-        # Validate required parameters
-        required_params = self._validate_required_params(params, ["data_fields", "batch_size"])
-
-        # Extract optional parameters with defaults
-        optional_params = self._extract_optional_params(
-            params,
-            {
-                "mode": "fetch",
-                "task_name": None,
-                "sampling_config": None,
-            },
-        )
-
-        return {
-            "partition_id": partition_id,
-            **required_params,
-            **optional_params,
-        }
-
-    def _validate_check_consumption_params(self, params: dict) -> dict:
-        """
-        Validate parameters for CHECK_CONSUMPTION request type.
-
-        Args:
-            params: Request parameters dictionary
-
-        Returns:
-            Dictionary of validated parameters
-
-        Raises:
-            ValueError: If required parameters are missing
-        """
-        # Validate partition_id
-        partition_id = self._validate_partition_id(params)
-
-        # Validate required parameters
-        required_params = self._validate_required_params(params, ["task_name"])
-
-        # Extract optional parameters
-        optional_params = self._extract_optional_params(params, {"sample_filter": None})
-
-        return {
-            "partition_id": partition_id,
-            **required_params,
-            **optional_params,
-        }
-
-    # ==================== ZMQ Communication Methods ====================
 
     def _init_zmq_socket(self):
         """Initialize ZMQ sockets for communication."""
@@ -1200,15 +1077,14 @@ class TransferQueueController:
             if request_msg.request_type == ZMQRequestType.GET_META:
                 # Handle new partition-based metadata requests
                 params = request_msg.body
-                validated_params = self._validate_get_meta_params(params)
 
                 metadata = self.get_metadata(
-                    data_fields=validated_params["data_fields"],
-                    batch_size=validated_params["batch_size"],
-                    partition_id=validated_params["partition_id"],
-                    mode=validated_params["mode"],
-                    task_name=validated_params["task_name"],
-                    sampling_config=validated_params["sampling_config"],
+                    data_fields=params["data_fields"],
+                    batch_size=params["batch_size"],
+                    partition_id=params["partition_id"],
+                    mode=params.get("mode", "fetch"),
+                    task_name=params.get("task_name"),
+                    sampling_config=params.get("sampling_config"),
                 )
 
                 response_msg = ZMQMessage.create(
@@ -1220,7 +1096,7 @@ class TransferQueueController:
 
             elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
                 params = request_msg.body
-                partition_id = self._validate_partition_id(params)
+                partition_id = params["partition_id"]
 
                 metadata = self.get_metadata(
                     data_fields=[],
@@ -1235,7 +1111,7 @@ class TransferQueueController:
                 )
             elif request_msg.request_type == ZMQRequestType.CLEAR_META:
                 params = request_msg.body
-                partition_id = self._validate_partition_id(params)
+                partition_id = params["partition_id"]
 
                 clear_success = self.clear(partition_id)
                 if clear_success:
@@ -1256,13 +1132,10 @@ class TransferQueueController:
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
                 # Handle consumption status checks
                 params = request_msg.body
-                validated_params = self._validate_check_consumption_params(params)
 
                 # New partition-based consumption check
-                consumption_status = self.get_consumption_status(
-                    validated_params["partition_id"], validated_params["task_name"]
-                )
-                sample_filter = validated_params["sample_filter"]
+                consumption_status = self.get_consumption_status(params["partition_id"], params["task_name"])
+                sample_filter = params.get("sample_filter")
 
                 if consumption_status is not None and sample_filter:
                     batch_status = consumption_status[sample_filter]
@@ -1278,7 +1151,7 @@ class TransferQueueController:
                     sender_id=self.controller_id,
                     receiver_id=request_msg.sender_id,
                     body={
-                        "partition_id": validated_params["partition_id"],
+                        "partition_id": params["partition_id"],
                         "consumed": consumed,
                     },
                 )

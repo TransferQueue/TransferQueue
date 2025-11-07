@@ -188,7 +188,7 @@ class AsyncTransferQueueClient:
             ... ))
             >>> print(batch_meta.is_ready)  # True if all samples ready
             >>>
-            >>> # Example 2: Fetch with GRPO group sampling
+            >>> # Example 2: Fetch with self-defined samplers (using GRPOGroupNSampler as an example)
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["input_ids", "attention_mask"],
             ...     batch_size=8,
@@ -199,7 +199,8 @@ class AsyncTransferQueueClient:
             ... ))
             >>> print(batch_meta.is_ready)  # True if all samples ready
             >>>
-            >>> # Example 3: Force fetch metadata (may include unready samples)
+            >>> # Example 3: Force fetch metadata (bypass production status check and Sampler,
+            >>> so may include unready samples. Consumed samples will not be fetched.)
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["input_ids", "attention_mask"],
             ...     batch_size=4,
