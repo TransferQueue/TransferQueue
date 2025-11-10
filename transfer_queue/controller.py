@@ -766,6 +766,8 @@ class TransferQueueController:
 
             start_time = time.time()
             while True:
+                # ready_for_consume_indexes: samples where all required fields are produced
+                # (production status is ready) and not yet consumed
                 ready_for_consume_indexes = self.scan_data_status(partition_id, data_fields, task_name, batch_size)
 
                 if len(ready_for_consume_indexes) < batch_size:
