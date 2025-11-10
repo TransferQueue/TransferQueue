@@ -33,39 +33,10 @@ class SequentialSampler(BaseSampler):
     This sampler is typically used as the default sampler in TransferQueueController:
 
     ```python
-    from transfer_queue import (
-        TransferQueueController,
-        SequentialSampler,
-        AsyncTransferQueueClient,
-        TransferQueueStorageManagerFactory
-    )
-
     # Default usage (SequentialSampler is the default)
     controller = TransferQueueController.remote()
     # or explicitly:
     controller = TransferQueueController.remote(sampler=SequentialSampler)
-    controller_info = process_zmq_server_info(controller)
-
-    client = AsyncTransferQueueClient(
-        client_id="train_client",
-        controller_info=controller_info,
-    )
-
-    # Initialize storage manager
-    storage_config = {
-        "controller_info": controller_info,
-        "storage_unit_infos": {},
-    }
-    client.initialize_storage_manager("AsyncSimpleStorageManager", storage_config)
-
-    # Get metadata - no sampling config needed
-    meta = await client.async_get_meta(
-        data_fields=["input_ids", "attention_mask", "labels"],
-        batch_size=8,
-        partition_id="train_0",
-        task_name="supervised_training"
-    )
-    # Returns first 8 available samples in order
     ```
     """
 
@@ -86,42 +57,17 @@ class SequentialSampler(BaseSampler):
         *args: Any,
         **kwargs: Any,
     ) -> tuple[list[int], list[int]]:
-        """Sample indices sequentially from the beginning of ready_indexes.
-
-        Selects the first `batch_size` elements from the ready_indexes list,
-        maintaining the original order. If batch_size exceeds the available
-        ready samples, all available samples are returned.
+        """Select first batch_size elements from ready_indexes.
 
         Args:
-            ready_indexes: List of global indices for which all required fields have been
-                produced and samples are not labeled as consumed. The order in this list
-                determines the sampling sequence.
+            ready_indexes: Available sample indices.
             batch_size: Number of samples to select. If larger than available ready samples,
                 all available samples will be returned.
-            *args: Additional positional arguments (ignored in current implementation)
-            **kwargs: Additional keyword arguments (ignored in current implementation)
+            *args: Additional positional arguments (ignored).
+            **kwargs: Additional keyword arguments (ignored).
 
         Returns:
-            Tuple of (sampled_indexes, consumed_indexes):
-            - sampled_indexes: List of selected global indices, length = min(batch_size, len(ready_indexes))
-            - consumed_indexes: List of indices to mark as consumed, identical to sampled_indexes
-              (without replacement semantics)
-
-        Example:
-            >>> sampler = SequentialSampler()
-            >>> ready_indexes = [10, 20, 30, 40, 50]
-            >>> sampled, consumed = sampler.sample(ready_indexes, 3)
-            >>> sampled
-            [10, 20, 30]
-            >>> consumed
-            [10, 20, 30]
-
-            # Edge case: batch_size larger than available
-            >>> sampled, consumed = sampler.sample([100, 200], 5)
-            >>> sampled
-            [100, 200]
-            >>> consumed
-            [100, 200]
+            Tuple of (sampled_indexes, consumed_indexes), where consumed_indexes = sampled_indexes.
         """
         sampled_indexes = ready_indexes[:batch_size]
         consumed_indexes = sampled_indexes

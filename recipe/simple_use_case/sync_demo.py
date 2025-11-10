@@ -42,17 +42,7 @@ os.environ["RAY_DEDUP_LOGS"] = "0"
 os.environ["RAY_DEBUG"] = "1"
 ray.init()
 
-# For GRPO grouped sampling, you can initialize the controller with GRPOGroupNSampler:
-# Option 1: Pass sampler class (will be instantiated automatically)
-# data_system_controller = TransferQueueController.remote(sampler=GRPOGroupNSampler)
 
-# Option 2: Pass sampler instance (if you need custom configuration)
-# grpo_sampler = GRPOGroupNSampler()
-# data_system_controller = TransferQueueController.remote(sampler=grpo_sampler)
-
-
-# Then use sampling_config in get_meta calls:
-# sampling_config={"n_samples_per_prompt": 4}
 def initialize_data_system(config):
     # 1. Initialize TransferQueueStorage
     total_storage_size = config.global_batch_size * config.num_global_batch * config.num_n_samples
@@ -66,6 +56,18 @@ def initialize_data_system(config):
         logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
     # 2. Initialize TransferQueueController (single controller only)
+
+    # Sampler usage instructions:
+    # For GRPO grouped sampling, you can initialize the controller with GRPOGroupNSampler:
+    # Option 1: Pass sampler class (will be instantiated automatically)
+    # data_system_controller = TransferQueueController.remote(sampler=GRPOGroupNSampler)
+
+    # Option 2: Pass sampler instance (if you need custom configuration)
+    # grpo_sampler = GRPOGroupNSampler()
+    # data_system_controller = TransferQueueController.remote(sampler=grpo_sampler)
+
+    # Then use sampling_config in get_meta calls:
+    # sampling_config={"n_samples_per_prompt": 4}
     data_system_controller = TransferQueueController.remote()
     logger.info("TransferQueueController has been created.")
 
@@ -101,7 +103,7 @@ def compute_old_log_prob(data1, _data2):
 
 
 def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
-    # 1. Pull real data from storage unit through client based on data_meta
+    # 1. Pull real data from the storage plane through client based on data_meta
     data = data_system_client.get_data(data_meta)
     logger.info(f"demo get data {data}")
 
@@ -116,7 +118,7 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
         batch_size=output.size(0),
     )
 
-    # 2. Write results back to storage unit based on data_meta
+    # 2. Write results back to the storage plane based on data_meta
     data_system_client.put(data=output, metadata=data_meta)
     data_meta.add_fields(output)
     logger.info("demo put data to storages done")
@@ -125,7 +127,7 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
 
 
 def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
-    # 1. Pull real data from storage unit through client based on data_meta
+    # 1. Pull real data from the storage plane through client based on data_meta
     data = data_system_client.get_data(data_meta)
     logger.info(f"demo get data {data}")
 
@@ -133,7 +135,7 @@ def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
 
     output = TensorDict({"old_log_prob": output}, batch_size=output.size(0))
 
-    # 2. Write results back to storage unit based on data_meta
+    # 2. Write results back to the storage plane based on data_meta
     data_system_client.put(data=output, metadata=data_meta)
     data_meta.add_fields(output)
     logger.info("demo put data to storages done")
@@ -183,7 +185,7 @@ def fit(config, data_system_client):
             batch_meta = batch_meta.union(old_log_prob_meta)
 
             # For the master client, notify all controllers to clear data status, master returns metadata;
-            # Client then notifies all storage units to clear based on metadata
+            # Client then notifies the storage plane to clear based on metadata
             # Client selects one master controller to get metadata,
             # other controllers directly clear without returning metadata
             data_system_client.clear(partition_id=f"train_{step}")

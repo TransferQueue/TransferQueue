@@ -449,7 +449,7 @@ def test_performance_characteristics():
 
 def main():
     """Run all tests."""
-    print("=== Comprehensive Testing of Dynamic TransferQueue Controller ===\n")
+    print("=== Comprehensive Testing of TransferQueue Controller ===\n")
 
     test_functions = [
         test_data_partition_status,

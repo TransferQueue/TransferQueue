@@ -57,7 +57,7 @@ def generate_sequences(data):
 
 class ActorRolloutRefWorker:
     def actor_rollout_wg_generate_sequences(self, data_meta, data_system_client):
-        # 1. Pull real data from storage unit through client based on data_meta
+        # 1. Pull real data from the storage plane through client based on data_meta
         data = asyncio.run(data_system_client.async_get_data(data_meta))
         logger.info(f"demo get data->generate_sequences {data}")
 
@@ -72,7 +72,7 @@ class ActorRolloutRefWorker:
             batch_size=output.size(0),
         )
 
-        # 2. Write results back to storage unit based on data_meta
+        # 2. Write results back to the storage plane based on data_meta
         asyncio.run(data_system_client.async_put(data=output, metadata=data_meta))
         data_meta.add_fields(output)
         logger.info("demo put data to storages done")
@@ -80,7 +80,7 @@ class ActorRolloutRefWorker:
         return data_meta
 
     def actor_rollout_wg_compute_old_log_prob(self, data_meta, data_system_client):
-        # 1. Pull real data from storage unit through client based on data_meta
+        # 1. Pull real data from the storage plane through client based on data_meta
         data = asyncio.run(data_system_client.async_get_data(data_meta))
         logger.info(f"demo get data->old_log_prob {data}")
 
@@ -88,7 +88,7 @@ class ActorRolloutRefWorker:
 
         output = TensorDict({"old_log_prob": output}, batch_size=output.size(0))
 
-        # 2. Write results back to storage unit based on data_meta
+        # 2. Write results back to the storage plane based on data_meta
         asyncio.run(data_system_client.async_put(data=output, metadata=data_meta))
         data_meta.add_fields(output)
         logger.info("demo put data to storages done")
@@ -197,20 +197,7 @@ class Trainer:
             self.data_system_controller_info,
         )
 
-        # Sampler usage instructions:
-        # For GRPO grouped sampling, you can initialize the controller with GRPOGroupNSampler:
-        # Option 1: Pass sampler class (will be instantiated automatically)
-        # self.data_system_controller = TransferQueueController.remote(sampler=GRPOGroupNSampler)
-
-        # Option 2: Pass sampler instance (if you need custom configuration)
-        # grpo_sampler = GRPOGroupNSampler()
-        # self.data_system_controller = TransferQueueController.remote(sampler=grpo_sampler)
-
-        # Then use sampling_config in get_meta calls:
-        # sampling_config={"n_samples_per_prompt": 4}
-
     def _initialize_data_system(self):
-        # TODO (TQStorage): provide a general data system initialization utility function
         # 1. Initialize TransferQueueStorage
         total_storage_size = self.config.global_batch_size * self.config.num_global_batch * self.config.num_n_samples
         self.data_system_storage_units = {}
@@ -223,6 +210,18 @@ class Trainer:
             logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
         # 2. Initialize TransferQueueController (single controller only)
+
+        # Sampler usage instructions:
+        # For GRPO grouped sampling, you can initialize the controller with GRPOGroupNSampler:
+        # Option 1: Pass sampler class (will be instantiated automatically)
+        # self.data_system_controller = TransferQueueController.remote(sampler=GRPOGroupNSampler)
+
+        # Option 2: Pass sampler instance (if you need custom configuration)
+        # grpo_sampler = GRPOGroupNSampler()
+        # self.data_system_controller = TransferQueueController.remote(sampler=grpo_sampler)
+
+        # Then use sampling_config in get_meta calls:
+        # sampling_config={"n_samples_per_prompt": 4}
         self.data_system_controller = TransferQueueController.remote()
         logger.info("TransferQueueController has been created.")
 
@@ -302,7 +301,7 @@ class Trainer:
                 batch_meta = batch_meta.union(old_log_prob_meta)
 
                 # Client notifies controller to clear data status, controller returns metadata;
-                # Client then notifies all storage units to clear based on metadata
+                # Client then notifies the storage plane to clear based on metadata
                 asyncio.run(self.data_system_client.async_clear(partition_id=f"train_{step}"))
                 logger.info("clear ok! ")
         logger.info("demo done!")

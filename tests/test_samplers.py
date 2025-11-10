@@ -244,11 +244,10 @@ class TestGRPOGroupNSampler:
         batch_size = 8
         n_samples_per_prompt = 4
 
-        # This should fail due to insufficient ready samples
-        with pytest.raises(ValueError) as exc_info:
-            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
-
-        assert "Insufficient ready samples" in str(exc_info.value)
+        # Should return empty lists when insufficient complete groups
+        sampled, consumed = sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+        assert sampled == []
+        assert consumed == []
 
     def test_grpo_sampler_exact_multiple_available(self):
         """Test when ready_indexes length is exactly a multiple of n_samples_per_prompt."""
@@ -339,19 +338,16 @@ class TestGRPOGroupNSampler:
         assert consumed == [0, 1, 2, 3, 4, 5, 6, 7]
 
     def test_grpo_sampler_non_sequential_indexes(self):
-        """Test with non-sequential ready indexes."""
+        """Test with non-sequential ready indexes that get sorted."""
         sampler = GRPOGroupNSampler()
-        ready_indexes = [10, 5, 15, 20, 8, 12, 3, 7]  # Non-sequential
+        ready_indexes = [3, 4, 5, 6, 9, 10, 11, 12]  # Non-sequential order but has consecutive groups after sorting
         batch_size = 8
         n_samples_per_prompt = 4
 
         sampled, consumed = sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
 
-        # Should group by the order they appear in ready_indexes
-        expected_group1 = [10, 5, 15, 20]  # First 4
-        expected_group2 = [8, 12, 3, 7]  # Next 4
-        expected = expected_group1 + expected_group2
-
+        # Should find consecutive groups after sorting: [3,4,5,6] and [9,10,11,12]
+        expected = [3, 4, 5, 6, 9, 10, 11, 12]
         assert sampled == expected
         assert consumed == expected
 
@@ -371,17 +367,43 @@ class TestGRPOGroupNSampler:
             sampler.sample(ready_indexes, batch_size, n_samples_per_prompt=-2)
         assert "must be positive" in str(exc_info.value)
 
-    def test_grpo_sampler_ready_indexes_not_divisible(self):
-        """Test behavior when ready_indexes length is not divisible by n_samples_per_prompt."""
+    def test_grpo_sampler_no_complete_groups(self):
+        """Test behavior when no complete groups are available."""
         sampler = GRPOGroupNSampler()
-        ready_indexes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  # 10 indexes, not divisible by 4
-        batch_size = 8  # Request only 8, which is available
+        ready_indexes = [0, 1, 3, 4, 6, 7]  # No consecutive groups of size 3
+        batch_size = 6
+        n_samples_per_prompt = 3
+
+        # Should return empty lists when no complete groups found
+        sampled, consumed = sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+        assert sampled == []
+        assert consumed == []
+
+    def test_grpo_sampler_mixed_groups(self):
+        """Test behavior with mixed complete and incomplete groups."""
+        sampler = GRPOGroupNSampler()
+        ready_indexes = [0, 1, 3, 4, 5, 6, 7, 9, 10, 11]  # Mixed groups
+        batch_size = 6
+        n_samples_per_prompt = 3
+
+        # Should find the complete groups [3,4,5] and [9,10,11]
+        sampled, consumed = sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+        assert sampled == [3, 4, 5, 9, 10, 11]
+        assert consumed == [3, 4, 5, 9, 10, 11]
+
+    def test_grpo_sampler_sorting_functionality(self):
+        """Test that ready_indexes are properly sorted before group detection."""
+        sampler = GRPOGroupNSampler()
+        ready_indexes = [10, 11, 12, 5, 6, 7, 8, 9]  # Out of order but contains consecutive groups
+        batch_size = 8
         n_samples_per_prompt = 4
 
-        with pytest.raises(ValueError) as exc_info:
-            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+        sampled, consumed = sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
 
-        assert "must be divisible by n_samples_per_prompt" in str(exc_info.value)
+        # After sorting: [5,6,7,8,9,10,11,12], should find [5,6,7,8] and [9,10,11,12]
+        expected = [5, 6, 7, 8, 9, 10, 11, 12]
+        assert sampled == expected
+        assert consumed == expected
 
     def test_grpo_sampler_insufficient_groups(self):
         """Test behavior when requesting more groups than available."""
@@ -397,10 +419,11 @@ class TestGRPOGroupNSampler:
 
         # Now test requesting more than available
         batch_size = 20  # Requesting 5 groups of 4, but only have 4
-        with pytest.raises(ValueError) as exc_info:
-            sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
+        sampled, consumed = sampler.sample(ready_indexes, batch_size, n_samples_per_prompt)
 
-        assert "Insufficient ready samples" in str(exc_info.value)
+        # Should return empty lists when requesting more complete groups than available
+        assert sampled == []
+        assert consumed == []
 
 
 class TestSamplerIntegration:

@@ -528,7 +528,7 @@ class DataPartitionStatus:
 @ray.remote(num_cpus=1)
 class TransferQueueController:
     """
-    Dynamic TransferQueue Controller with partition-based data management.
+    TransferQueue Controller with partition-based data management.
 
     This refactored controller manages data through dynamic partitions instead of
     fixed global batches. Each partition represents a logical data container
@@ -543,7 +543,7 @@ class TransferQueueController:
     """
 
     def __init__(self, sampler: BaseSampler | type[BaseSampler] = SequentialSampler) -> None:
-        """Initialize the Dynamic TransferQueue Controller.
+        """Initialize the TransferQueue Controller.
 
         Args:
             sampler: Sampler instance or sampler class to use for data sampling.
@@ -562,7 +562,7 @@ class TransferQueueController:
                 f"sampler {getattr(sampler, '__name__', repr(sampler))} must be an instance or subclass of BaseSampler"
             )
 
-        self.controller_id = f"DYNAMIC_TQ_CONTROLLER_{uuid4().hex[:8]}"
+        self.controller_id = f"TQ_CONTROLLER_{uuid4().hex[:8]}"
 
         # Initialize ZMQ sockets for communication
         self._init_zmq_socket()
@@ -581,7 +581,7 @@ class TransferQueueController:
         self._start_process_update_data_status()
         self._start_process_request()
 
-        logger.info(f"Dynamic TransferQueue Controller {self.controller_id} initialized")
+        logger.info(f"TransferQueue Controller {self.controller_id} initialized")
 
     # ==================== Partition Management API ====================
 
@@ -733,9 +733,10 @@ class TransferQueueController:
             data_fields: List of field names to include in metadata
             partition_id: Partition id for which to retrieve metadata
             mode: Operation mode - 'insert', 'fetch', or 'force_fetch'
-                - mode="insert": Insert metadata for new rows (without checking data status)
-                - mode="fetch": Retrieve metadata for ready data (check data status and sample)
-                - mode="force_fetch": Directly return metadata (without checking data status)
+                - mode="insert": Create metadata for new samples (for data insertion)
+                - mode="fetch": Get metadata from ready samples using the configured sampler
+                - mode="force_fetch": Get metadata for unconsumed samples without sampling
+                                      (excludes already consumed samples)
             task_name: Name of the consumer task (required for fetch modes)
             batch_size: Number of samples to retrieve
             *args: Additional positional arguments
@@ -761,45 +762,54 @@ class TransferQueueController:
 
         assert task_name is not None
         if mode == "fetch":
-            # Find consumable samples within current batch and package into BatchMeta when reading
+            # Find ready samples within current data partition and package into BatchMeta when reading
 
             start_time = time.time()
             while True:
                 ready_for_consume_indexes = self.scan_data_status(partition_id, data_fields, task_name, batch_size)
 
-                if len(ready_for_consume_indexes) >= batch_size:
+                if len(ready_for_consume_indexes) < batch_size:
+                    continue
+
+                # Try sampling - if it returns empty lists, retry
+                batch_global_indexes, consumed_indexes = self.sampler(
+                    ready_for_consume_indexes,
+                    batch_size,
+                    **(sampling_config or {}),
+                )
+
+                # Check if we got valid results from the sampler
+                if len(batch_global_indexes) == batch_size:
                     break
 
                 if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
                     raise TimeoutError(
                         f"Timeout while waiting for sufficient data. "
-                        f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}"
+                        f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}, "
+                        f"Sampled: {len(batch_global_indexes)}"
                     )
 
                 logger.warning(
-                    f"Insufficient data available. Required: {batch_size}, "
-                    f"Available: {len(ready_for_consume_indexes)}. Retrying in "
+                    f"Insufficient complete groups available. Required: {batch_size}, "
+                    f"Available: {len(ready_for_consume_indexes)}, "
+                    f"Sampled: {len(batch_global_indexes)}. Retrying in "
                     f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
                 )
                 time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
             logger.debug(f"ready for consume idx: {ready_for_consume_indexes}")
-            batch_global_indexes, consumed_indexes = self.sampler(
-                ready_for_consume_indexes,
-                batch_size,
-                **(sampling_config or {}),
-            )
+            logger.debug(f"sampled idx: {batch_global_indexes}")
         elif mode == "force_fetch":
             global_indexes_range = self.index_manager.get_indexes_for_partition(partition_id)
             consumer_status = self.get_consumption_status(partition_id, task_name)
             not_consumed_idx = [i for i in global_indexes_range if consumer_status[i] == 0]
             batch_global_indexes = not_consumed_idx
-            consumed_indexes = list(batch_global_indexes)
+            consumed_indexes = []
 
         # Package into metadata
         metadata = self.generate_batch_meta(partition_id, batch_global_indexes, data_fields, mode)
 
-        # Mark samples as consumed if in fetch or force_fetch mode
-        if mode in ["fetch", "force_fetch"] and consumed_indexes:
+        # Mark samples as consumed if in fetch mode
+        if mode == "fetch" and consumed_indexes:
             partition = self.partitions[partition_id]
             partition.mark_consumed(task_name, consumed_indexes)
 
@@ -1075,7 +1085,6 @@ class TransferQueueController:
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.GET_META:
-                # Handle new partition-based metadata requests
                 params = request_msg.body
 
                 metadata = self.get_metadata(
@@ -1133,7 +1142,6 @@ class TransferQueueController:
                 # Handle consumption status checks
                 params = request_msg.body
 
-                # New partition-based consumption check
                 consumption_status = self.get_consumption_status(params["partition_id"], params["task_name"])
                 sample_filter = params.get("sample_filter")
 

@@ -21,33 +21,21 @@ class BaseSampler(ABC):
 
     A sampler defines the logic for selecting which samples to retrieve from the
     available samples, and which should be labeled as consumed (will never be retrieved in the future).
-    Based on this abstraction, users can implement load-balancing strategies for better performance,
-    or define their own data reconsumption strategies.
+    Based on this abstraction, users can implement various data consumption strategies
+    for different training scenarios, such as sequential sampling, grouped sampling for
+    reinforcement learning, or custom sampling patterns.
 
-    The sampler interface provides a clean separation between data availability management
+    The sampler interface provides a clean separation between data production status
     (handled by TransferQueueController) and data consumption strategy (implemented by samplers).
-    This allows users to customize sampling behavior without modifying the core queue logic.
+    This allows users to customize data consumption behavior without modifying the TransferQueue codes.
 
     Available Samplers:
-    - **SequentialSampler**: Default sampler, selects samples sequentially
-    - **GRPOGroupNSampler**: Groups samples for reinforcement learning workflows
+    - **SequentialSampler**: Default sampler, selects samples sequentially without replacement
+    - **GRPOGroupNSampler**: A sampler that performs sampling on continuous N samples only when all of them are ready.
+                            It assumes the N samples associated with the same prompt are stored contiguously
     - **RankAwareSampler**: Rank-aware sampling for distributed scenarios (TODO)
-    - **Custom Samplers**: Users can extend BaseSampler for domain-specific needs
 
-    Integration Flow:
-    1. Client requests metadata via `get_meta(sampling_config=...)`
-    2. Controller collects ready_indexes from storage units
-    3. Controller calls sampler.sample(ready_indexes, batch_size, **sampling_config)
-    4. Sampler returns (sampled_indexes, consumed_indexes)
-    5. Controller marks consumed_indexes as consumed in metadata
-    6. Client retrieves data for sampled_indexes
-
-    Implementation Guidelines:
-    - Always return both sampled and consumed indexes (may be identical)
-    - Validate input parameters appropriately
-    - Handle edge cases gracefully (empty lists, zero batch sizes)
-    - Document any sampler-specific configuration parameters
-    - Consider performance for large-scale workloads
+    NOTE: Always return both sampled and consumed indexes (may be identical).
     """
 
     def __init__(self):

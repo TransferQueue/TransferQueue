@@ -14,8 +14,6 @@
 
 from typing import Any
 
-import torch
-
 from transfer_queue.sampler import BaseSampler
 
 
@@ -87,10 +85,8 @@ class GRPOGroupNSampler(BaseSampler):
     ) -> tuple[list[int], list[int]]:
         """Sample groups of indices from the ready indices.
 
-        Selects complete groups of samples where each group contains n_samples_per_prompt
-        samples belonging to the same prompt. The sampling ensures group integrity
-        by always selecting complete groups or rejecting the request if insufficient
-        complete groups are available.
+        This method implements group completeness validation and ensures that only complete
+        groups are sampled. It returns empty lists if insufficient complete groups are available.
 
         Args:
             ready_indexes: List of global indices for which all required fields have been
@@ -103,50 +99,58 @@ class GRPOGroupNSampler(BaseSampler):
 
         Returns:
             Tuple of (sampled_indexes, consumed_indexes):
-            - sampled_indexes: List of selected global indices, length = batch_size
+            - sampled_indexes: List of selected global indices, length = batch_size or empty
             - consumed_indexes: List of indices to mark as consumed, identical to sampled_indexes
               (without replacement semantics)
 
-        Raises:
-            ValueError: If n_samples_per_prompt <= 0
-            ValueError: If batch_size is not divisible by n_samples_per_prompt
-            ValueError: If insufficient ready samples are available
-            ValueError: If ready_indexes length is not divisible by n_samples_per_prompt
-
-        Example:
+        Examples:
             >>> sampler = GRPOGroupNSampler()
-            >>> ready_indexes = [0,1,2,3, 4,5,6,7, 8,9,10,11]  # 3 groups of 4
-            >>> sampled, consumed = sampler.sample(ready_indexes, 8, n_samples_per_prompt=4)
+            >>> ready_indexes = [0, 1, 3, 4, 6, 7]  # No complete groups after sorting
+            >>> sampled, consumed = sampler.sample(ready_indexes, 6, n_samples_per_prompt=3)
             >>> sampled
-            [0, 1, 2, 3, 4, 5, 6, 7]  # First 2 complete groups
+            []
             >>> consumed
-            [0, 1, 2, 3, 4, 5, 6, 7]
+            []
+
+            >>> ready_indexes = [0, 1, 3, 4, 5, 6, 7, 9, 10, 11]  # Has complete groups after sorting
+            >>> sampled, consumed = sampler.sample(ready_indexes, 6, n_samples_per_prompt=3)
+            >>> sampled
+            [3, 4, 5, 9, 10, 11]
+            >>> consumed
+            [3, 4, 5, 9, 10, 11]
         """
-        # Validate input parameters
+        # Basic validation
         if n_samples_per_prompt <= 0:
             raise ValueError(f"n_samples_per_prompt must be positive, got {n_samples_per_prompt}")
-
-        if len(ready_indexes) < batch_size:
-            raise ValueError(
-                f"Insufficient ready samples: required {batch_size}, but only {len(ready_indexes)} are available"
-            )
 
         if batch_size % n_samples_per_prompt != 0:
             raise ValueError(
                 f"batch_size ({batch_size}) must be a multiple of n_samples_per_prompt ({n_samples_per_prompt})"
             )
 
-        if len(ready_indexes) % n_samples_per_prompt != 0:
-            raise ValueError(
-                f"ready_indexes length ({len(ready_indexes)}) must be divisible"
-                f" by n_samples_per_prompt ({n_samples_per_prompt})"
+        required_groups = batch_size // n_samples_per_prompt
+        sorted_ready_indexes = sorted(ready_indexes)
+
+        complete_group_indices = []
+        found_groups = 0
+
+        i = 0
+        while i <= len(sorted_ready_indexes) - n_samples_per_prompt and found_groups < required_groups:
+            potential_group = sorted_ready_indexes[i : i + n_samples_per_prompt]
+            # Check if this forms a complete group (consecutive indices)
+            is_consecutive = all(
+                potential_group[j + 1] - potential_group[j] == 1 for j in range(len(potential_group) - 1)
             )
+            if is_consecutive:
+                complete_group_indices.extend(potential_group)
+                found_groups += 1
+                i += n_samples_per_prompt
+            else:
+                i += 1
 
-        batch_size_n_samples = batch_size // n_samples_per_prompt
-
-        group_ready_for_consume_idx = torch.tensor(ready_indexes, dtype=torch.int).view(-1, n_samples_per_prompt)
-
-        sampled_indexes = group_ready_for_consume_idx[list(range(batch_size_n_samples))].flatten().tolist()
-        consumed_indexes = sampled_indexes
+        if found_groups < required_groups:
+            return [], []
+        sampled_indexes = complete_group_indices
+        consumed_indexes = sampled_indexes.copy()
 
         return sampled_indexes, consumed_indexes
