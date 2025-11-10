@@ -22,7 +22,7 @@ TransferQueue is a high-performance data storage and transfer module with panora
   <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761356010763-b05751d3-f975-4890-ba59-c8d753cf95f2.png" width="70%">
 </p>
 
-TransferQueue offers **fine-grained, sample-level** data management and **load-balancing** (on the way) capabilities, serving as a data gateway that decouples explicit data dependencies across computational tasks. This enables a divide-and-conquer approach, significantly simplifies algorithm controller design.
+TransferQueue offers **fine-grained, sample-level** data management and **load-balancing** (on the way) capabilities, serving as a data gateway that decouples explicit data dependencies across computational tasks. This enables a divide-and-conquer approach, significantly simplifies the algorithm controller design.
 
 <p align="center">
   <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1758696791245-fa7baf96-46af-4c19-8606-28ffadc4556c.png" width="70%">
@@ -236,7 +236,7 @@ batch_meta = client.get_meta(
 ### How to integrate a new storage backend
 
 The data plane is organized as follows:
-```aiignore
+```text
   transfer_queue/
   ├── storage/
   │   ├── __init__.py
@@ -278,7 +278,7 @@ pip install pre-commit
 pre-commit install && pre-commit run --all-files --show-diff-on-failure --color=always
 ```
 
-<h2 id="roadmap"> 🛣️ RoadMap</h2>
+<h2 id="roadmap"> 🛣️ Roadmap</h2>
 
 - [ ] Support data rewrite for partial rollout & agentic post-training
 - [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR#66](https://github.com/TransferQueue/TransferQueue/pull/66), [issue#72](https://github.com/TransferQueue/TransferQueue/issues/72))
