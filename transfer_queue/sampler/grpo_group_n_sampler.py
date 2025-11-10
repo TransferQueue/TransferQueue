@@ -57,7 +57,7 @@ class GRPOGroupNSampler(BaseSampler):
     ```
 
     Data Organization:
-    The sampler assumes ready_indexes are organized such that consecutive indices
+    This sampler assumes the user puts the prompts in consecutive orders, such as [prompt1_sample1, prompt1_sample2, prompt2_sample1, prompt2_sample2, ...]
     belong to the same prompt group:
     ```
     ready_indexes = [prompt1_sample1, prompt1_sample2, prompt1_sample3, prompt1_sample4,
