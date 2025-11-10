@@ -99,7 +99,7 @@ class PartitionIndexManager:
         indexes = []
 
         # Get indexes from reusable pool
-        if self.reusable_indexes and count > 0:
+        if self.reusable_indexes:
             # Calculate number of indexes needed from reusable pool
             num_reuse = min(count, len(self.reusable_indexes))
 
@@ -180,7 +180,7 @@ class DataPartitionStatus:
 
     # Production status tensor - dynamically expandable
     # Values: 0 = not produced, 1 = ready for consumption
-    production_status: Optional[torch.Tensor] = None
+    production_status: Optional[torch.Tensor] = torch.zeros(TQ_INIT_SAMPLE_NUM, TQ_INIT_FIELD_NUM, dtype=torch.int8)
 
     # Consumption status per task - task_name -> consumption_tensor
     # Each tensor tracks which samples have been consumed by that task
@@ -207,6 +207,11 @@ class DataPartitionStatus:
         """Current number of allocated columns in the tensor."""
         return self.production_status.shape[1] if self.production_status is not None else 0
 
+    @property
+    def allocated_samples_num(self) -> int:
+        """Current number of allocated rows in the tensor."""
+        return self.production_status.shape[0] if self.production_status is not None else 0
+
     # ==================== Dynamic Expansion Methods ====================
 
     def ensure_samples_capacity(self, required_samples: int) -> bool:
@@ -216,20 +221,7 @@ class DataPartitionStatus:
 
         Args:
             required_samples: Minimum number of samples needed
-
-        Returns:
-            True if expansion was successful or not needed, False on error
         """
-        if self.production_status is None:
-            # First-time initialization - use configured initial size
-            initial_size = max(TQ_INIT_SAMPLE_NUM, required_samples)
-            self.production_status = torch.zeros(initial_size, TQ_INIT_FIELD_NUM, dtype=torch.int8)
-            logger.debug(
-                f"Initialized production status for partition {self.partition_id}: "
-                f"{initial_size} samples, {TQ_INIT_FIELD_NUM} fields"
-            )
-            return True
-
         current_samples = self.production_status.shape[0]
         if required_samples > current_samples:
             # Expand rows using minimum expansion size for predictable memory usage
@@ -252,9 +244,6 @@ class DataPartitionStatus:
                 f"Expanded partition {self.partition_id} from {current_samples} to {new_samples} samples "
                 f"(added {min_expansion} samples)"
             )
-            return True
-
-        return True
 
     def ensure_fields_capacity(self, required_fields: int) -> bool:
         """
@@ -263,13 +252,10 @@ class DataPartitionStatus:
 
         Args:
             required_fields: Minimum number of fields needed
-
-        Returns:
-            True if expansion was successful or not needed, False on error
         """
         if self.production_status is None:
             # Will be initialized when samples are added
-            return True
+            return
 
         current_fields = self.production_status.shape[1]
         if required_fields > current_fields:
@@ -287,9 +273,6 @@ class DataPartitionStatus:
                 f"Expanded partition {self.partition_id} from {current_fields} to {new_fields} fields "
                 f"(added {min_expansion} fields)"
             )
-            return True
-
-        return True
 
     # ==================== Production Status Interface ====================
 
@@ -318,6 +301,9 @@ class DataPartitionStatus:
             max_sample_idx = max(global_indices) if global_indices else -1
             required_samples = max_sample_idx + 1
 
+            # Ensure we have enough rows
+            self.ensure_samples_capacity(required_samples)
+
             # Register new fields if needed
             new_fields = [field for field in field_names if field not in self.field_name_mapping]
             if new_fields:
@@ -327,9 +313,6 @@ class DataPartitionStatus:
 
                 required_fields = len(self.field_name_mapping)
                 self.ensure_fields_capacity(required_fields)
-
-            # Ensure we have enough rows
-            self.ensure_samples_capacity(required_samples)
 
             # Update production status
             if self.production_status is not None and global_indices and field_names:
@@ -345,7 +328,6 @@ class DataPartitionStatus:
             logger.error(f"Error updating production status for partition {self.partition_id}: {e}")
             return False
 
-    # TODO: Need to optimize, now it will be very slow
     def _update_field_metadata(
         self,
         global_indices: list[int],
@@ -459,13 +441,13 @@ class DataPartitionStatus:
 
     # ==================== Field Metadata Methods ====================
 
-    def get_field_dtype(self, sample_idx: int, field_name: str) -> Optional[Any]:
+    def get_field_dtype(self, global_index: int, field_name: str) -> Optional[Any]:
         """Get dtype for a specific sample and field."""
-        return self.field_dtypes.get(sample_idx, {}).get(field_name)
+        return self.field_dtypes.get(global_index, {}).get(field_name)
 
-    def get_field_shape(self, sample_idx: int, field_name: str) -> Optional[Any]:
+    def get_field_shape(self, global_index: int, field_name: str) -> Optional[Any]:
         """Get shape for a specific sample and field."""
-        return self.field_shapes.get(sample_idx, {}).get(field_name)
+        return self.field_shapes.get(global_index, {}).get(field_name)
 
     # ==================== Statistics and Monitoring ====================
 
@@ -953,7 +935,6 @@ class TransferQueueController:
 
         return BatchMeta(samples=samples)
 
-    # TODO: No need return, just raise error. Same With other function
     def clear(self, partition_id: str, clear_consumption: bool = True) -> bool:
         """
         Clear data for a specific partition.
@@ -967,7 +948,7 @@ class TransferQueueController:
         """
         partition = self.get_partition(partition_id)
         if not partition:
-            return False
+            raise ValueError(f"Partition {partition_id} not found")
 
         global_indexes_range = list(self.index_manager.get_indexes_for_partition(partition_id))
         success = partition.clear_data(global_indexes_range, clear_consumption)

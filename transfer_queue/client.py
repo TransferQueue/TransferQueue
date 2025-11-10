@@ -254,6 +254,10 @@ class AsyncTransferQueueClient:
         If metadata is not provided, it will be created automatically using insert mode
         with the provided data fields and partition_id.
 
+        Note:
+            When using multiple workers for distributed execution, there may be data
+            ordering inconsistencies between workers during put operations.
+
         Args:
             data: Data to write as TensorDict
             metadata: Records the metadata of a batch of data samples, containing index and
