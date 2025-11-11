@@ -133,9 +133,7 @@ class AsyncTransferQueueClient:
                 finally:
                     try:
                         if not sock.closed:
-                            sock.setsockopt(zmq.LINGER, -1)
-                            sock.close()
-                        sock.close(linger=0)
+                            sock.close(linger=-1)
                     except Exception as e:
                         logger.warning(f"[{self.client_id}]: Error closing socket to Controller {server_info.id}: {e}")
 
@@ -152,8 +150,8 @@ class AsyncTransferQueueClient:
         batch_size: int,
         partition_id: str,
         mode: str = "fetch",
-        get_n_samples: bool = False,
         task_name: Optional[str] = None,
+        sampling_config: Optional[dict[str, Any]] = None,
         socket: Optional[zmq.asyncio.Socket] = None,
     ) -> BatchMeta:
         """Asynchronously fetch data metadata from the controller via ZMQ.
@@ -166,9 +164,9 @@ class AsyncTransferQueueClient:
                 - 'fetch': Get ready data only
                 - 'force_fetch': Get data regardless of readiness (may return unready samples)
                 - 'insert': Internal usage - should not be used by users
-            get_n_samples: If True, arrange samples of the same prompt contiguously. In 'fetch' mode,
-                          only returns samples where all prompts in the group are ready
             task_name: Optional task name associated with the request
+            sampling_config: Optional sampling configuration for custom samplers.
+                           For GRPOGroupNSampler, should include "n_samples_per_prompt": int
             socket: ZMQ async socket for message transmission (injected by decorator)
 
         Returns:
@@ -178,7 +176,7 @@ class AsyncTransferQueueClient:
             RuntimeError: If communication fails or controller returns error response
 
         Example:
-            >>> # Example 1: Fetch ready metadata
+            >>> # Example 1: Basic fetch metadata
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["input_ids", "attention_mask"],
             ...     batch_size=4,
@@ -188,7 +186,19 @@ class AsyncTransferQueueClient:
             ... ))
             >>> print(batch_meta.is_ready)  # True if all samples ready
             >>>
-            >>> # Example 2: Force fetch metadata (may include unready samples)
+            >>> # Example 2: Fetch with self-defined samplers (using GRPOGroupNSampler as an example)
+            >>> batch_meta = asyncio.run(client.async_get_meta(
+            ...     data_fields=["input_ids", "attention_mask"],
+            ...     batch_size=8,
+            ...     partition_id="train_0",
+            ...     mode="fetch",
+            ...     task_name="generate_sequences",
+            ...     sampling_config={"n_samples_per_prompt": 4}
+            ... ))
+            >>> print(batch_meta.is_ready)  # True if all samples ready
+            >>>
+            >>> # Example 3: Force fetch metadata (bypass production status check and Sampler,
+            >>> so may include unready samples. Consumed samples will not be fetched.)
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["input_ids", "attention_mask"],
             ...     batch_size=4,
@@ -208,8 +218,8 @@ class AsyncTransferQueueClient:
                 "batch_size": batch_size,
                 "partition_id": partition_id,
                 "mode": mode,
-                "get_n_samples": get_n_samples,
                 "task_name": task_name,
+                "sampling_config": sampling_config,
             },
         )
 
@@ -244,6 +254,10 @@ class AsyncTransferQueueClient:
         If metadata is not provided, it will be created automatically using insert mode
         with the provided data fields and partition_id.
 
+        Note:
+            When using multiple workers for distributed execution, there may be data
+            ordering inconsistencies between workers during put operations.
+
         Args:
             data: Data to write as TensorDict
             metadata: Records the metadata of a batch of data samples, containing index and
@@ -264,7 +278,6 @@ class AsyncTransferQueueClient:
             ...     batch_size=batch_size,
             ...     partition_id=current_partition_id,
             ...     mode="fetch",
-            ...     get_n_samples=False,
             ...     task_name="generate_sequences",
             ... ))
             >>> batch = asyncio.run(client.async_get_data(batch_meta))
@@ -300,7 +313,6 @@ class AsyncTransferQueueClient:
                 data_fields=list(data.keys()),
                 batch_size=data.batch_size[0],
                 partition_id=partition_id,
-                get_n_samples=True,
                 mode="insert",
             )
 
@@ -330,7 +342,6 @@ class AsyncTransferQueueClient:
             ...     batch_size=4,
             ...     partition_id="train_0",
             ...     mode="fetch",
-            ...     get_n_samples=False,
             ...     task_name="generate_sequences",
             ... ))
             >>> batch = asyncio.run(client.async_get_data(batch_meta))
@@ -521,8 +532,8 @@ class TransferQueueClient(AsyncTransferQueueClient):
         data_fields: list[str],
         batch_size: int,
         partition_id: str,
-        get_n_samples: bool = False,
         task_name: Optional[str] = None,
+        sampling_config: Optional[dict[str, Any]] = None,
     ) -> BatchMeta:
         """Synchronously fetch data metadata from controller.
 
@@ -530,8 +541,9 @@ class TransferQueueClient(AsyncTransferQueueClient):
             data_fields: List of data field names to retrieve metadata for
             batch_size: Number of samples to request in the batch
             partition_id: Target data partition id
-            get_n_samples: If True, arrange samples of the same prompt contiguously
             task_name: Optional task name associated with the request
+            sampling_config: Optional sampling configuration for custom samplers.
+                           For GRPOGroupNSampler, should include "n_samples_per_prompt": int
 
         Returns:
             BatchMeta: Batch metadata containing data location information
@@ -541,8 +553,8 @@ class TransferQueueClient(AsyncTransferQueueClient):
                 data_fields=data_fields,
                 batch_size=batch_size,
                 partition_id=partition_id,
-                get_n_samples=get_n_samples,
                 task_name=task_name,
+                sampling_config=sampling_config,
             )
         )
 

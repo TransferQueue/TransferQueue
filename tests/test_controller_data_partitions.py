@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -11,6 +12,9 @@ sys.path.append(str(parent_dir))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
+TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
+
 
 def test_data_partition_status():
     """Test the DataPartitionStatus class functionality."""
@@ -22,10 +26,10 @@ def test_data_partition_status():
     partition = DataPartitionStatus(partition_id="test@partition_1")
 
     # Test initial state
-    assert partition.total_samples_num == 0
+    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
-    assert partition.allocated_fields_num == 0
-    assert partition.production_status is None
+    assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
+    assert partition.production_status is not None
 
     print("✓ Initial state correct")
 
@@ -172,9 +176,9 @@ def test_data_partition_status_advanced():
     partition = DataPartitionStatus(partition_id="advanced_test")
 
     # Initially empty
-    assert partition.total_samples_num == 0
+    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
-    assert partition.allocated_fields_num == 0
+    assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
 
     # Add data to trigger expansion
     partition.update_production_status([0, 1, 2, 3, 4], ["field_a", "field_b", "field_c"])
@@ -449,7 +453,7 @@ def test_performance_characteristics():
 
 def main():
     """Run all tests."""
-    print("=== Comprehensive Testing of Dynamic TransferQueue Controller ===\n")
+    print("=== Comprehensive Testing of TransferQueue Controller ===\n")
 
     test_functions = [
         test_data_partition_status,

@@ -56,6 +56,18 @@ def initialize_data_system(config):
         logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
 
     # 2. Initialize TransferQueueController (single controller only)
+
+    # Sampler usage instructions:
+    # For GRPO grouped sampling, you can initialize the controller with GRPOGroupNSampler:
+    # Option 1: Pass sampler class (will be instantiated automatically)
+    # data_system_controller = TransferQueueController.remote(sampler=GRPOGroupNSampler)
+
+    # Option 2: Pass sampler instance (if you need custom configuration)
+    # grpo_sampler = GRPOGroupNSampler()
+    # data_system_controller = TransferQueueController.remote(sampler=grpo_sampler)
+
+    # Then use sampling_config in get_meta calls:
+    # sampling_config={"n_samples_per_prompt": 4}
     data_system_controller = TransferQueueController.remote()
     logger.info("TransferQueueController has been created.")
 
@@ -91,7 +103,7 @@ def compute_old_log_prob(data1, _data2):
 
 
 def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
-    # 1. 根据data_meta通过client从storage unit中拉取真实data
+    # 1. Pull real data from the storage plane through client based on data_meta
     data = data_system_client.get_data(data_meta)
     logger.info(f"demo get data {data}")
 
@@ -106,7 +118,7 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
         batch_size=output.size(0),
     )
 
-    # 2. 根据data_meta将结果写回storage unit
+    # 2. Write results back to the storage plane based on data_meta
     data_system_client.put(data=output, metadata=data_meta)
     data_meta.add_fields(output)
     logger.info("demo put data to storages done")
@@ -115,7 +127,7 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
 
 
 def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
-    # 1. 根据data_meta通过client从storage unit中拉取真实data
+    # 1. Pull real data from the storage plane through client based on data_meta
     data = data_system_client.get_data(data_meta)
     logger.info(f"demo get data {data}")
 
@@ -123,7 +135,7 @@ def actor_rollout_wg_compute_old_log_prob(data_meta, data_system_client):
 
     output = TensorDict({"old_log_prob": output}, batch_size=output.size(0))
 
-    # 2. 根据data_meta将结果写回storage unit
+    # 2. Write results back to the storage plane based on data_meta
     data_system_client.put(data=output, metadata=data_meta)
     data_meta.add_fields(output)
     logger.info("demo put data to storages done")
@@ -151,7 +163,6 @@ def fit(config, data_system_client):
                 data_fields=["input_ids", "attention_mask"],
                 batch_size=config.global_batch_size,
                 partition_id=f"train_{step}",
-                get_n_samples=False,
                 task_name="generate_sequences",
             )
             # Set output fields for RL training - in this case, we want to generate sequences from input_ids
@@ -163,7 +174,6 @@ def fit(config, data_system_client):
                 data_fields=["input_ids", "attention_mask", "generate_sequences_ids"],
                 batch_size=config.global_batch_size,
                 partition_id=f"train_{step}",
-                get_n_samples=False,
                 task_name="compute_old_log_prob",
             )
             # Set output fields for RL training - we want to compute log probs for the generated sequences
@@ -174,16 +184,17 @@ def fit(config, data_system_client):
 
             batch_meta = batch_meta.union(old_log_prob_meta)
 
-            # 对于主控的client，通知所有controller进行数据状态清空，主控返回metadata；
-            # client再根据metadata通知所有storage unit清空
-            # client选择一个主controller拿到metadata，其他的controller直接清空不用返回metadata即可
+            # For the master client, notify all controllers to clear data status, master returns metadata;
+            # Client then notifies the storage plane to clear based on metadata
+            # Client selects one master controller to get metadata,
+            # other controllers directly clear without returning metadata
             data_system_client.clear(partition_id=f"train_{step}")
             logger.info("clear ok! ")
     logger.info("demo done!")
 
 
 def main(config):
-    # Initialize Data System：基于Ray拉起Controller以及Storage
+    # Initialize Data System: Launching the Controller and Storage based on Ray
     _data_system_controller, _data_system_storage_units, data_system_client = initialize_data_system(config)
     import time
 

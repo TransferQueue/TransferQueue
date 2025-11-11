@@ -273,6 +273,28 @@ class TransferQueueStorageManager(ABC):
     async def clear_data(self, metadata: BatchMeta) -> None:
         raise NotImplementedError("Subclasses must implement clear_data")
 
+    def close(self) -> None:
+        """Close all ZMQ sockets and context to prevent resource leaks."""
+        for sock in (self.controller_handshake_socket, self.data_status_update_socket):
+            try:
+                if sock and not sock.closed:
+                    sock.close(linger=0)
+            except Exception as e:
+                logger.error(f"[{self.storage_manager_id}]: Error closing socket {sock}: {str(e)}")
+
+        try:
+            if self.zmq_context:
+                self.zmq_context.term()
+        except Exception as e:
+            logger.error(f"[{self.storage_manager_id}]: Error terminating zmq_context: {str(e)}")
+
+    def __del__(self):
+        """Destructor to ensure resources are cleaned up."""
+        try:
+            self.close()
+        except Exception as e:
+            logger.error(f"[{self.storage_manager_id}]: Exception during __del__: {str(e)}")
+
 
 class KVStorageManager(TransferQueueStorageManager):
     """

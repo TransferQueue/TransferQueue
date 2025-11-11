@@ -63,7 +63,6 @@ class TestTransferQueueController:
                 batch_size=gbs * num_n_samples,
                 partition_id=partition_id,
                 mode="insert",
-                get_n_samples=True,
             )
         )
 
@@ -112,7 +111,6 @@ class TestTransferQueueController:
                 partition_id=partition_id,
                 mode="fetch",
                 task_name="generate_sequences",
-                get_n_samples=False,
             )
         )
         assert gen_meta.global_indexes == list(range(gbs * num_n_samples))
@@ -187,7 +185,6 @@ class TestTransferQueueController:
                 partition_id=partition_id_1,
                 mode="fetch",
                 task_name="generate_sequences",
-                get_n_samples=False,
             )
         )
         assert gen_meta
