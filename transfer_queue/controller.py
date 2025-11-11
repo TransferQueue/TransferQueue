@@ -47,8 +47,8 @@ from transfer_queue.utils.zmq_utils import (
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
-TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 300))
-TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 1))
+TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 1))
+TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 0.2))
 TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL", 2))
 
 TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
@@ -753,6 +753,17 @@ class TransferQueueController:
                 ready_for_consume_indexes = self.scan_data_status(partition_id, data_fields, task_name, batch_size)
 
                 if len(ready_for_consume_indexes) < batch_size:
+                    if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
+                        raise TimeoutError(
+                            f"Timeout while waiting for sufficient data. "
+                            f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}"
+                        )
+                    logger.warning(
+                        f"Insufficient complete groups available. Required: {batch_size}, "
+                        f"Available: {len(ready_for_consume_indexes)}. Retrying in "
+                        f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
+                    )
+                    time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
                     continue
 
                 # Try sampling - if it returns empty lists, retry
