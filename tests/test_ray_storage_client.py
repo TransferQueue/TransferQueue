@@ -3,13 +3,12 @@ import ray
 import torch  
 import sys
 from pathlib import Path
-from tensordict import TensorDict  
 
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
 from transfer_queue.storage.clients.ray_storage_client import RayStorageClient
-  
+
 @pytest.fixture(scope="session")  
 def ray_setup():  
     ray.init(ignore_reinit_error=True)  
@@ -34,9 +33,7 @@ def test_ray_storage_put_get(ray_storage_client):
     ray_storage_client.put(keys, values)  
       
     # TEST GET  
-    shapes = [v.shape for v in values]  
-    dtypes = [v.dtype for v in values]  
-    retrieved = ray_storage_client.get(keys, shapes=shapes, dtypes=dtypes)  
+    retrieved = ray_storage_client.get(keys)  
       
     for original, retrieved_tensor in zip(values, retrieved):  
         torch.testing.assert_close(original, retrieved_tensor)
@@ -48,7 +45,7 @@ def test_multiple_clients_concurrent(ray_setup):
         
     for i, client in enumerate(clients):    
         keys = [f"client_{i}_tensor_{j}" for j in range(3)]    
-        values = [torch.randn(10, 10) * i for _ in range(3)] 
+        values = [torch.randn(10, 10) * j for j in range(3)] 
         client.put(keys, values)    
         
     for i, client in enumerate(clients):    

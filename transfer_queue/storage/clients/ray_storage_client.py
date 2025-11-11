@@ -7,8 +7,8 @@ from torch import Tensor
 from transfer_queue.storage.clients.base import TransferQueueStorageKVClient
 from transfer_queue.storage.clients.factory import StorageClientFactory
 
-@ray.remote
-class RayGpuObjectRefStorage:
+@ray.remote(max_concurrency=8)
+class RayObjectRefStorage:
     def __init__(self):
         self.storage_dict = {}
 
@@ -25,95 +25,86 @@ class RayGpuObjectRefStorage:
             if key in self.storage_dict:
                 del self.storage_dict[key]
 
-@StorageClientFactory.register("RDT")
+@StorageClientFactory.register("RAY")
 class RayStorageClient(TransferQueueStorageKVClient):
 
     def __init__(self, config: dict[str, Any]):  
         if not ray.is_initialized():  
-            ray.init()  
+            raise RuntimeError(
+                "Ray is not initialized. Please call ray.init() before creating RayStorageClient."
+            )
     
         self.use_gpu = torch.cuda.is_available()  
-        
-        if self.use_gpu:  
-            gpu_ids = ray.get_gpu_ids()  
-            if gpu_ids:  
-                self.device_id = gpu_ids[0]  
-            else:  
-                self.device_id = config.get("device_id", 0)  
-            torch.cuda.set_device(self.device_id)  
-            self.device = f"cuda:{self.device_id}"  
-        else:  
-            self.device_id = None  
-            self.device = "cpu"  
 
-    def _create_empty_tensorlist(self, shapes, dtypes):
-        """
-        Create a list of empty GPU tensors with given shapes and dtypes.
-        Args:
-            shapes (list): List of tensor shapes (e.g., [(3,), (2, 4)])
-            dtypes (list): List of torch dtypes (e.g., [torch.float32, torch.int64])
-        Returns:
-            list: List of uninitialized GPU tensors
-        """
-        if len(dtypes) != len(shapes):
-            raise ValueError("Length of dtypes must equal length of shapes")
+        # initialize actor 
+        try:
+            self.storage_actor = ray.get_actor("RayObjectRefStorage")
+        except ValueError: 
+            self.storage_actor = RayObjectRefStorage.options(
+                name="RayObjectRefStorage",
+                lifetime="detached",
+                get_if_exists=False
+            ).remote()
 
-        tensors: list[Tensor] = []
-        for dtype, shape in zip(dtypes, shapes, strict=False):
-            tensor = torch.empty(shape, dtype=dtype).to(self.device)
-            tensors.append(tensor)
-        return tensors
-
-    def put(self, keys: list[str], values: list[Tensor]):
+    def put(self, keys: list[str], values: list[Any]):
         """
         Store tensors to remote storage.
         Args:
             keys (list): List of string keys
-            values (list): List of torch.Tensor on NPU
+            values (list): List of torch.Tensor on GPU(CUDA) or CPU
         """
         if not isinstance(keys, list) or not isinstance(values, list):
-            raise ValueError("keys and values must be lists")
+            raise ValueError(f"keys and values must be lists, but got {type(keys)} and {type(values)}")
         if len(keys) != len(values):
             raise ValueError("Number of keys must match number of values")
 
-        for value in values:
-            if not isinstance(value, torch.Tensor):
-                raise ValueError(f"Expected torch.Tensor, got {type(value)}")
+        obj_refs = []
+        for v in values:
+            if isinstance(v, torch.Tensor) and v.is_cuda and self.use_gpu:
+                # GPU Tensor → use NIXL
+                ref = ray.put(v, _tensor_transport="nixl")
+            else:
+                # others ：CPU tensor、non-tensor → ray_obj_store
+                ref = ray.put(v)
+            obj_refs.append(ref)
 
-        # TODO: NIXL can only be initialized in an environment with GPU, even if data is transferred on the cpu.
-        if self.use_gpu:  
-            obj_refs = [ray.put(v, _tensor_transport="nixl") for v in values]  
-        else:  
-            obj_refs = [ray.put(v) for v in values]  
-        # obj_refs = [ray.put(v, _tensor_transport="nixl") for v in values]
+        ray.get(self.storage_actor.put_gpu_obj_ref.remote(keys, obj_refs))
 
-        storage = RayGpuObjectRefStorage.options(
-            name = "RayGpuObjectRefStorage",
-            get_if_exists = True,
-            lifetime = "detached"
-        ).remote()
-
-        storage.put_gpu_obj_ref.remote(keys, obj_refs)
-
-    def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Tensor]:
+    def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Any]:
         """
-        Retrieve tensors from remote storage.
+        Retrieve objects from remote storage.
         Args:
-            keys (list): List of keys to fetch
-            shapes (list): Expected shapes of returned tensors
-            dtypes (list): Expected dtypes of returned tensors
+            keys (list): List of string keys to fetch.
+            shapes (list, optional): Ignored. For compatibility with KVStorageManager.
+            dtypes (list, optional): Ignored. For compatibility with KVStorageManager.
+
         Returns:
-            list: List of retrieved NPU tensors
+            list: List of retrieved objects
         """
-        if len(dtypes) != len(shapes):
-            raise ValueError("Length of dtypes must equal length of shapes")
 
-        values: list[Tensor] = self._create_empty_tensorlist(shapes=shapes, dtypes=dtypes)
-        storage = ray.get_actor("RayGpuObjectRefStorage")
-
-        gpu_obj_refs = ray.get(storage.get_gpu_obj_ref.remote(keys))
+        if not isinstance(keys, list):
+            raise ValueError(f"keys must be a list, but got {type(keys)}")
+        
+        gpu_obj_refs = ray.get(self.storage_actor.get_gpu_obj_ref.remote(keys))
         # values = ray.get(gpu_obj_refs)
-        values = ray.get(gpu_obj_refs, _tensor_transport="nixl")
+        values = []
+        for key, gpu_obj_ref in zip(keys, gpu_obj_refs):
+            try:
+                if self.use_gpu:
+                    # GPU tensor
+                    value = ray.get(gpu_obj_ref, _tensor_transport="nixl")
+                else:
+                    # CPU
+                    value = ray.get(gpu_obj_ref)
+                values.append(value)
+            except Exception:
+                # GPU non-tensors fallback to use ray_obj_store
+                try:
+                    value = ray.get(gpu_obj_ref)
+                    values.append(value)
+                except Exception as e:
+                    raise RuntimeError(f"Failed to retrieve value for key '{key}': {e}") from e
+        
         return values
 
     def clear(self, keys: list[str]):
@@ -122,5 +113,4 @@ class RayStorageClient(TransferQueueStorageKVClient):
         Args:
             keys (list): List of keys to delete
         """
-        storage = ray.get_actor("RayGpuObjectRefStorage")
-        ray.get(storage.clear_gpu_obj_ref.remote(keys))
+        ray.get(self.storage_actor.clear_gpu_obj_ref.remote(keys))

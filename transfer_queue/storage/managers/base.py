@@ -440,7 +440,14 @@ class KVStorageManager(TransferQueueStorageManager):
                 per_field_shapes[global_idx][field] = data_item.shape if hasattr(data_item, "shape") else None
 
         # notify controller that new data is ready
-        await self.notify_data_update(list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes)
+        # await self.notify_data_update(list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes)
+        await self.notify_data_update(
+            partition_id=metadata.samples[0].partition_id if metadata.samples else "unknown",
+            fields=list(data.keys()),
+            global_indexes=metadata.global_indexes,
+            dtypes=per_field_dtypes,
+            shapes=per_field_shapes,
+        )
 
     async def get_data(self, metadata: BatchMeta) -> TensorDict:
         """
