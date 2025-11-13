@@ -19,13 +19,20 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import uuid4
 
+import torch
 import psutil
 import zmq
+from torch.distributed.rpc.internal import _internal_rpc_pickler
 
 from transfer_queue.utils.utils import (
     ExplicitEnum,
     TransferQueueRole,
 )
+from transfer_queue.utils.serial_utils import MsgpackEncoder, MsgpackDecoder
+
+
+_encoder = MsgpackEncoder()
+_decoder = MsgpackDecoder(torch.Tensor)
 
 
 class ZMQRequestType(ExplicitEnum):
@@ -115,20 +122,23 @@ class ZMQMessage:
 
     def serialize(self) -> bytes:
         """Using pickle to serialize ZMQMessage objects"""
-        return pickle.dumps(self)
+        pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
+        if len(tensors) > 0:
+            serialized_tensors = [None] * len(tensors)
+            for i, tensor in enumerate(tensors):
+                serialized_tensors[i] = _encoder.encode(tensor)
+        else:
+            serialized_tensors = []
+        return pickled_bytes, serialized_tensors
 
     @classmethod
-    def deserialize(cls, data: bytes | list[bytes]):
+    def deserialize(cls, data: tuple[bytes, list[bytes]]):
         """Using pickle to deserialize ZMQMessage objects"""
-        if isinstance(data, list):
-            # Process multiple byte streams by deserializing each in sequence
-            result = []
-            for d in data:
-                result.append(pickle.loads(d))
-            return result
-        else:
-            # Single byte stream case
-            return pickle.loads(data)
+        pickled_bytes, serialized_tensors = data
+        tensors = [None] * len(serialized_tensors)
+        for i, serialized_tensor in enumerate(serialized_tensors):
+            tensors[i] = _decoder.decode(serialized_tensor)
+        return _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
 
 
 def get_free_port() -> str:

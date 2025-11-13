@@ -92,33 +92,7 @@ class MsgpackEncoder:
 
         return msgpack.Ext(CUSTOM_TYPE_PICKLE, pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL))
 
-    def _encode_tensordict(self, obj: TensorDict) -> tuple[tuple[int, ...], Optional[str], dict[str, tuple[str, Any]]]:
-        assert self.aux_buffers is not None
-        encoded_items: dict[str, tuple[str, Any]] = {}
-        for k, v in obj.items():
-            if isinstance(v, torch.Tensor):
-                encoded_items[k] = ("tensor", self._encode_tensor(v))
-            # elif isinstance(v, NonTensorStack):
-            #     encoded_items[k] = ("non_tensor_stack", self._encode_non_tensor_stack(v))
-            elif isinstance(v, NonTensorData):
-                encoded_items[k] = ("non_tensor_data", self._encode_non_tensor_data(v))
-            else:
-                data = len(self.aux_buffers)
-                self.aux_buffers.append(pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL))
-                encoded_items[k] = ("other", data)
-        batch_size = tuple(obj.batch_size)
-        device = str(obj.device) if obj.device is not None else None
-        return batch_size, device, encoded_items
-
     def _encode_tensor(self, obj: torch.Tensor) -> tuple[str, list[tensorenc]] | tensorenc:
-        if not obj.is_nested:
-            return self._encode_single_tensor(obj)
-        else:
-            layout = str(obj.layout).removeprefix("torch.")
-            data = [self._encode_single_tensor(tensor) for tensor in obj.unbind()]
-            return layout, data
-
-    def _encode_single_tensor(self, obj: torch.Tensor) -> tensorenc:
         assert self.aux_buffers is not None
         # view the tensor as a contiguous 1D array of bytes
         arr = obj.flatten().contiguous().view(torch.uint8).numpy()
@@ -131,14 +105,6 @@ class MsgpackEncoder:
             self.aux_buffers.append(arr.data)
         dtype = str(obj.dtype).removeprefix("torch.")
         return dtype, obj.shape, data
-
-    def _encode_non_tensor_data(self, obj: NonTensorData) -> tuple[tuple[int, ...], Optional[str], int]:
-        assert self.aux_buffers is not None
-        batch_size = tuple(obj.batch_size)
-        device = str(obj.device) if obj.device is not None else None
-        data = len(self.aux_buffers)
-        self.aux_buffers.append(pickle.dumps(obj.data, protocol=pickle.HIGHEST_PROTOCOL))
-        return batch_size, device, data
 
 
 class MsgpackDecoder:
@@ -166,46 +132,11 @@ class MsgpackDecoder:
     def dec_hook(self, t: type, obj: Any) -> Any:
         # Given native types in `obj`, convert to type `t`.
         if isclass(t):
-            if issubclass(t, TensorDict):
-                return self._decode_tensordict(obj)
             if issubclass(t, torch.Tensor):
                 return self._decode_tensor(obj)
         return obj
 
-    def _decode_tensordict(self, arr: Any) -> TensorDict:
-        batch_size, device, encoded_items = arr
-        decoded_items: dict[str, Any] = {}
-
-        for k, (v_type, v) in encoded_items.items():
-            if v_type == "tensor":
-                decoded_items[k] = self._decode_tensor(v)
-            # elif v_type == "non_tensor_stack":
-            #     decoded_items[k] = self._decode_non_tensor_stack(v)
-            elif v_type == "non_tensor_data":
-                decoded_items[k] = self._decode_non_tensor_data(v)
-            elif v_type == "other":
-                decoded_items[k] = pickle.loads(self.aux_buffers[v])
-
-        batch_size = torch.Size(batch_size)
-        torch_device = torch.device(device) if device is not None else None
-
-        return TensorDict(source=decoded_items, batch_size=batch_size, device=torch_device)
-
     def _decode_tensor(self, arr: Any) -> torch.Tensor:
-        if len(arr) == 3:
-            # decode single tensor
-            return self._decode_single_tensor(arr)
-        elif len(arr) == 2:
-            # decode nested tensor
-            layout, data = arr
-            torch_layout = getattr(torch, layout)
-            return torch.nested.as_nested_tensor(
-                [self._decode_single_tensor(tensor) for tensor in data], layout=torch_layout
-            )
-        else:
-            raise ValueError(f"Invalid tensor encoding format, expected length 2 or 3, got {len(arr)}")
-
-    def _decode_single_tensor(self, arr: Any) -> torch.Tensor:
         dtype, shape, data = arr
         # Copy from inline representation, to decouple the memory storage
         # of the message from the original buffer. And also make Torch
@@ -220,14 +151,6 @@ class MsgpackDecoder:
         arr = torch.frombuffer(buffer, dtype=torch.uint8)
         # Convert back to proper shape & type
         return arr.view(torch_dtype).view(shape)
-
-    def _decode_non_tensor_data(self, arr: Any) -> NonTensorData:
-        batch_size, device, data = arr
-        buffer = self.aux_buffers[data]
-        batch_size = torch.Size(batch_size)
-        torch_device = torch.device(device) if device is not None else None
-        non_tensor_data = pickle.loads(buffer)
-        return NonTensorData(data=non_tensor_data, batch_size=batch_size, device=torch_device)
 
     def ext_hook(self, code: int, data: memoryview) -> Any:
         if code == CUSTOM_TYPE_RAW_VIEW:
