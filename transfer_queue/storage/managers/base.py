@@ -273,28 +273,6 @@ class TransferQueueStorageManager(ABC):
     async def clear_data(self, metadata: BatchMeta) -> None:
         raise NotImplementedError("Subclasses must implement clear_data")
 
-    def close(self) -> None:
-        """Close all ZMQ sockets and context to prevent resource leaks."""
-        for sock in (self.controller_handshake_socket, self.data_status_update_socket):
-            try:
-                if sock and not sock.closed:
-                    sock.close(linger=0)
-            except Exception as e:
-                logger.error(f"[{self.storage_manager_id}]: Error closing socket {sock}: {str(e)}")
-
-        try:
-            if self.zmq_context:
-                self.zmq_context.term()
-        except Exception as e:
-            logger.error(f"[{self.storage_manager_id}]: Error terminating zmq_context: {str(e)}")
-
-    def __del__(self):
-        """Destructor to ensure resources are cleaned up."""
-        try:
-            self.close()
-        except Exception as e:
-            logger.error(f"[{self.storage_manager_id}]: Exception during __del__: {str(e)}")
-
 
 class KVStorageManager(TransferQueueStorageManager):
     """
@@ -306,8 +284,10 @@ class KVStorageManager(TransferQueueStorageManager):
         """
         Initialize the KVStorageManager with configuration.
         """
+        client_name = config.get("client_name", None)
+        if client_name is None:
+            raise ValueError("Missing client_name in config")
         super().__init__(config)
-        client_name = config.get("client_name", "Yuanrong")
         self.storage_client = StorageClientFactory.create(client_name, config)
 
     @staticmethod
@@ -340,11 +320,6 @@ class KVStorageManager(TransferQueueStorageManager):
             list[Tensor]: Flattened list of tensors, e.g.,
                           [data[field_a][0], data[field_a][1], data[field_a][2], ..., data[field_b][0], ...]
         """
-        # TODO: We will support more complex data types ( NonTensorStack/ NonTensorData/ NestedTensor)
-        for v in data.values():
-            if not torch.is_tensor(v):
-                raise TypeError(f"TensorDict values must be torch.Tensor, but got {type(v)}")
-
         return [row_data for field in sorted(data.keys()) for row_data in data[field]]
 
     @staticmethod
@@ -412,7 +387,6 @@ class KVStorageManager(TransferQueueStorageManager):
                 dtypes.append(field.dtype)
         return shapes, dtypes
 
-    # TODO: Test put_data/get_data/clear_data with YuanrongStorageClient
     async def put_data(self, data: TensorDict, metadata: BatchMeta) -> None:
         """
         Store tensor data in the backend storage and notify the controller.
@@ -421,9 +395,13 @@ class KVStorageManager(TransferQueueStorageManager):
         extracts per-sample dtype and shape information, and sends a notification
         to the controller that new data is available.
         """
+        if not metadata.field_names:
+            logger.warning("Attempted to put data, but metadata contains no fields.")
+            return
         keys = self._generate_keys(metadata)
         values = self._generate_values(data)
         self.storage_client.put(keys=keys, values=values)
+
         per_field_dtypes = {}
         per_field_shapes = {}
 
@@ -433,14 +411,20 @@ class KVStorageManager(TransferQueueStorageManager):
             per_field_shapes[global_idx] = {}
 
         # For each field, extract dtype and shape for each sample
-        for field in data.keys():
-            for i, data_item in enumerate(data[field]):
+        for field_name, field_data in data.items():
+            for i, data_item in enumerate(field_data):
                 global_idx = metadata.global_indexes[i]
-                per_field_dtypes[global_idx][field] = data_item.dtype if hasattr(data_item, "dtype") else None
-                per_field_shapes[global_idx][field] = data_item.shape if hasattr(data_item, "shape") else None
+                per_field_dtypes[global_idx][field_name] = getattr(data_item, "dtype", None)
+                per_field_shapes[global_idx][field_name] = getattr(data_item, "shape", None)
 
+        # Get current data partition id
+        # Note: Currently we only support putting to & getting data from a single data partition simultaneously,
+        # but in the future we may support putting to & getting data from multiple data partitions concurrently.
+        partition_id = metadata.samples[0].partition_id
         # notify controller that new data is ready
-        await self.notify_data_update(list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes)
+        await self.notify_data_update(
+            partition_id, list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes
+        )
 
     async def get_data(self, metadata: BatchMeta) -> TensorDict:
         """
@@ -449,6 +433,9 @@ class KVStorageManager(TransferQueueStorageManager):
         Fetches tensors using the provided metadata, reconstructs them with the
         correct shapes and dtypes, and merge them as a TensorDict according to metadata.
         """
+        if not metadata.field_names:
+            logger.warning("Attempted to get data, but metadata contains no fields.")
+            return TensorDict({}, batch_size=len(metadata))
         keys = self._generate_keys(metadata)
         shapes, dtypes = self._get_shape_type_list(metadata)
         values = self.storage_client.get(keys=keys, shapes=shapes, dtypes=dtypes)
@@ -456,5 +443,8 @@ class KVStorageManager(TransferQueueStorageManager):
 
     async def clear_data(self, metadata: BatchMeta) -> None:
         """Remove stored data associated with the given metadata."""
+        if not metadata.field_names:
+            logger.warning("Attempted to clear data, but metadata contains no fields.")
+            return
         keys = self._generate_keys(metadata)
         self.storage_client.clear(keys=keys)
