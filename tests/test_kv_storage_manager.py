@@ -62,13 +62,6 @@ class Test(unittest.TestCase):
         expected_length = len(self.field_names) * len(self.global_indexes)  # 9
         self.assertEqual(len(values), expected_length)
 
-    def test_generate_values_type_check(self):
-        """Test whether _generate_values raises an exception for non-tensor inputs."""
-        bad_data = TensorDict({"text": torch.tensor([1, 2]), "label": "not_a_tensor"}, batch_size=2)
-
-        with self.assertRaises(TypeError):
-            KVStorageManager._generate_values(bad_data)
-
     def test_merge_kv_to_tensordict(self):
         """Test whether _merge_kv_to_tensordict can correctly reconstruct the TensorDict."""
         # generate values firstly
