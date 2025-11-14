@@ -1,16 +1,15 @@
-from typing import Any
+from pathlib import Path
+import sys
+
+parent_dir = Path(__file__).resolve().parent.parent
+sys.path.append(str(parent_dir))
 
 import asyncio
 import ray
 import torch
-import sys
 import numpy as np
+from typing import Any
 from tensordict import TensorDict, NonTensorData, NonTensorStack
-
-from pathlib import Path
-
-parent_dir = Path(__file__).resolve().parent.parent
-sys.path.append(str(parent_dir))
 
 from transfer_queue.metadata import BatchMeta, SampleMeta, FieldMeta
 from transfer_queue.utils.zmq_utils import ZMQServerInfo
@@ -89,7 +88,7 @@ def _patched_merge_tensors_to_tensordict(metadata: BatchMeta, values: list) -> T
     tensor_data = {}
     for field, items in merged_data.items():
         # if the first element is str/list/tuple/dict，package it into NonTensorData then stack
-        if isinstance(items[0], (str, list, tuple, dict)):
+        if isinstance(items[0], str | list | tuple | dict):
             ntd_items = [NonTensorData(x) for x in items]
             tensor_data[field] = torch.stack(ntd_items)
         else:

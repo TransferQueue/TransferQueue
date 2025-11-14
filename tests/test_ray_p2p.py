@@ -1,14 +1,15 @@
-from typing import Any
-
-import asyncio
-import ray
-import torch
-import sys
 from pathlib import Path
-from tensordict import TensorDict, NonTensorData
+import sys
 
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
+
+import asyncio
+import ray
+import os
+import torch
+from typing import Any
+from tensordict import TensorDict, NonTensorData
 
 from transfer_queue.metadata import BatchMeta, SampleMeta, FieldMeta
 from transfer_queue.utils.zmq_utils import ZMQServerInfo
@@ -57,10 +58,11 @@ def ensure_mock_storage_manager_registered():
 ensure_mock_storage_manager_registered()
 
 # Step 3: Define Writer and Reader Actors
-@ray.remote
+@ray.remote(num_gpus=1)
 class WriterActor:
     def __init__(self, controller_info, config):
         ensure_mock_storage_manager_registered()
+        os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
         self.client = AsyncTransferQueueClient(
             client_id=f"writer_{id(self)}",
@@ -73,10 +75,10 @@ class WriterActor:
         seq_len = 5
 
         data = TensorDict({
-            "input_ids": torch.randint(1, 100, (batch_size, seq_len)),
-            "labels": torch.randn(batch_size, 2),
+            "input_ids": torch.randint(1, 100, (batch_size, seq_len)).cuda(),
+            "labels": torch.randn(batch_size, 2).cuda(),
             "nested_tensor": torch.nested.as_nested_tensor([
-                torch.randn(torch.randint(2, 5, ()).item(), 3) for _ in range(batch_size)
+                torch.randn(torch.randint(2, 5, ()).item(), 3).cuda() for _ in range(batch_size)
             ]),
         }, batch_size=[batch_size])
 
@@ -100,10 +102,11 @@ class WriterActor:
         return metadata
 
 
-@ray.remote
+@ray.remote(num_gpus=1)
 class ReaderActor:
     def __init__(self, controller_info, config):
         ensure_mock_storage_manager_registered()
+        os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
         self.client = AsyncTransferQueueClient(
             client_id=f"reader_{id(self)}",
@@ -149,7 +152,7 @@ async def main():
 
         print("Validating actor-to-actor transfer...")
 
-        expected_input_ids = torch.randint(1, 100, (3, 5)) 
+        expected_input_ids = torch.randint(1, 100, (3, 5))
         assert result["input_ids"].shape == (3, 5), "Shape mismatch"
         assert result["labels"].shape == (3, 2), "Shape mismatch"
         assert len(result["nested_tensor"].unbind()) == 3, "nested tensor component count mismatch"

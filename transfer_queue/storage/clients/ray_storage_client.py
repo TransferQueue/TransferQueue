@@ -26,25 +26,30 @@ class RayObjectRefStorage:
                 del self.storage_dict[key]
 
 @StorageClientFactory.register("RAY")
+@ray.remote(num_gpus=1)
 class RayStorageClient(TransferQueueStorageKVClient):
 
-    def __init__(self, config: dict[str, Any]):  
-        if not ray.is_initialized():  
+    def __init__(self):
+        if not ray.is_initialized():
             raise RuntimeError(
                 "Ray is not initialized. Please call ray.init() before creating RayStorageClient."
             )
-    
-        self.use_gpu = torch.cuda.is_available()  
 
-        # initialize actor 
+        self.use_gpu = torch.cuda.is_available()
+
+        # initialize actor
         try:
             self.storage_actor = ray.get_actor("RayObjectRefStorage")
-        except ValueError: 
+        except ValueError:
             self.storage_actor = RayObjectRefStorage.options(
                 name="RayObjectRefStorage",
                 lifetime="detached",
                 get_if_exists=False
             ).remote()
+
+    def set_use_gpu(self, use_gpu: bool):
+        """Allow runtime toggle of use_gpu for performance testing."""
+        self.use_gpu = use_gpu
 
     def put(self, keys: list[str], values: list[Any]):
         """
@@ -77,14 +82,13 @@ class RayStorageClient(TransferQueueStorageKVClient):
             keys (list): List of string keys to fetch.
             shapes (list, optional): Ignored. For compatibility with KVStorageManager.
             dtypes (list, optional): Ignored. For compatibility with KVStorageManager.
-
         Returns:
             list: List of retrieved objects
         """
 
         if not isinstance(keys, list):
             raise ValueError(f"keys must be a list, but got {type(keys)}")
-        
+
         gpu_obj_refs = ray.get(self.storage_actor.get_gpu_obj_ref.remote(keys))
         # values = ray.get(gpu_obj_refs)
         values = []
@@ -104,7 +108,7 @@ class RayStorageClient(TransferQueueStorageKVClient):
                     values.append(value)
                 except Exception as e:
                     raise RuntimeError(f"Failed to retrieve value for key '{key}': {e}") from e
-        
+
         return values
 
     def clear(self, keys: list[str]):
