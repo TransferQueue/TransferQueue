@@ -167,12 +167,12 @@ Follow these steps to build and install:
 <h2 id="performance">📊 Performance</h2>
 
 <p align="center">
-  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/performance.png?raw=true" width="100%">
+  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/performance_0.1.1.dev2.png?raw=true" width="100%">
 </p>
 
 > Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
 
-For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/obi4ovmy9wf08zz3?singleDoc#).
+For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/tml8ke0zkgn6roey?singleDoc#).
 
 <h2 id="customize"> 🛠️ Customize TransferQueue</h2>
 
