@@ -16,6 +16,7 @@ import dataclasses
 import itertools
 import logging
 import os
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -305,12 +306,15 @@ class BatchMeta:
 
         # Merge all extra_info dictionaries from the chunks
         merged_extra_info = dict()
-        all_items = list(itertools.chain.from_iterable(chunk.extra_info.items() for chunk in data))
-        for key, group in itertools.groupby(sorted(all_items, key=lambda x: x[0]), key=lambda x: x[0]):
-            values = [value for _, value in group]
+
+        values_by_key = defaultdict(list)
+        for chunk in data:
+            for key, value in chunk.extra_info.items():
+                values_by_key[key].append(value)
+        for key, values in values_by_key.items():
             if all(isinstance(v, torch.Tensor) for v in values):
                 try:
-                    if values[0].dim() == 0:
+                    if all(v.dim() == 0 for v in values):
                         merged_extra_info[key] = torch.cat([v.unsqueeze(0) for v in values], dim=0)
                     else:
                         merged_extra_info[key] = torch.cat(values, dim=0)
@@ -325,7 +329,7 @@ class BatchMeta:
             elif all(isinstance(v, list) for v in values):
                 merged_extra_info[key] = list(itertools.chain.from_iterable(values))
             else:
-                merged_extra_info[key] = values
+                merged_extra_info[key] = values[-1]
 
         return BatchMeta(samples=all_samples, extra_info=merged_extra_info)
 
