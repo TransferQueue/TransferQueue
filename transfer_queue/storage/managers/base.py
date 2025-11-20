@@ -295,6 +295,7 @@ class TransferQueueStorageManager(ABC):
         except Exception as e:
             logger.error(f"[{self.storage_manager_id}]: Exception during __del__: {str(e)}")
 
+
 class KVStorageManager(TransferQueueStorageManager):
     """
     A storage manager that uses a key-value (KV) backend (e.g., YuanRong) to store and retrieve tensor data.

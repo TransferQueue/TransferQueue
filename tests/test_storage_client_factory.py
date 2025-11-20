@@ -5,7 +5,7 @@ import pytest
 import torch
 
 from transfer_queue.storage.clients.factory import StorageClientFactory
-from transfer_queue.storage.clients.yuanrong_client import YRStorageClient
+from transfer_queue.storage.clients.yuanrong_client import YuanrongStorageClient
 
 
 class Test(unittest.TestCase):
@@ -14,9 +14,9 @@ class Test(unittest.TestCase):
 
     @pytest.mark.skipif(find_spec("datasystem") is None, reason="datasystem is not available")
     def test_create_client(self):
-        self.assertIn("Yuanrong", StorageClientFactory._registry)
-        self.assertIs(StorageClientFactory._registry["Yuanrong"], YRStorageClient)
-        StorageClientFactory.create("Yuanrong", self.cfg)
+        self.assertIn("YuanrongStorageClient", StorageClientFactory._registry)
+        self.assertIs(StorageClientFactory._registry["YuanrongStorageClient"], YuanrongStorageClient)
+        StorageClientFactory.create("YuanrongStorageClient", self.cfg)
 
         with self.assertRaises(ValueError) as cm:
             StorageClientFactory.create("abc", self.cfg)
@@ -32,9 +32,9 @@ class Test(unittest.TestCase):
         for t in tensors:
             shapes.append(t.shape)
             dtypes.append(t.dtype)
-        client = StorageClientFactory.create("Yuanrong", self.cfg)
+        client = StorageClientFactory.create("YuanrongStorageClient", self.cfg)
 
-        empty_tensors = client._create_empty_tensorlist(shapes, dtypes)
+        empty_tensors = client._create_empty_npu_tensorlist(shapes, dtypes)
         self.assertEqual(len(tensors), len(empty_tensors))
         for t, et in zip(tensors, empty_tensors, strict=False):
             self.assertEqual(t.shape, et.shape)

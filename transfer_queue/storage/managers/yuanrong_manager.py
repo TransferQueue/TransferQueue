@@ -24,5 +24,5 @@ class YuanrongStorageManager(KVStorageManager):
             logger.info("Missing 'client_name' in config, using default value('YuanrongStorageClient')")
             config["client_name"] = "YuanrongStorageClient"
         elif client_name != "YuanrongStorageClient":
-            raise ValueError(f"Invalid 'client_name': {client_name} in config. Expecting 'YuanrongStorageClient' for YuanrongStorageManager")
+            raise ValueError(f"Invalid 'client_name': {client_name} in config. Expecting 'YuanrongStorageClient'")
         super().__init__(config)

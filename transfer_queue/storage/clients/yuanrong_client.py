@@ -26,7 +26,7 @@ except ImportError:
 
 
 @StorageClientFactory.register("YuanrongStorageClient")
-class YuanrongRStorageClient(TransferQueueStorageKVClient):
+class YuanrongStorageClient(TransferQueueStorageKVClient):
     """
     Storage client for YuanRong DataSystem.
 
@@ -145,7 +145,7 @@ class YuanrongRStorageClient(TransferQueueStorageKVClient):
             npu_keys = []
             npu_dtypes = []
             npu_shapes = []
-            for shape, dtype, key in zip(shapes, dtypes, keys):
+            for shape, dtype, key in zip(shapes, dtypes, keys, strict=False):
                 if dtype is not None:
                     npu_shapes.append(shape)
                     npu_dtypes.append(dtype)
@@ -153,7 +153,8 @@ class YuanrongRStorageClient(TransferQueueStorageKVClient):
                 else:
                     cpu_keys.append(key)
 
-            # Note: _npu_ds_client.dev_mget and _cpu_ds_client.get(keys) is assumed to return values in the same order as keys
+            # Note: _npu_ds_client.dev_mget and _cpu_ds_client.get(keys) is
+            #       assumed to return values in the same order as keys
             failed_keys = []
             npu_values = []
 
@@ -161,7 +162,7 @@ class YuanrongRStorageClient(TransferQueueStorageKVClient):
                 npu_values = self._create_empty_npu_tensorlist(npu_shapes, npu_dtypes)
                 try:
                     failed_keys = self._npu_ds_client.dev_mget(npu_keys, npu_values)
-                    failed_keys = [f_key.rsplit(',', 1)[0] for f_key in failed_keys]
+                    failed_keys = [f_key.rsplit(",", 1)[0] for f_key in failed_keys]
                 except Exception:
                     failed_keys = npu_keys
                     npu_keys = []
