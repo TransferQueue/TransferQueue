@@ -20,7 +20,6 @@ from pathlib import Path
 import pytest
 import ray
 import torch
-from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from tensordict import TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent
@@ -58,9 +57,7 @@ def data_system_setup(ray_setup):
     storage_placement_group = get_placement_group(num_storage_units, num_cpus_per_actor=1)
     for storage_unit_rank in range(num_storage_units):
         storage_node = SimpleStorageUnit.options(
-            scheduling_strategy=PlacementGroupSchedulingStrategy(
-                placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
-            )
+            placement_group=storage_placement_group, placement_group_bundle_index=storage_unit_rank
         ).remote(storage_unit_size=storage_size)
         storage_units[storage_unit_rank] = storage_node
         logger.info(f"SimpleStorageUnit #{storage_unit_rank} has been created.")
@@ -125,9 +122,7 @@ class TestMultipleAsyncPut:
 
         for i in range(num_storage_units):
             self.storage_units[i] = SimpleStorageUnit.options(
-                scheduling_strategy=PlacementGroupSchedulingStrategy(
-                    placement_group=storage_placement_group, placement_group_bundle_index=i
-                )
+                placement_group=storage_placement_group, placement_group_bundle_index=i
             ).remote(storage_unit_size=10000)
 
         self.controller = TransferQueueController.remote()
