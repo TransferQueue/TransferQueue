@@ -38,4 +38,6 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
+        export TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT=10
+        export TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT=10
         pytest
