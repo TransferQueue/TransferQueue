@@ -38,10 +38,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session", autouse=True)
 def ray_setup():
     """Initialize Ray for testing."""
-    ray.init(ignore_reinit_error=True)
+    ray.init(ignore_reinit_error=True, num_cpus=1, local_mode=True)
     yield
     ray.shutdown()
 
