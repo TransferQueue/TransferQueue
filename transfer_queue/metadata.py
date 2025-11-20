@@ -14,14 +14,20 @@
 
 import dataclasses
 import itertools
-from collections import ChainMap
+import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import numpy as np
+import torch
 from tensordict import TensorDict
+from tensordict.tensorclass import NonTensorData, NonTensorStack
 
 from transfer_queue.utils.utils import ProductionStatus
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 
 @dataclass
@@ -296,8 +302,30 @@ class BatchMeta:
 
         # Combine all samples
         all_samples = list(itertools.chain.from_iterable(chunk.samples for chunk in data))
+
         # Merge all extra_info dictionaries from the chunks
-        merged_extra_info = dict(ChainMap(*(chunk.extra_info for chunk in data)))
+        merged_extra_info = dict()
+        all_items = list(itertools.chain.from_iterable(chunk.extra_info.items() for chunk in data))
+        for key, group in itertools.groupby(sorted(all_items, key=lambda x: x[0]), key=lambda x: x[0]):
+            values = [value for _, value in group]
+            if all(isinstance(v, torch.Tensor) for v in values):
+                try:
+                    if values[0].dim() == 0:
+                        merged_extra_info[key] = torch.cat([v.unsqueeze(0) for v in values], dim=0)
+                    else:
+                        merged_extra_info[key] = torch.cat(values, dim=0)
+                except RuntimeError as e:
+                    logger.warning(
+                        f"BatchMeta.concat try to use torch.cat(dim=0) to merge extra_info key '{key}'"
+                        f" fails, with RuntimeError {e}. Falling back to use list."
+                    )
+                    merged_extra_info[key] = values
+            elif all(isinstance(v, NonTensorStack | NonTensorData) for v in values):
+                merged_extra_info[key] = torch.stack(values)
+            elif all(isinstance(v, list) for v in values):
+                merged_extra_info[key] = list(itertools.chain.from_iterable(values))
+            else:
+                merged_extra_info[key] = values
 
         return BatchMeta(samples=all_samples, extra_info=merged_extra_info)
 
