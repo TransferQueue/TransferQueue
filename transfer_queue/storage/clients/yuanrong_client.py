@@ -12,6 +12,7 @@ from transfer_queue.storage.clients.factory import StorageClientFactory
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+DS_CLIENT_KEYS_LIMIT: int = 1999
 YUANRONG_DATASYSTEM_IMPORTED: bool = True
 TORCH_NPU_IMPORTED: bool = True
 try:
@@ -25,7 +26,7 @@ except ImportError:
 
 
 @StorageClientFactory.register("Yuanrong")
-class YRStorageClient(TransferQueueStorageKVClient):
+class YuanrongRStorageClient(TransferQueueStorageKVClient):
     """
     Storage client for YuanRong DataSystem.
 
@@ -40,10 +41,11 @@ class YRStorageClient(TransferQueueStorageKVClient):
 
         self.host = config.get("host")
         self.port = config.get("port")
+
+        self.device_id = None
         self._npu_ds_client = None
         self._cpu_ds_client = None
-        self.DS_CLIENT_KEYS_LIMIT = 1000
-        self.device_id = None
+
         if not TORCH_NPU_IMPORTED:
             logger.warning(
                 "'torch_npu' import failed. "
@@ -65,8 +67,7 @@ class YRStorageClient(TransferQueueStorageKVClient):
         self._cpu_ds_client.init()
 
     def npu_ds_client_is_available(self):
-        return False
-        # return self._npu_ds_client is not None
+        return self._npu_ds_client is not None
 
     def cpu_ds_client_is_available(self):
         return self._cpu_ds_client is not None
@@ -74,6 +75,7 @@ class YRStorageClient(TransferQueueStorageKVClient):
     def _create_empty_npu_tensorlist(self, shapes, dtypes):
         """
         Create a list of empty NPU tensors with given shapes and dtypes.
+
         Args:
             shapes (list): List of tensor shapes (e.g., [(3,), (2, 4)])
             dtypes (list): List of torch dtypes (e.g., [torch.float32, torch.int64])
@@ -82,7 +84,7 @@ class YRStorageClient(TransferQueueStorageKVClient):
         """
         tensors: list[Tensor] = []
         for shape, dtype in zip(shapes, dtypes, strict=False):
-            tensor = torch.empty(shape, dtype=dtype).to(f"npu:{self.device_id}")
+            tensor = torch.empty(shape, dtype=dtype, device=f"npu:{self.device_id}")
             tensors.append(tensor)
         return tensors
 
@@ -94,17 +96,20 @@ class YRStorageClient(TransferQueueStorageKVClient):
             npu_values = []
             for key, value in zip(keys, values, strict=False):
                 if isinstance(value, torch.Tensor) and value.device.type == "npu":
+                    if not value.is_contiguous():
+                        raise ValueError(f"NPU Tensor is not contiguous: {value}")
                     npu_keys.append(key)
                     npu_values.append(value)
                 else:
                     cpu_keys.append(key)
                     cpu_values.append(pickle.dumps(value))
+
             if npu_keys:
                 # _npu_ds_client.dev_mset doesn't support to overwrite
                 try:
                     self._npu_ds_client.dev_delete(npu_keys)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"dev_delete error({e}) before dev_mset")
 
                 self._npu_ds_client.dev_mset(npu_keys, npu_values)
 
@@ -126,10 +131,12 @@ class YRStorageClient(TransferQueueStorageKVClient):
         if len(keys) != len(values):
             raise ValueError("Number of keys must match number of values")
 
-        total_count = (len(keys) + self.DS_CLIENT_KEYS_LIMIT - 1) // self.DS_CLIENT_KEYS_LIMIT
+        # Each time, process at most DS_CLIENT_KEYS_LIMIT keys, and this is done for a total of count times.
+        # The calculation below uses ceiling division (i.e., integer division rounded up).
+        total_count = (len(keys) + DS_CLIENT_KEYS_LIMIT - 1) // DS_CLIENT_KEYS_LIMIT
         for i in range(total_count):
-            start_idx = self.DS_CLIENT_KEYS_LIMIT * i
-            end_idx = min(self.DS_CLIENT_KEYS_LIMIT * (i + 1), len(keys))
+            start_idx = DS_CLIENT_KEYS_LIMIT * i
+            end_idx = min(DS_CLIENT_KEYS_LIMIT * (i + 1), len(keys))
             self._batch_put(keys[start_idx:end_idx], values[start_idx:end_idx])
 
     def _batch_get(self, keys, shapes, dtypes) -> list[Any]:
@@ -138,7 +145,7 @@ class YRStorageClient(TransferQueueStorageKVClient):
             npu_keys = []
             npu_dtypes = []
             npu_shapes = []
-            for shape, dtype, key in zip(shapes, dtypes, keys, strict=False):
+            for shape, dtype, key in zip(shapes, dtypes, keys):
                 if dtype is not None:
                     npu_shapes.append(shape)
                     npu_dtypes.append(dtype)
@@ -146,21 +153,16 @@ class YRStorageClient(TransferQueueStorageKVClient):
                 else:
                     cpu_keys.append(key)
 
-            # Note: _npu_ds_client.dev_mget and _cpu_ds_client.get(keys) is assumed
-            # to return values in the same order as keys
+            # Note: _npu_ds_client.dev_mget and _cpu_ds_client.get(keys) is assumed to return values in the same order as keys
             failed_keys = []
             npu_values = []
 
-            # TODO: _npu_ds_client.dev_mget needs more test,
-            #  because DSTensorClient.dev_mget is currently not stable enough.
             if npu_keys:
                 npu_values = self._create_empty_npu_tensorlist(npu_shapes, npu_dtypes)
                 try:
-                    failed_keys = self._npu_ds_client.dev_mget(npu_keys, npu_values, 5 * 1000)
-                    # failed_key = f'{key},{device_id}'
-                    failed_keys = [f_key[0:-2] for f_key in failed_keys]
-                except Exception as e:
-                    logger.warning(f"dev_mget error:{e}")
+                    failed_keys = self._npu_ds_client.dev_mget(npu_keys, npu_values)
+                    failed_keys = [f_key.rsplit(',', 1)[0] for f_key in failed_keys]
+                except Exception:
                     failed_keys = npu_keys
                     npu_keys = []
 
@@ -182,6 +184,7 @@ class YRStorageClient(TransferQueueStorageKVClient):
         else:
             values = self._cpu_ds_client.get(keys)
             values = [pickle.loads(value) for value in values]
+
         return values
 
     def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Any]:
@@ -201,13 +204,13 @@ class YRStorageClient(TransferQueueStorageKVClient):
         if len(dtypes) != len(shapes) or len(keys) != len(shapes):
             raise ValueError("Length of dtypes must equal length of shapes")
 
-        # Each time, process at most 10,000 keys, and this is done for a total of count times.
+        # Each time, process at most DS_CLIENT_KEYS_LIMIT keys, and this is done for a total of count times.
         # The calculation below uses ceiling division (i.e., integer division rounded up).
-        total_count = (len(keys) + self.DS_CLIENT_KEYS_LIMIT - 1) // self.DS_CLIENT_KEYS_LIMIT
+        total_count = (len(keys) + DS_CLIENT_KEYS_LIMIT - 1) // DS_CLIENT_KEYS_LIMIT
         values = []
         for i in range(total_count):
-            start_idx = self.DS_CLIENT_KEYS_LIMIT * i
-            end_idx = min(self.DS_CLIENT_KEYS_LIMIT * (i + 1), len(keys))
+            start_idx = DS_CLIENT_KEYS_LIMIT * i
+            end_idx = min(DS_CLIENT_KEYS_LIMIT * (i + 1), len(keys))
             values.extend(
                 self._batch_get(keys[start_idx:end_idx], shapes[start_idx:end_idx], dtypes[start_idx:end_idx])
             )
@@ -229,8 +232,8 @@ class YRStorageClient(TransferQueueStorageKVClient):
         Args:
             keys (list): List of keys to delete
         """
-        total_count = (len(keys) + self.DS_CLIENT_KEYS_LIMIT - 1) // self.DS_CLIENT_KEYS_LIMIT
+        total_count = (len(keys) + DS_CLIENT_KEYS_LIMIT - 1) // DS_CLIENT_KEYS_LIMIT
         for i in range(total_count):
-            start_idx = self.DS_CLIENT_KEYS_LIMIT * i
-            end_idx = min(self.DS_CLIENT_KEYS_LIMIT * (i + 1), len(keys))
+            start_idx = DS_CLIENT_KEYS_LIMIT * i
+            end_idx = min(DS_CLIENT_KEYS_LIMIT * (i + 1), len(keys))
             self._batch_clear(keys[start_idx:end_idx])
