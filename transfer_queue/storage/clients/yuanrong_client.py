@@ -25,7 +25,7 @@ except ImportError:
     TORCH_NPU_IMPORTED = False
 
 
-@StorageClientFactory.register("Yuanrong")
+@StorageClientFactory.register("YuanrongStorageClient")
 class YuanrongRStorageClient(TransferQueueStorageKVClient):
     """
     Storage client for YuanRong DataSystem.

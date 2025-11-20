@@ -21,8 +21,8 @@ class YuanrongStorageManager(KVStorageManager):
         if port is None or not isinstance(port, int):
             raise ValueError("Missing or invalid 'port' in config")
         if client_name is None:
-            logger.info("Missing 'client_name in config, using default value('Yuanrong')")
-            config["client_name"] = "Yuanrong"
-        elif client_name != "Yuanrong":
-            raise ValueError("Invalid 'client_name' in config")
+            logger.info("Missing 'client_name' in config, using default value('YuanrongStorageClient')")
+            config["client_name"] = "YuanrongStorageClient"
+        elif client_name != "YuanrongStorageClient":
+            raise ValueError(f"Invalid 'client_name': {client_name} in config. Expecting 'YuanrongStorageClient' for YuanrongStorageManager")
         super().__init__(config)
