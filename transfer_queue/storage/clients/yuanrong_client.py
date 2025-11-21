@@ -20,10 +20,6 @@ try:
     import datasystem
 except ImportError:
     YUANRONG_DATASYSTEM_IMPORTED = False
-try:
-    import torch_npu  # noqa: F401
-except ImportError:
-    TORCH_NPU_IMPORTED = False
 
 
 @StorageClientFactory.register("YuanrongStorageClient")
@@ -39,6 +35,12 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
     def __init__(self, config: dict[str, Any]):
         if not YUANRONG_DATASYSTEM_IMPORTED:
             raise ImportError("YuanRong DataSystem not installed.")
+
+        global TORCH_NPU_IMPORTED
+        try:
+            import torch_npu  # noqa: F401
+        except ImportError:
+            TORCH_NPU_IMPORTED = False
 
         self.host = config.get("host")
         self.port = config.get("port")

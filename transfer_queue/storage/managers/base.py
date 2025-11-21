@@ -313,21 +313,19 @@ class KVStorageManager(TransferQueueStorageManager):
         self.storage_client = StorageClientFactory.create(client_name, config)
 
     @staticmethod
-    def _generate_keys(metadata: BatchMeta) -> list[str]:
+    def _generate_keys(field_names: list[str], global_indexes: list[int]) -> list[str]:
         """
         Generate KV keys in the format 'global_index@field_name' for all sample-field pairs.
         Keys are generated in sorted order by field name first, then by global index,
         ensuring consistent ordering for batched operations.
 
         Args:
-            metadata (BatchMeta): Metadata containing global indexes and field names.
+            field_names : list of field names.
+            global_indexes : list of global indexes.
         Returns:
             list[str]: List of keys, e.g., ['0@field_a', '1@field_a', '0@field_b', ...]
         """
-        return [
-            f"{index}@{field}"
-            for field, index in itertools.product(sorted(metadata.field_names), metadata.global_indexes)
-        ]
+        return [f"{index}@{field}" for field, index in itertools.product(sorted(field_names), global_indexes)]
 
     @staticmethod
     def _generate_values(data: TensorDict) -> list[Tensor]:
@@ -426,7 +424,7 @@ class KVStorageManager(TransferQueueStorageManager):
         if not metadata.field_names:
             logger.warning("Attempted to put data, but metadata contains no fields.")
             return
-        keys = self._generate_keys(metadata)
+        keys = self._generate_keys(data.keys(), metadata.global_indexes)
         values = self._generate_values(data)
         self.storage_client.put(keys=keys, values=values)
 
@@ -468,7 +466,7 @@ class KVStorageManager(TransferQueueStorageManager):
         if not metadata.field_names:
             logger.warning("Attempted to get data, but metadata contains no fields.")
             return TensorDict({}, batch_size=len(metadata))
-        keys = self._generate_keys(metadata)
+        keys = self._generate_keys(metadata.field_names, metadata.global_indexes)
         shapes, dtypes = self._get_shape_type_list(metadata)
         values = self.storage_client.get(keys=keys, shapes=shapes, dtypes=dtypes)
         return self._merge_tensors_to_tensordict(metadata, values)
