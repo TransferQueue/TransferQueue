@@ -6,11 +6,14 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from transfer_queue.storage.clients.base import TransferQueueStorageKVClient
+from transfer_queue.storage.clients.factory import StorageClientFactory
+
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
-NPU_DS_CLIENT_KEYS_LIMIT = 9999
-CPU_DS_CLIENT_KEYS_LIMIT = 1999
+NPU_DS_CLIENT_KEYS_LIMIT: int = 9999
+CPU_DS_CLIENT_KEYS_LIMIT: int = 1999
 YUANRONG_DATASYSTEM_IMPORTED: bool = True
 TORCH_NPU_IMPORTED: bool = True
 try:
@@ -23,13 +26,14 @@ except ImportError:
     TORCH_NPU_IMPORTED = False
 
 
-class YuanrongStorageClient:
+@StorageClientFactory.register("YuanrongStorageClient")
+class YuanrongStorageClient(TransferQueueStorageKVClient):
     """
     Storage client for YuanRong DataSystem.
 
     Supports storing and fetching both:
     - NPU tensors via DsTensorClient (for high performance).
-    - General objects (CPU tensors, scalars, dicts, etc.) via KVClient with pickle serialization.
+    - General objects (CPU tensors, str, bool, list, etc.) via KVClient with pickle serialization.
     """
 
     def __init__(self, config: dict[str, Any]):
@@ -78,7 +82,7 @@ class YuanrongStorageClient:
             list: List of uninitialized NPU tensors
         """
         tensors: list[Tensor] = []
-        for shape, dtype in zip(shapes, dtypes, strict=True):
+        for shape, dtype in zip(shapes, dtypes, strict=False):
             tensor = torch.empty(shape, dtype=dtype, device=f"npu:{self.device_id}")
             tensors.append(tensor)
         return tensors
