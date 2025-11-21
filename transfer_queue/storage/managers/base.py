@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import torch
 import zmq
-from tensordict import TensorDict
+from tensordict import NonTensorStack, TensorDict
 from torch import Tensor
 
 from transfer_queue.metadata import BatchMeta
@@ -368,25 +368,31 @@ class KVStorageManager(TransferQueueStorageManager):
         if len(values) == 0:
             return TensorDict({}, batch_size=len(global_indexes))
 
-        merged_data: dict[str, list[Tensor]] = {field: [] for field in field_names}
+        grouped_data: dict[str, list[Tensor]] = {field: [] for field in field_names}
 
         # Group values by field_name
         value_idx = 0
         for field in field_names:
             for _ in range(len(global_indexes)):
-                merged_data[field].append(values[value_idx])
+                grouped_data[field].append(values[value_idx])
                 value_idx += 1
 
         # Stack or nest tensors per field
-        tensor_data = {}
-        for field, tensor_list in merged_data.items():
-            try:
-                tensor_data[field] = torch.stack(tensor_list)
-            except RuntimeError:
-                # Fallback to nested tensor if shapes are irregular
-                tensor_data[field] = torch.nested.as_nested_tensor(tensor_list)
+        merged_data = {}
+        for field, data_list in grouped_data.items():
+            if all(isinstance(item, torch.Tensor) for item in data_list):
+                try:
+                    merged_data[field] = torch.stack(data_list)
+                except RuntimeError:
+                    try:
+                        # Fallback to nested tensor if shapes are irregular
+                        merged_data[field] = torch.nested.as_nested_tensor(data_list)
+                    except Exception:
+                        merged_data[field] = NonTensorStack(*data_list)
+            else:
+                merged_data[field] = NonTensorStack(*data_list)
 
-        return TensorDict(tensor_data, batch_size=len(global_indexes))
+        return TensorDict(merged_data, batch_size=len(global_indexes))
 
     @staticmethod
     def _get_shape_type_list(metadata: BatchMeta):
@@ -436,8 +442,12 @@ class KVStorageManager(TransferQueueStorageManager):
         for field_name, field_data in data.items():
             for i, data_item in enumerate(field_data):
                 global_idx = metadata.global_indexes[i]
-                per_field_dtypes[global_idx][field_name] = getattr(data_item, "dtype", None)
-                per_field_shapes[global_idx][field_name] = getattr(data_item, "shape", None)
+                per_field_dtypes[global_idx][field_name] = (
+                    getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
+                )
+                per_field_shapes[global_idx][field_name] = (
+                    getattr(data_item, "shape", None) if isinstance(data_item, Tensor) else None
+                )
 
         # Get current data partition id
         # Note: Currently we only support putting to & getting data from a single data partition simultaneously,
