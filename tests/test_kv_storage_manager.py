@@ -48,7 +48,7 @@ class Test(unittest.TestCase):
 
     def test_generate_keys(self):
         """Test whether _generate_keys can generate the correct key list."""
-        keys = KVStorageManager._generate_keys(self.metadata)
+        keys = KVStorageManager._generate_keys(self.data.keys(), self.metadata.global_indexes)
         expected = ["8@label", "9@label", "10@label", "8@mask", "9@mask", "10@mask", "8@text", "9@text", "10@text"]
         self.assertEqual(keys, expected)
         self.assertEqual(len(keys), 9)  # 3 fields * 3 indexes
