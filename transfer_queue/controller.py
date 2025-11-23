@@ -17,6 +17,7 @@ import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from operator import itemgetter
 from threading import Thread
 from typing import Any, Optional
 from uuid import uuid4
@@ -336,17 +337,24 @@ class DataPartitionStatus:
         shapes: Optional[dict[int, dict[str, Any]]] = None,
     ):
         """Update field dtype and shape metadata."""
-        for global_idx in global_indices:
+        dtype_value = itemgetter(*global_indices)(dtypes) if dtypes else None
+        shape_value = itemgetter(*global_indices)(shapes) if shapes else None
+
+        if not isinstance(dtype_value, tuple):
+            dtype_value = (dtype_value,)
+        if not isinstance(shape_value, tuple):
+            shape_value = (shape_value,)
+
+        for i, global_idx in enumerate(global_indices):
             if global_idx not in self.field_dtypes:
                 self.field_dtypes[global_idx] = {}
             if global_idx not in self.field_shapes:
                 self.field_shapes[global_idx] = {}
 
-            for field_name in field_names:
-                if dtypes and global_idx in dtypes and field_name in dtypes[global_idx]:
-                    self.field_dtypes[global_idx][field_name] = dtypes[global_idx][field_name]
-                if shapes and global_idx in shapes and field_name in shapes[global_idx]:
-                    self.field_shapes[global_idx][field_name] = shapes[global_idx][field_name]
+            if dtype_value is not None:
+                self.field_dtypes[global_idx].update(dtype_value[i])
+            if shape_value is not None:
+                self.field_shapes[global_idx].update(shape_value[i])
 
     # ==================== Consumption Status Interface ====================
 
