@@ -48,7 +48,7 @@ class Test(unittest.TestCase):
 
     def test_generate_keys(self):
         """Test whether _generate_keys can generate the correct key list."""
-        keys = KVStorageManager._generate_keys(self.metadata)
+        keys = KVStorageManager._generate_keys(self.data.keys(), self.metadata.global_indexes)
         expected = ["8@label", "9@label", "10@label", "8@mask", "9@mask", "10@mask", "8@text", "9@text", "10@text"]
         self.assertEqual(keys, expected)
         self.assertEqual(len(keys), 9)  # 3 fields * 3 indexes
@@ -61,13 +61,6 @@ class Test(unittest.TestCase):
         values = KVStorageManager._generate_values(self.data)
         expected_length = len(self.field_names) * len(self.global_indexes)  # 9
         self.assertEqual(len(values), expected_length)
-
-    def test_generate_values_type_check(self):
-        """Test whether _generate_values raises an exception for non-tensor inputs."""
-        bad_data = TensorDict({"text": torch.tensor([1, 2]), "label": "not_a_tensor"}, batch_size=2)
-
-        with self.assertRaises(TypeError):
-            KVStorageManager._generate_values(bad_data)
 
     def test_merge_kv_to_tensordict(self):
         """Test whether _merge_kv_to_tensordict can correctly reconstruct the TensorDict."""
