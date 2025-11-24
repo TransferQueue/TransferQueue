@@ -369,6 +369,7 @@ class KVStorageManager(TransferQueueStorageManager):
         grouped_data: dict[str, list[Tensor]] = {field: [] for field in field_names}
 
         # Group values by field_name
+        # TODO: Performance optimize
         value_idx = 0
         for field in field_names:
             for _ in range(len(global_indexes)):
@@ -376,6 +377,7 @@ class KVStorageManager(TransferQueueStorageManager):
                 value_idx += 1
 
         # Stack or nest tensors per field
+        # TODO: These codes about data merging will serve as a general function
         merged_data = {}
         for field, data_list in grouped_data.items():
             if all(isinstance(item, torch.Tensor) for item in data_list):
