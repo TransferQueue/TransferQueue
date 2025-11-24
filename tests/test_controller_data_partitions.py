@@ -37,8 +37,16 @@ def test_data_partition_status():
     success = partition.update_production_status(
         global_indices=[0, 1, 2],
         field_names=["input_ids", "attention_mask"],
-        dtypes={0: {"input_ids": "torch.int32"}, 1: {"attention_mask": "torch.bool"}},
-        shapes={0: {"input_ids": (512,)}, 1: {"attention_mask": (512,)}},
+        dtypes={
+            0: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+            1: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+            2: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+        },
+        shapes={
+            0: {"input_ids": (512,), "attention_mask": (512,)},
+            1: {"input_ids": (512,), "attention_mask": (512,)},
+            2: {"input_ids": (512,), "attention_mask": (512,)},
+        },
     )
 
     assert success
@@ -314,7 +322,9 @@ def test_edge_cases_and_error_handling():
     assert success  # Should handle empty lists gracefully
 
     # Test with valid data but ensure no crashes
-    success = partition.update_production_status([0], ["new_field"])
+    dtypes = {0: {"new_field": "torch.int64"}}
+    shapes = {0: {"new_field": (32,)}}
+    success = partition.update_production_status([0], ["new_field"], dtypes=dtypes, shapes=shapes)
     assert success
 
     print("✓ Production status update edge cases handled correctly")
@@ -333,8 +343,16 @@ def test_backward_compatibility():
     # Test 1: Basic workflow should work as before
     sample_indices = [0, 1, 2, 3, 4]
     field_names = ["input_ids", "attention_mask", "labels"]
-
-    success = partition.update_production_status(sample_indices, field_names)
+    dtypes = {
+        k: {"input_ids": "torch.int64", "attention_mask": "torch.bool", "labels": "torch.int64"} for k in sample_indices
+    }
+    shapes = {k: {"input_ids": (32,), "attention_mask": (32,), "labels": (32,)} for k in sample_indices}
+    success = partition.update_production_status(
+        sample_indices,
+        field_names,
+        dtypes=dtypes,
+        shapes=shapes,
+    )
     assert success
 
     # Traditional consumption tracking
@@ -366,8 +384,8 @@ def test_backward_compatibility():
             # These should return reasonable values or None
             dtype = partition.get_field_dtype(sample_idx, field)
             shape = partition.get_field_shape(sample_idx, field)
-            assert dtype is None
-            assert shape is None
+            assert dtype is not None
+            assert shape is not None
             # Should not crash even if metadata wasn't provided
 
     print("✓ Metadata access patterns preserved")
@@ -410,7 +428,9 @@ def test_performance_characteristics():
     # Test 2: Large number of samples
     start_time = time.time()
     many_samples = list(range(5000))
-    partition.update_production_status(many_samples, ["test_field"])
+    dtypes = {k: {"test_field": "torch.int64"} for k in many_samples}
+    shapes = {k: {"test_field": (32,)} for k in many_samples}
+    partition.update_production_status(many_samples, ["test_field"], dtypes=dtypes, shapes=shapes)
     sample_creation_time = time.time() - start_time
 
     assert partition.total_samples_num >= 5000
@@ -436,7 +456,9 @@ def test_performance_characteristics():
     initial_samples = partition.total_samples_num
 
     # Add more data (should reuse existing space where possible)
-    partition.update_production_status([100], ["new_field"])
+    dtypes = {100: {"test_field": "torch.int64"}}
+    shapes = {100: {"test_field": (32,)}}
+    partition.update_production_status([100], ["new_field"], dtypes=dtypes, shapes=shapes)
 
     # Memory growth should be reasonable
     final_allocated = partition.allocated_fields_num

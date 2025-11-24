@@ -80,11 +80,15 @@ class TestTransferQueueController:
         print("✓ Initial get metadata correct")
 
         # Test update production status
+        dtypes = {k: {"prompt_ids": "torch.int64", "attention_mask": "torch.bool"} for k in metadata.global_indexes}
+        shapes = {k: {"prompt_ids": (32,), "attention_mask": (32,)} for k in metadata.global_indexes}
         success = ray.get(
             tq_controller.update_production_status.remote(
                 partition_id=partition_id,
                 global_indexes=metadata.global_indexes,
                 field_names=metadata.field_names,
+                dtypes=dtypes,
+                shapes=shapes,
             )
         )
         assert success
@@ -168,11 +172,15 @@ class TestTransferQueueController:
         )
 
         # Test update production status
+        dtypes = {k: {"prompt_ids": "torch.int64", "attention_mask": "torch.bool"} for k in metadata.global_indexes}
+        shapes = {k: {"prompt_ids": (32,), "attention_mask": (32,)} for k in metadata.global_indexes}
         success = ray.get(
             tq_controller.update_production_status.remote(
                 partition_id=partition_id_1,
                 global_indexes=metadata.global_indexes,
                 field_names=metadata.field_names,
+                dtypes=dtypes,
+                shapes=shapes,
             )
         )
         assert success
@@ -224,11 +232,15 @@ class TestTransferQueueController:
         assert partition_index_range == set(range(part1_index_range, part2_index_range + part1_index_range))
 
         # Update production status
+        dtypes = {k: {"prompt_ids": "torch.int64", "attention_mask": "torch.bool"} for k in val_metadata.global_indexes}
+        shapes = {k: {"prompt_ids": (32,), "attention_mask": (32,)} for k in val_metadata.global_indexes}
         success = ray.get(
             tq_controller.update_production_status.remote(
                 partition_id=partition_id_2,
                 global_indexes=val_metadata.global_indexes,
                 field_names=val_metadata.field_names,
+                dtypes=dtypes,
+                shapes=shapes,
             )
         )
         assert success
