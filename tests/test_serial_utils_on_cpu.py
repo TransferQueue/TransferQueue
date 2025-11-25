@@ -19,13 +19,11 @@ import pytest
 import torch
 from tensordict import TensorDict
 
-
 # Import your classes here
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
 from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder  # noqa: E402
-
 
 
 @pytest.mark.parametrize(
@@ -58,12 +56,14 @@ def test_zmq_msg_serialization():
         body={
             "data": TensorDict(
                 {
-                    "nested_tensor": torch.nested.as_nested_tensor([torch.randn(2, 3), torch.randn(2, 4)], layout=torch.jagged),
+                    "nested_tensor": torch.nested.as_nested_tensor(
+                        [torch.randn(2, 3), torch.randn(2, 4)], layout=torch.jagged
+                    ),
                     "numpy_array": torch.randn(2, 2).numpy(),
                 },
                 batch_size=2,
             )
-        }
+        },
     )
     encoded_msg = msg.serialize()
     decoded_msg = ZMQMessage.deserialize(encoded_msg)

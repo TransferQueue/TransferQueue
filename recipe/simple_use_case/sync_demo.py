@@ -105,7 +105,9 @@ def actor_rollout_wg_generate_sequences(data_meta, data_system_client):
         {
             "generate_sequences_ids": output,
             "non_tensor_data": torch.stack([NonTensorData("test_str") for _ in range(output.size(0))]),
-            "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(output.size(0))], layout=torch.jagged),
+            "nested_tensor": torch.nested.as_nested_tensor(
+                [torch.randn(1, 2) for _ in range(output.size(0))], layout=torch.jagged
+            ),
         },
         batch_size=output.size(0),
     )

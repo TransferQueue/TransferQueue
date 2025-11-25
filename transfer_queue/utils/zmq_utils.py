@@ -19,18 +19,23 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import uuid4
 
-import torch
-import psutil
 import msgpack
+import psutil
+import torch
 import zmq
-from torch.distributed.rpc.internal import _internal_rpc_pickler
 
+try:
+    from torch.distributed.rpc.internal import _internal_rpc_pickler
+
+    USE_PRC_PICKLER = True
+except ImportError:
+    USE_PRC_PICKLER = False
+
+from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder
 from transfer_queue.utils.utils import (
     ExplicitEnum,
     TransferQueueRole,
 )
-from transfer_queue.utils.serial_utils import MsgpackEncoder, MsgpackDecoder
-
 
 _encoder = MsgpackEncoder()
 _decoder = MsgpackDecoder(torch.Tensor)
@@ -123,24 +128,30 @@ class ZMQMessage:
 
     def serialize(self) -> bytes:
         """Using pickle to serialize ZMQMessage objects"""
-        pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
-        if len(tensors) > 0:
-            serialized_tensors = [None] * len(tensors)
-            for i, tensor in enumerate(tensors):
-                serialized_tensors[i] = _encoder.encode(tensor)
-        else:
-            serialized_tensors = []
+        if USE_PRC_PICKLER:
+            pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
+            if len(tensors) > 0:
+                serialized_tensors = [None] * len(tensors)
+                for i, tensor in enumerate(tensors):
+                    serialized_tensors[i] = _encoder.encode(tensor)  # type: ignore[call-overload]
+            else:
+                serialized_tensors = []
 
-        return msgpack.packb((pickled_bytes, serialized_tensors), use_bin_type=True)
+            return msgpack.packb((pickled_bytes, serialized_tensors), use_bin_type=True)
+        else:
+            return pickle.dumps(self)
 
     @classmethod
     def deserialize(cls, data: bytes) -> "ZMQMessage":
         """Using pickle to deserialize ZMQMessage objects"""
-        pickled_bytes, serialized_tensors = msgpack.unpackb(data, raw=False)
-        tensors = [None] * len(serialized_tensors)
-        for i, serialized_tensor in enumerate(serialized_tensors):
-            tensors[i] = _decoder.decode(serialized_tensor)
-        return _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
+        if USE_PRC_PICKLER:
+            pickled_bytes, serialized_tensors = msgpack.unpackb(data, raw=False)
+            tensors = [None] * len(serialized_tensors)
+            for i, serialized_tensor in enumerate(serialized_tensors):
+                tensors[i] = _decoder.decode(serialized_tensor)
+            return _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
+        else:
+            pickle.loads(data)
 
 
 def get_free_port() -> str:
