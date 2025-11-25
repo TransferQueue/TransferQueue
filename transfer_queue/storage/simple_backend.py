@@ -96,7 +96,7 @@ class StorageUnitData:
                 if gathered_items:
                     all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
                     if all_tensors:
-                        result[field] = torch.nested.as_nested_tensor(gathered_items)
+                        result[field] = torch.nested.as_nested_tensor(gathered_items, layout=torch.jagged)
                     else:
                         result[field] = NonTensorStack(*gathered_items)
 

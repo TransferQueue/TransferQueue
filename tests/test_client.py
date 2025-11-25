@@ -48,7 +48,8 @@ TEST_DATA = TensorDict(
                 torch.tensor([-0.5, -1.2, -0.8]),
                 torch.tensor([-0.3, -1.5, -2.1, -0.9]),
                 torch.tensor([-1.1, -0.7]),
-            ]
+            ],
+            layout=torch.jagged,
         ),
         "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
     },
@@ -229,7 +230,7 @@ class MockStorage:
             if gathered_items:
                 all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
                 if all_tensors:
-                    result[field] = torch.nested.as_nested_tensor(gathered_items)
+                    result[field] = torch.nested.as_nested_tensor(gathered_items, layout=torch.jagged)
                 else:
                     result[field] = NonTensorStack(*gathered_items)
 
