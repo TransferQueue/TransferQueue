@@ -456,8 +456,8 @@ def test_performance_characteristics():
     initial_samples = partition.total_samples_num
 
     # Add more data (should reuse existing space where possible)
-    dtypes = {100: {"test_field": "torch.int64"}}
-    shapes = {100: {"test_field": (32,)}}
+    dtypes = {100: {"new_field": "torch.int64"}}
+    shapes = {100: {"new_field": (32,)}}
     partition.update_production_status([100], ["new_field"], dtypes=dtypes, shapes=shapes)
 
     # Memory growth should be reasonable

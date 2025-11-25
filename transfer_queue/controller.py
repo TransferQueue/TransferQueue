@@ -281,8 +281,8 @@ class DataPartitionStatus:
         self,
         global_indices: list[int],
         field_names: list[str],
-        dtypes: Optional[dict[int, dict[str, Any]]] = None,
-        shapes: Optional[dict[int, dict[str, Any]]] = None,
+        dtypes: Optional[dict[int, dict[str, Any]]],
+        shapes: Optional[dict[int, dict[str, Any]]],
     ) -> bool:
         """
         Update production status for specific samples and fields.
@@ -333,10 +333,16 @@ class DataPartitionStatus:
         self,
         global_indices: list[int],
         field_names: list[str],
-        dtypes: Optional[dict[int, dict[str, Any]]] = None,
-        shapes: Optional[dict[int, dict[str, Any]]] = None,
+        dtypes: Optional[dict[int, dict[str, Any]]],
+        shapes: Optional[dict[int, dict[str, Any]]],
     ):
         """Update field dtype and shape metadata."""
+        if not global_indices:
+            return
+
+        assert len(global_indices) == len(dtypes), "`global_indices` and `dtypes` length mismatch."
+        assert len(global_indices) == len(shapes), "`global_indices` and `shapes` length mismatch."
+
         dtype_value = itemgetter(*global_indices)(dtypes) if dtypes else None
         shape_value = itemgetter(*global_indices)(shapes) if shapes else None
 
@@ -655,8 +661,8 @@ class TransferQueueController:
         partition_id: str,
         global_indexes: list[int],
         field_names: list[str],
-        dtypes: Optional[dict[int, dict[str, Any]]] = None,
-        shapes: Optional[dict[int, dict[str, Any]]] = None,
+        dtypes: Optional[dict[int, dict[str, Any]]],
+        shapes: Optional[dict[int, dict[str, Any]]],
     ) -> bool:
         """
         Update production status for specific samples and fields in a partition.
