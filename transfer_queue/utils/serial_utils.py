@@ -26,7 +26,6 @@ import cloudpickle
 import torch
 import zmq
 from msgspec import msgpack
-from tensordict import NonTensorData, TensorDict
 
 TQ_MSGPACK_ZERO_COPY_THRESHOLD = int(os.environ.get("TQ_MSGPACK_ZERO_COPY_THRESHOLD", 256))
 CUSTOM_TYPE_PICKLE = 1
@@ -79,9 +78,6 @@ class MsgpackEncoder:
             self.aux_buffers = None
 
     def enc_hook(self, obj: Any) -> Any:
-        if isinstance(obj, TensorDict):
-            return self._encode_tensordict(obj)
-
         if isinstance(obj, torch.Tensor):
             return self._encode_tensor(obj)
 
