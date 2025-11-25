@@ -211,7 +211,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         tensordict_data = TensorDict(
             {
                 field: (
-                    torch.nested.as_nested_tensor(transfer_data["field_data"][field])
+                    torch.nested.as_nested_tensor(transfer_data["field_data"][field], layout=torch.jagged)
                     if transfer_data["field_data"][field]
                     and all(isinstance(x, torch.Tensor) for x in transfer_data["field_data"][field])
                     else NonTensorStack(*transfer_data["field_data"][field])
@@ -287,12 +287,12 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         with limit_pytorch_auto_parallel_threads():
             tensor_data = {
                 field: (
-                    torch.stack(torch.nested.as_nested_tensor(v).unbind())
+                    torch.stack(torch.nested.as_nested_tensor(v, layout=torch.jagged).unbind())
                     if v
                     and all(isinstance(item, torch.Tensor) for item in v)
                     and all(item.shape == v[0].shape for item in v)
                     else (
-                        torch.nested.as_nested_tensor(v)
+                        torch.nested.as_nested_tensor(v, layout=torch.jagged)
                         if v and all(isinstance(item, torch.Tensor) for item in v)
                         else NonTensorStack(*v)
                     )

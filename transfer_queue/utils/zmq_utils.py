@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import torch
 import psutil
+import msgpack
 import zmq
 from torch.distributed.rpc.internal import _internal_rpc_pickler
 
@@ -129,12 +130,13 @@ class ZMQMessage:
                 serialized_tensors[i] = _encoder.encode(tensor)
         else:
             serialized_tensors = []
-        return pickled_bytes, serialized_tensors
+
+        return msgpack.packb((pickled_bytes, serialized_tensors), use_bin_type=True)
 
     @classmethod
-    def deserialize(cls, data: tuple[bytes, list[bytes]]):
+    def deserialize(cls, data: bytes) -> "ZMQMessage":
         """Using pickle to deserialize ZMQMessage objects"""
-        pickled_bytes, serialized_tensors = data
+        pickled_bytes, serialized_tensors = msgpack.unpackb(data, raw=False)
         tensors = [None] * len(serialized_tensors)
         for i, serialized_tensor in enumerate(serialized_tensors):
             tensors[i] = _decoder.decode(serialized_tensor)

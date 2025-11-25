@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from tensordict import TensorDict
 
 
 # Import your classes here
@@ -24,6 +25,7 @@ parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
 from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder  # noqa: E402
+
 
 
 @pytest.mark.parametrize(
@@ -43,13 +45,32 @@ def test_tensor_serialization(dtype):
     deserialized = decoder.decode(serialized)
     assert torch.allclose(tensor, deserialized)
 
-    vocab_size = 128
-    a = torch.randint(low=0, high=vocab_size, size=(11,))
-    b = torch.randint(low=0, high=vocab_size, size=(13,))
-    input_ids = [a, b]
-    input_ids = torch.nested.as_nested_tensor(input_ids, layout=torch.jagged, dtype=dtype)
 
-    input_ids_serialized = encoder.encode(input_ids)
-    input_ids_deserialized = decoder.decode(input_ids_serialized)
-    for i in range(len(input_ids.unbind())):
-        assert torch.allclose(input_ids[i], input_ids_deserialized[i])
+def test_zmq_msg_serialization():
+    from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
+
+    msg = ZMQMessage(
+        request_type=ZMQRequestType.PUT_DATA,
+        sender_id="test_sender",
+        receiver_id="test_receiver",
+        request_id="test_request",
+        timestamp="test_timestamp",
+        body={
+            "data": TensorDict(
+                {
+                    "nested_tensor": torch.nested.as_nested_tensor([torch.randn(2, 3), torch.randn(2, 4)], layout=torch.jagged),
+                    "numpy_array": torch.randn(2, 2).numpy(),
+                },
+                batch_size=2,
+            )
+        }
+    )
+    encoded_msg = msg.serialize()
+    decoded_msg = ZMQMessage.deserialize(encoded_msg)
+    assert decoded_msg.request_type == msg.request_type
+    assert torch.allclose(decoded_msg.body["data"]["numpy_array"], msg.body["data"]["numpy_array"])
+    for i in range(len(msg.body["data"]["nested_tensor"].unbind())):
+        assert torch.allclose(
+            decoded_msg.body["data"]["nested_tensor"][i],
+            msg.body["data"]["nested_tensor"][i],
+        )

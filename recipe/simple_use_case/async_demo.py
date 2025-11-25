@@ -67,7 +67,7 @@ class ActorRolloutRefWorker:
             {
                 "generate_sequences_ids": output,
                 "non_tensor_data": torch.stack([NonTensorData("test_str") for _ in range(output.size(0))]),
-                "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(output.size(0))]),
+                "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(output.size(0))], layout=torch.jagged),
             },
             batch_size=output.size(0),
         )
@@ -119,7 +119,7 @@ class AsyncvLLMServer:
             {
                 "generate_sequences_ids": data,
                 "non_tensor_data": torch.stack([NonTensorData("test_str") for _ in range(data.size(0))]),
-                "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(data.size(0))]),
+                "nested_tensor": torch.nested.as_nested_tensor([torch.randn(1, 2) for _ in range(data.size(0))], layout=torch.jagged),
             },
             batch_size=data.size(0),
         )
