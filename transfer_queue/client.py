@@ -248,7 +248,7 @@ class AsyncTransferQueueClient:
         data: TensorDict,
         metadata: Optional[BatchMeta] = None,
         partition_id: Optional[str] = None,
-    ):
+    ) -> BatchMeta:
         """Asynchronously write data to storage units based on metadata.
 
         If metadata is not provided, it will be created automatically using insert mode
@@ -263,6 +263,9 @@ class AsyncTransferQueueClient:
             metadata: Records the metadata of a batch of data samples, containing index and
                       storage unit information. If None, metadata will be auto-generated.
             partition_id: Target data partition id (required if metadata is not provided)
+
+        Returns:
+            BatchMeta: Updated metadata after put new data to the data system
 
         Raises:
             ValueError: If metadata is None or empty, or if partition_id is None when metadata is not provided
@@ -325,6 +328,9 @@ class AsyncTransferQueueClient:
         logger.info(
             f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
         )
+
+        # TODO (high priority): Update metadata after put_data and return it to the user
+        return metadata
 
     async def async_get_data(self, metadata: BatchMeta) -> TensorDict:
         """Asynchronously fetch data from storage units and organize into TensorDict.
@@ -517,13 +523,18 @@ class TransferQueueClient(AsyncTransferQueueClient):
             controller_info,
         )
 
-    def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, partition_id: Optional[str] = None):
+    def put(
+        self, data: TensorDict, metadata: Optional[BatchMeta] = None, partition_id: Optional[str] = None
+    ) -> BatchMeta:
         """Synchronously write data to storage units.
 
         Args:
             data: Data to write as TensorDict
             metadata: Optional metadata containing index and storage unit information
             partition_id: Target data partition id (required if metadata is not provided)
+
+        Returns:
+            BatchMeta: Updated metadata after put new data to the data system
         """
         return asyncio.run(self.async_put(data, metadata, partition_id))
 
