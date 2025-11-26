@@ -369,8 +369,7 @@ class DataPartitionStatus:
 
         return self.consumption_status[task_name]
 
-    # TODO: No need return, just raise error. Same With other function
-    def mark_consumed(self, task_name: str, global_indices: list[int]) -> bool:
+    def mark_consumed(self, task_name: str, global_indices: list[int]):
         """
         Mark specific samples as consumed by a task.
 
@@ -378,17 +377,17 @@ class DataPartitionStatus:
             task_name: Name of the consumer task
             global_indices: List of sample indices to mark as consumed
 
-        Returns:
-            True if successful, False on error
         """
         try:
             consumption_status = self.get_consumption_status(task_name)
             if consumption_status.numel() > 0 and global_indices:
                 consumption_status[global_indices] = 1
-            return True
         except Exception as e:
-            logger.error(f"Error marking samples consumed for partition {self.partition_id}, task {task_name}: {e}")
-            return False
+            logger.error(
+                f"Error marking samples consumed for partition {self.partition_id}, task {task_name}: {e}. "
+                f"Target global_indices {global_indices}, but current consumption_status has "
+                f"shape {consumption_status.shape}"
+            )
 
     # ==================== Data Scanning and Query Methods ====================
 
@@ -818,7 +817,6 @@ class TransferQueueController:
         data_fields: list[str],
         task_name: str,
         batch_size: int,
-        sample_filter: Optional[list[int]] = None,
         timeout: float = TQ_CONTROLLER_GET_METADATA_TIMEOUT,
     ) -> list[int]:
         """
@@ -830,7 +828,6 @@ class TransferQueueController:
             data_fields: List of required field names
             task_name: Name of the consumer task
             batch_size: Number of samples needed
-            sample_filter: Optional list of specific sample indices to consider
             timeout: Maximum time to wait for sufficient data
 
         Returns:
@@ -862,8 +859,9 @@ class TransferQueueController:
                 )
 
             logger.warning(
-                f"Insufficient data in partition {partition_id}. Required: {batch_size}, "
-                f"Available: {len(ready_sample_indices)}. Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
+                f"Insufficient data in partition {partition_id} for task {task_name}: requiring {batch_size} samples "
+                f"with {data_fields}, but only have {len(ready_sample_indices)} samples. "
+                f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
             )
             time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
 
