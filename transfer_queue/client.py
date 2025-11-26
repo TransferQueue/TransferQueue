@@ -265,7 +265,8 @@ class AsyncTransferQueueClient:
             partition_id: Target data partition id (required if metadata is not provided)
 
         Returns:
-            BatchMeta: Updated metadata after put new data to the data system
+            BatchMeta: The metadata used for the put operation (currently returns the input metadata or auto-retrieved
+                       metadata; will be updated in a future version to reflect the post-put state)
 
         Raises:
             ValueError: If metadata is None or empty, or if partition_id is None when metadata is not provided
@@ -534,7 +535,8 @@ class TransferQueueClient(AsyncTransferQueueClient):
             partition_id: Target data partition id (required if metadata is not provided)
 
         Returns:
-            BatchMeta: Updated metadata after put new data to the data system
+            BatchMeta: The metadata used for the put operation (currently returns the input metadata or auto-retrieved
+                       metadata; will be updated in a future version to reflect the post-put state)
         """
         return asyncio.run(self.async_put(data, metadata, partition_id))
 
