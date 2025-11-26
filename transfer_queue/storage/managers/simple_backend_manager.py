@@ -26,6 +26,7 @@ from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.metadata import BatchMeta
 from transfer_queue.storage.managers.base import TransferQueueStorageManager
+from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
 from transfer_queue.storage.simple_backend import StorageMetaGroup
 from transfer_queue.utils.utils import limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
@@ -33,7 +34,11 @@ from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServer
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT", 200))  # seconds
+TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT", 200))  # seconds
 
+
+@TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager")
 class AsyncSimpleStorageManager(TransferQueueStorageManager):
     """Asynchronous storage manager that handles multiple storage units.
 
@@ -130,8 +135,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 try:
                     sock.connect(address)
                     # Timeouts to avoid indefinite await on recv/send
-                    sock.setsockopt(zmq.RCVTIMEO, 10_000)  # 10s
-                    sock.setsockopt(zmq.SNDTIMEO, 10_000)  # 10s
+                    sock.setsockopt(zmq.RCVTIMEO, TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT * 1000)
+                    sock.setsockopt(zmq.SNDTIMEO, TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT * 1000)
                     logger.info(
                         f"[{self.storage_manager_id}]: Connected to StorageUnit {server_info.id} at {address} "
                         f"with identity {identity.decode()}"
@@ -147,8 +152,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 finally:
                     try:
                         if not sock.closed:
-                            sock.setsockopt(zmq.LINGER, 0)
-                            sock.close()
+                            sock.close(linger=-1)
                     except Exception as e:
                         logger.warning(
                             f"[{self.storage_manager_id}]: Error closing socket to StorageUnit {server_info.id}: {e}"
@@ -198,8 +202,15 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 per_field_dtypes[global_idx][field] = data_item.dtype if hasattr(data_item, "dtype") else None
                 per_field_shapes[global_idx][field] = data_item.shape if hasattr(data_item, "shape") else None
 
+        # Get current data partition id
+        # Note: Currently we only support putting to & getting data from a single data partition simultaneously,
+        # but in the future we may support putting to & getting data from multiple data partitions concurrently.
+        partition_id = metadata.samples[0].partition_id
+
         # notify controller that new data is ready
-        await self.notify_data_update(list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes)
+        await self.notify_data_update(
+            partition_id, list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes
+        )
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
     async def _put_to_single_storage_unit(self, transfer_data: dict[str, Any], target_storage_unit=None, socket=None):
@@ -211,7 +222,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         tensordict_data = TensorDict(
             {
                 field: (
-                    torch.nested.as_nested_tensor(transfer_data["field_data"][field])
+                    torch.nested.as_nested_tensor(transfer_data["field_data"][field], layout=torch.jagged)
                     if transfer_data["field_data"][field]
                     and all(isinstance(x, torch.Tensor) for x in transfer_data["field_data"][field])
                     else NonTensorStack(*transfer_data["field_data"][field])
@@ -287,12 +298,12 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         with limit_pytorch_auto_parallel_threads():
             tensor_data = {
                 field: (
-                    torch.stack(torch.nested.as_nested_tensor(v).unbind())
+                    torch.stack(torch.nested.as_nested_tensor(v, layout=torch.jagged).unbind())
                     if v
                     and all(isinstance(item, torch.Tensor) for item in v)
                     and all(item.shape == v[0].shape for item in v)
                     else (
-                        torch.nested.as_nested_tensor(v)
+                        torch.nested.as_nested_tensor(v, layout=torch.jagged)
                         if v and all(isinstance(item, torch.Tensor) for item in v)
                         else NonTensorStack(*v)
                     )
@@ -397,22 +408,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
     def close(self) -> None:
         """Close all ZMQ sockets and context to prevent resource leaks."""
-        for sock in (
-            self.controller_handshake_socket,
-            self.data_status_update_socket,
-            getattr(self, "put_get_socket", None),
-        ):
-            try:
-                if sock and not sock.closed:
-                    sock.setsockopt(zmq.LINGER, 0)
-                    sock.close()
-            except Exception as e:
-                logger.error(f"[{self.storage_manager_id}]: Error closing socket {sock}: {str(e)}")
-        try:
-            if hasattr(self, "zmq_context") and self.zmq_context:
-                self.zmq_context.term()
-        except Exception as e:
-            logger.error(f"[{self.storage_manager_id}]: Error terminating zmq_context: {str(e)}")
+        super().close()
 
 
 def get_transfer_data(

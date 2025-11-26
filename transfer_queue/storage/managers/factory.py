@@ -14,7 +14,6 @@
 from typing import Any
 
 from transfer_queue.storage.managers.base import TransferQueueStorageManager
-from transfer_queue.storage.managers.simple_backend_manager import AsyncSimpleStorageManager
 
 
 class TransferQueueStorageManagerFactory:
@@ -23,13 +22,17 @@ class TransferQueueStorageManagerFactory:
     _registry: dict[str, type[TransferQueueStorageManager]] = {}
 
     @classmethod
-    def register(cls, manager_type: str, manager_cls: type[TransferQueueStorageManager]):
-        if not issubclass(manager_cls, TransferQueueStorageManager):
-            raise TypeError(
-                f"manager_cls {getattr(manager_cls, '__name__', repr(manager_cls))} must be "
-                f"a subclass of TransferQueueStorageManager"
-            )
-        cls._registry[manager_type] = manager_cls
+    def register(cls, manager_type: str):
+        def decorator(manager_cls: type[TransferQueueStorageManager]):
+            if not issubclass(manager_cls, TransferQueueStorageManager):
+                raise TypeError(
+                    f"manager_cls {getattr(manager_cls, '__name__', repr(manager_cls))} must be "
+                    f"a subclass of TransferQueueStorageManager"
+                )
+            cls._registry[manager_type] = manager_cls
+            return manager_cls
+
+        return decorator
 
     @classmethod
     def create(cls, manager_type: str, config: dict[str, Any]) -> TransferQueueStorageManager:
@@ -38,7 +41,3 @@ class TransferQueueStorageManagerFactory:
                 f"Unknown manager_type: {manager_type}. Supported managers include: {list(cls._registry.keys())}"
             )
         return cls._registry[manager_type](config)
-
-
-# Register all the StorageManager
-TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager", AsyncSimpleStorageManager)

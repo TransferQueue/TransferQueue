@@ -48,7 +48,8 @@ TEST_DATA = TensorDict(
                 torch.tensor([-0.5, -1.2, -0.8]),
                 torch.tensor([-0.3, -1.5, -2.1, -0.9]),
                 torch.tensor([-1.1, -0.7]),
-            ]
+            ],
+            layout=torch.jagged,
         ),
         "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
     },
@@ -135,7 +136,7 @@ class MockController:
                 )
                 fields.append(field_meta)
             sample = SampleMeta(
-                global_step=0,
+                partition_id="0",
                 global_index=i,
                 fields={field.name: field for field in fields},
             )
@@ -229,7 +230,7 @@ class MockStorage:
             if gathered_items:
                 all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
                 if all_tensors:
-                    result[field] = torch.nested.as_nested_tensor(gathered_items)
+                    result[field] = torch.nested.as_nested_tensor(gathered_items, layout=torch.jagged)
                 else:
                     result[field] = NonTensorStack(*gathered_items)
 
@@ -310,11 +311,11 @@ def test_put_and_get_data(client_setup):
     client, _, _ = client_setup
 
     # Test put operation
-    client.put(data=TEST_DATA, global_step=0)
+    client.put(data=TEST_DATA, partition_id="0")
 
     # Get metadata for retrieving data
     metadata = client.get_meta(
-        data_fields=["log_probs", "variable_length_sequences", "prompt_text"], batch_size=2, global_step=0
+        data_fields=["log_probs", "variable_length_sequences", "prompt_text"], batch_size=2, partition_id="0"
     )
 
     # Test get operation
@@ -338,7 +339,7 @@ def test_get_meta(client_setup):
     client, _, _ = client_setup
 
     # Test get_meta operation
-    metadata = client.get_meta(data_fields=["tokens", "labels"], batch_size=10, global_step=0)
+    metadata = client.get_meta(data_fields=["tokens", "labels"], batch_size=10, partition_id="0")
 
     # Verify metadata structure
     assert hasattr(metadata, "global_indexes")
@@ -352,7 +353,7 @@ def test_clear_operation(client_setup):
     client, _, _ = client_setup
 
     # Test clear operation
-    client.clear(global_step=0)
+    client.clear(partition_id="0")
 
 
 # Test with single controller and multiple storage units
@@ -401,7 +402,7 @@ def test_single_controller_multiple_storages():
         test_data = TensorDict({"tokens": torch.randint(0, 100, (5, 128))}, batch_size=5)
 
         # Test put operation
-        client.put(data=test_data, global_step=0)
+        client.put(data=test_data, partition_id="0")
 
     finally:
         # Clean up
@@ -418,6 +419,6 @@ def test_put_without_required_params(client_setup):
     # Create test data
     test_data = TensorDict({"tokens": torch.randint(0, 100, (5, 128))}, batch_size=5)
 
-    # Test put without global_step (should fail)
-    with pytest.raises(AssertionError):
+    # Test put without partition id (should fail)
+    with pytest.raises(ValueError):
         client.put(data=test_data)

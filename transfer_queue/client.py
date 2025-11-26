@@ -133,9 +133,7 @@ class AsyncTransferQueueClient:
                 finally:
                     try:
                         if not sock.closed:
-                            sock.setsockopt(zmq.LINGER, -1)
-                            sock.close()
-                        sock.close(linger=0)
+                            sock.close(linger=-1)
                     except Exception as e:
                         logger.warning(f"[{self.client_id}]: Error closing socket to Controller {server_info.id}: {e}")
 
@@ -150,10 +148,10 @@ class AsyncTransferQueueClient:
         self,
         data_fields: list[str],
         batch_size: int,
-        global_step: int,
+        partition_id: str,
         mode: str = "fetch",
-        get_n_samples: bool = False,
         task_name: Optional[str] = None,
+        sampling_config: Optional[dict[str, Any]] = None,
         socket: Optional[zmq.asyncio.Socket] = None,
     ) -> BatchMeta:
         """Asynchronously fetch data metadata from the controller via ZMQ.
@@ -161,14 +159,14 @@ class AsyncTransferQueueClient:
         Args:
             data_fields: List of data field names to retrieve metadata for
             batch_size: Number of samples to request in the batch
-            global_step: Current training/processing step
+            partition_id: Current data partition id
             mode: Data fetch mode. Options:
                 - 'fetch': Get ready data only
                 - 'force_fetch': Get data regardless of readiness (may return unready samples)
                 - 'insert': Internal usage - should not be used by users
-            get_n_samples: If True, arrange samples of the same prompt contiguously. In 'fetch' mode,
-                          only returns samples where all prompts in the group are ready
             task_name: Optional task name associated with the request
+            sampling_config: Optional sampling configuration for custom samplers.
+                           For GRPOGroupNSampler, should include "n_samples_per_prompt": int
             socket: ZMQ async socket for message transmission (injected by decorator)
 
         Returns:
@@ -178,21 +176,33 @@ class AsyncTransferQueueClient:
             RuntimeError: If communication fails or controller returns error response
 
         Example:
-            >>> # Example 1: Fetch ready metadata
+            >>> # Example 1: Basic fetch metadata
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["input_ids", "attention_mask"],
             ...     batch_size=4,
-            ...     global_step=0,
+            ...     partition_id="train_0",
             ...     mode="fetch",
             ...     task_name="generate_sequences"
             ... ))
             >>> print(batch_meta.is_ready)  # True if all samples ready
             >>>
-            >>> # Example 2: Force fetch metadata (may include unready samples)
+            >>> # Example 2: Fetch with self-defined samplers (using GRPOGroupNSampler as an example)
+            >>> batch_meta = asyncio.run(client.async_get_meta(
+            ...     data_fields=["input_ids", "attention_mask"],
+            ...     batch_size=8,
+            ...     partition_id="train_0",
+            ...     mode="fetch",
+            ...     task_name="generate_sequences",
+            ...     sampling_config={"n_samples_per_prompt": 4}
+            ... ))
+            >>> print(batch_meta.is_ready)  # True if all samples ready
+            >>>
+            >>> # Example 3: Force fetch metadata (bypass production status check and Sampler,
+            >>> so may include unready samples. Consumed samples will not be fetched.)
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["input_ids", "attention_mask"],
             ...     batch_size=4,
-            ...     global_step=0,
+            ...     partition_id="train_0",
             ...     mode="force_fetch",
             ...     task_name="generate_sequences"
             ... ))
@@ -206,10 +216,10 @@ class AsyncTransferQueueClient:
             body={
                 "data_fields": data_fields,
                 "batch_size": batch_size,
-                "global_step": global_step,
+                "partition_id": partition_id,
                 "mode": mode,
-                "get_n_samples": get_n_samples,
                 "task_name": task_name,
+                "sampling_config": sampling_config,
             },
         )
 
@@ -237,34 +247,37 @@ class AsyncTransferQueueClient:
         self,
         data: TensorDict,
         metadata: Optional[BatchMeta] = None,
-        global_step: Optional[int] = None,
+        partition_id: Optional[str] = None,
     ):
         """Asynchronously write data to storage units based on metadata.
 
         If metadata is not provided, it will be created automatically using insert mode
-        with the provided data fields and global_step.
+        with the provided data fields and partition_id.
+
+        Note:
+            When using multiple workers for distributed execution, there may be data
+            ordering inconsistencies between workers during put operations.
 
         Args:
             data: Data to write as TensorDict
             metadata: Records the metadata of a batch of data samples, containing index and
                       storage unit information. If None, metadata will be auto-generated.
-            global_step: Current processing step (required if metadata is not provided)
+            partition_id: Target data partition id (required if metadata is not provided)
 
         Raises:
-            ValueError: If metadata is None or empty, or if global_step is None when metadata is not provided
+            ValueError: If metadata is None or empty, or if partition_id is None when metadata is not provided
             RuntimeError: If storage operation fails
 
         Example:
             >>> batch_size = 4
             >>> seq_len = 16
-            >>> current_step = 0
+            >>> current_partition_id = "train_0"
             >>> # Example 1: Normal usage with existing metadata
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["prompts", "attention_mask"],
             ...     batch_size=batch_size,
-            ...     global_step=current_step,
+            ...     partition_id=current_partition_id,
             ...     mode="fetch",
-            ...     get_n_samples=False,
             ...     task_name="generate_sequences",
             ... ))
             >>> batch = asyncio.run(client.async_get_data(batch_meta))
@@ -272,17 +285,17 @@ class AsyncTransferQueueClient:
             >>> asyncio.run(client.async_put(data=output, metadata=batch_meta))
             >>>
             >>> # Example 2: Initial data insertion without pre-existing metadata
-            >>> # BE CAREFUL: this usage may overwrite any unconsumed data in the given global_step!
-            >>> # Please make sure the corresponding global_step is empty before calling the async_put()
+            >>> # BE CAREFUL: this usage may overwrite any unconsumed data in the given partition_id!
+            >>> # Please make sure the corresponding partition_id is empty before calling the async_put()
             >>> # without metadata.
-            >>> # Now we only support put all the data of the corresponding global step in once. You should repeat with
+            >>> # Now we only support put all the data of the corresponding partition id in once. You should repeat with
             >>> # interleave the initial data if n_sample > 1 before calling the async_put().
             >>> original_prompts = torch.randn(batch_size, seq_len)
             >>> n_samples = 4
             >>> prompts_repeated = torch.repeat_interleave(original_prompts, n_samples, dim=0)
             >>> prompts_repeated_batch = TensorDict({"prompts": prompts_repeated})
             >>> # This will create metadata in "insert" mode internally.
-            >>> asyncio.run(client.async_put(data=prompts_repeated_batch, global_step=current_step))
+            >>> asyncio.run(client.async_put(data=prompts_repeated_batch, partition_id=current_partition_id))
 
         """
 
@@ -293,13 +306,13 @@ class AsyncTransferQueueClient:
             )
 
         if metadata is None:
-            assert global_step is not None, "global_steps must be provided if metadata is not given"
+            if partition_id is None:
+                raise ValueError("partition_id must be provided if metadata is not given")
 
             metadata = await self.async_get_meta(
                 data_fields=list(data.keys()),
                 batch_size=data.batch_size[0],
-                global_step=global_step,
-                get_n_samples=True,
+                partition_id=partition_id,
                 mode="insert",
             )
 
@@ -310,7 +323,7 @@ class AsyncTransferQueueClient:
         await self.storage_manager.put_data(data, metadata)
 
         logger.info(
-            f"[{self.client_id}]: step {global_step} put {metadata.size} samples to storage units successfully."
+            f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
         )
 
     async def async_get_data(self, metadata: BatchMeta) -> TensorDict:
@@ -327,9 +340,8 @@ class AsyncTransferQueueClient:
             >>> batch_meta = asyncio.run(client.async_get_meta(
             ...     data_fields=["prompts", "attention_mask"],
             ...     batch_size=4,
-            ...     global_step=0,
+            ...     partition_id="train_0",
             ...     mode="fetch",
-            ...     get_n_samples=False,
             ...     task_name="generate_sequences",
             ... ))
             >>> batch = asyncio.run(client.async_get_data(batch_meta))
@@ -351,11 +363,11 @@ class AsyncTransferQueueClient:
 
         return results
 
-    async def async_clear(self, global_step: int):
+    async def async_clear(self, partition_id: str):
         """Asynchronously clear data from all storage units and controller metadata.
 
         Args:
-            global_step: The training step to clear data for
+            partition_id: The partition id to clear data for
 
         Raises:
             RuntimeError: If clear operation fails
@@ -370,24 +382,24 @@ class AsyncTransferQueueClient:
             if not self._controller:
                 raise RuntimeError("No controller registered")
 
-            metadata = await self._get_clear_meta(global_step)
+            metadata = await self._get_clear_meta(partition_id)
 
             # Clear the controller metadata
-            await self._clear_controller(global_step)
+            await self._clear_controller(partition_id)
 
             # Clear storage unit data
             await self.storage_manager.clear_data(metadata)
 
-            logger.info(f"[{self.client_id}]: Clear operation for global_step {global_step} completed.")
+            logger.info(f"[{self.client_id}]: Clear operation for partition_id {partition_id} completed.")
         except Exception as e:
             raise RuntimeError(f"Error in clear operation: {str(e)}") from e
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def _get_clear_meta(self, global_step: int, socket=None) -> BatchMeta:
+    async def _get_clear_meta(self, partition_id: str, socket=None) -> BatchMeta:
         """Get metadata required for clear operation from controller.
 
         Args:
-            global_step: Step to get clear metadata for
+            partition_id: Partition id to get clear metadata for
             socket: ZMQ socket (injected by decorator)
 
         Returns:
@@ -400,7 +412,7 @@ class AsyncTransferQueueClient:
             request_type=ZMQRequestType.GET_CLEAR_META,
             sender_id=self.client_id,
             receiver_id=self._controller.id,
-            body={"global_step": global_step},
+            body={"partition_id": partition_id},
         )
 
         await socket.send(request_msg.serialize())
@@ -415,11 +427,11 @@ class AsyncTransferQueueClient:
         return response_msg.body["metadata"]
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def _clear_controller(self, global_step, socket=None):
+    async def _clear_controller(self, partition_id, socket=None):
         """Clear metadata from controller.
 
         Args:
-            global_step: Step to clear metadata for
+            partition_id: Partition id to clear metadata for
             socket: ZMQ socket (injected by decorator)
 
         Raises:
@@ -430,7 +442,7 @@ class AsyncTransferQueueClient:
                 request_type=ZMQRequestType.CLEAR_META,
                 sender_id=self.client_id,
                 receiver_id=self._controller.id,
-                body={"global_step": global_step},
+                body={"partition_id": partition_id},
             )
 
             await socket.send(request_msg.serialize())
@@ -444,30 +456,31 @@ class AsyncTransferQueueClient:
                 )
 
             logger.info(
-                f"[{self.client_id}]: Successfully clear controller {self._controller.id} for global_step {global_step}"
+                f"[{self.client_id}]: Successfully clear controller {self._controller.id} for partition_id "
+                f"{partition_id}"
             )
         except Exception as e:
             logger.error(f"[{self.client_id}]: Error clearing controller {self._controller.id}: {str(e)}")
             raise
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_current_step_consumption(self, task_name: str, global_step: int):
+    async def check_data_consumption_status(self, task_name: str, partition_id: str):
         """Check if all samples for current step have been consumed.
 
         Args:
             task_name: Name of the task to check consumption for
-            global_step: Step to check consumption status for
+            partition_id: Partition id to check consumption status for
         """
         # TODO: Implement this method to check if all samples for the current step has been consumed
         pass
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_current_step_production(self, data_fields: list[str], global_step: int):
-        """Check if all samples for current step are ready for consumption.
+    async def check_data_production_status(self, data_fields: list[str], partition_id: str):
+        """Check if all samples for current partition are ready for consumption.
 
         Args:
             data_fields: Data fields to check production status for
-            global_step: Step to check production status for
+            partition_id: Partition id to check production status for
         """
         # TODO: Implement this method to check if all samples for the current step is ready for consumption
         pass
@@ -504,32 +517,33 @@ class TransferQueueClient(AsyncTransferQueueClient):
             controller_info,
         )
 
-    def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, global_step: Optional[int] = None):
+    def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, partition_id: Optional[str] = None):
         """Synchronously write data to storage units.
 
         Args:
             data: Data to write as TensorDict
             metadata: Optional metadata containing index and storage unit information
-            global_step: Current processing step (required if metadata is not provided)
+            partition_id: Target data partition id (required if metadata is not provided)
         """
-        return asyncio.run(self.async_put(data, metadata, global_step))
+        return asyncio.run(self.async_put(data, metadata, partition_id))
 
     def get_meta(
         self,
         data_fields: list[str],
         batch_size: int,
-        global_step: int,
-        get_n_samples: bool = False,
+        partition_id: str,
         task_name: Optional[str] = None,
+        sampling_config: Optional[dict[str, Any]] = None,
     ) -> BatchMeta:
         """Synchronously fetch data metadata from controller.
 
         Args:
             data_fields: List of data field names to retrieve metadata for
             batch_size: Number of samples to request in the batch
-            global_step: Current training/processing step
-            get_n_samples: If True, arrange samples of the same prompt contiguously
+            partition_id: Target data partition id
             task_name: Optional task name associated with the request
+            sampling_config: Optional sampling configuration for custom samplers.
+                           For GRPOGroupNSampler, should include "n_samples_per_prompt": int
 
         Returns:
             BatchMeta: Batch metadata containing data location information
@@ -538,9 +552,9 @@ class TransferQueueClient(AsyncTransferQueueClient):
             self.async_get_meta(
                 data_fields=data_fields,
                 batch_size=batch_size,
-                global_step=global_step,
-                get_n_samples=get_n_samples,
+                partition_id=partition_id,
                 task_name=task_name,
+                sampling_config=sampling_config,
             )
         )
 
@@ -555,13 +569,13 @@ class TransferQueueClient(AsyncTransferQueueClient):
         """
         return asyncio.run(self.async_get_data(metadata))
 
-    def clear(self, global_step: int):
+    def clear(self, partition_id: str):
         """Synchronously clear data from storage units and controller metadata.
 
         Args:
-            global_step: The training step to clear data for
+            partition_id: The partition id to clear data for
         """
-        return asyncio.run(self.async_clear(global_step))
+        return asyncio.run(self.async_clear(partition_id))
 
 
 def process_zmq_server_info(

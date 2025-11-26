@@ -115,14 +115,14 @@ async def test_async_storage_manager_mock_operations(mock_async_storage_manager)
     # Create test metadata
     sample_metas = [
         SampleMeta(
-            global_step=0,
+            partition_id="0",
             global_index=0,
             fields={
                 "test_field": FieldMeta(name="test_field", dtype=torch.float32, shape=(2,)),
             },
         ),
         SampleMeta(
-            global_step=0,
+            partition_id="0",
             global_index=1,
             fields={
                 "test_field": FieldMeta(name="test_field", dtype=torch.float32, shape=(2,)),
@@ -310,7 +310,7 @@ async def test_async_storage_manager_error_handling():
         # Create test metadata
         sample_metas = [
             SampleMeta(
-                global_step=0,
+                partition_id="0",
                 global_index=0,
                 fields={
                     "test_field": FieldMeta(name="test_field", dtype=torch.float32, shape=(2,)),

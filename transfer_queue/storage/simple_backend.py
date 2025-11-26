@@ -96,11 +96,13 @@ class StorageUnitData:
                 if gathered_items:
                     all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
                     if all_tensors:
-                        result[field] = torch.nested.as_nested_tensor(gathered_items)
+                        result[field] = torch.nested.as_nested_tensor(gathered_items, layout=torch.jagged)
                     else:
                         result[field] = NonTensorStack(*gathered_items)
 
-        return TensorDict(result)
+        # Explicit batch size for stability
+        batch_size = 0 if not fields or not local_indexes else len(local_indexes)
+        return TensorDict(result, batch_size=batch_size)
 
     def put_data(self, field_data: TensorDict[str, Any], local_indexes: list[int]) -> None:
         """
@@ -110,7 +112,7 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        extracted_data = dict(field_data)
+        extracted_data = field_data.to_dict()
 
         for f, values in extracted_data.items():
             if f not in self.field_data:
