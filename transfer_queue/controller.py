@@ -377,8 +377,6 @@ class DataPartitionStatus:
             task_name: Name of the consumer task
             global_indices: List of sample indices to mark as consumed
 
-        Returns:
-            True if successful, False on error
         """
         try:
             consumption_status = self.get_consumption_status(task_name)
