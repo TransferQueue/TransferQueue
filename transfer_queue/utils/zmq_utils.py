@@ -29,7 +29,7 @@ try:
 
     HAS_RPC_PICKLER = True
 except ImportError:
-    USE_PRC_PICKLER = False
+    HAS_RPC_PICKLER = False
 
 from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder
 from transfer_queue.utils.utils import (
@@ -37,7 +37,6 @@ from transfer_queue.utils.utils import (
     TransferQueueRole,
     get_env_bool,
 )
-
 
 TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False) and HAS_RPC_PICKLER
 _encoder = MsgpackEncoder()

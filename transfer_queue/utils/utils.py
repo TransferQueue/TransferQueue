@@ -138,7 +138,7 @@ def get_env_bool(env_key: str, default: bool = False) -> bool:
 
     if env_value is None:
         return default
-    
+
     env_value_lower = env_value.strip().lower()
 
     true_values = {"true", "1", "yes", "y", "on"}
