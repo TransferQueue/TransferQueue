@@ -39,7 +39,7 @@ from transfer_queue.utils.utils import (
 )
 
 
-TQ_ZERO_COPY_SERIALIZATION = get_env_bool("USE_RPC_PICKLER", default=False) and USE_PRC_PICKLER
+TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False) and HAS_RPC_PICKLER
 _encoder = MsgpackEncoder()
 _decoder = MsgpackDecoder(torch.Tensor)
 
