@@ -27,16 +27,18 @@ import zmq
 try:
     from torch.distributed.rpc.internal import _internal_rpc_pickler
 
-    USE_PRC_PICKLER = True
+    HAS_RPC_PICKLER = True
 except ImportError:
-    USE_PRC_PICKLER = False
+    HAS_RPC_PICKLER = False
 
 from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder
 from transfer_queue.utils.utils import (
     ExplicitEnum,
     TransferQueueRole,
+    get_env_bool,
 )
 
+TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False) and HAS_RPC_PICKLER
 _encoder = MsgpackEncoder()
 _decoder = MsgpackDecoder(torch.Tensor)
 
@@ -128,7 +130,7 @@ class ZMQMessage:
 
     def serialize(self) -> bytes:
         """Using pickle to serialize ZMQMessage objects"""
-        if USE_PRC_PICKLER:
+        if TQ_ZERO_COPY_SERIALIZATION:
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
             if len(tensors) > 0:
                 serialized_tensors = [None] * len(tensors)
@@ -144,7 +146,7 @@ class ZMQMessage:
     @classmethod
     def deserialize(cls, data: bytes) -> "ZMQMessage":
         """Using pickle to deserialize ZMQMessage objects"""
-        if USE_PRC_PICKLER:
+        if TQ_ZERO_COPY_SERIALIZATION:
             pickled_bytes, serialized_tensors = msgpack.unpackb(data, raw=False)
             tensors = [None] * len(serialized_tensors)
             for i, serialized_tensor in enumerate(serialized_tensors):

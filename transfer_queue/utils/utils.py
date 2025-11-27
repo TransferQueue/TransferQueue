@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from contextlib import contextmanager
 from enum import Enum
 from typing import Optional
@@ -130,3 +131,15 @@ def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None
         finally:
             # Restore the original number of threads
             torch.set_num_threads(pytorch_current_num_threads)
+
+
+def get_env_bool(env_key: str, default: bool = False) -> bool:
+    env_value = os.getenv(env_key)
+
+    if env_value is None:
+        return default
+
+    env_value_lower = env_value.strip().lower()
+
+    true_values = {"true", "1", "yes", "y", "on"}
+    return env_value_lower in true_values
