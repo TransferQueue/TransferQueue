@@ -27,7 +27,7 @@ import zmq
 try:
     from torch.distributed.rpc.internal import _internal_rpc_pickler
 
-    USE_PRC_PICKLER = True
+    HAS_RPC_PICKLER = True
 except ImportError:
     USE_PRC_PICKLER = False
 
