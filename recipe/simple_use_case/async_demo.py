@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import numpy as np
 import asyncio
 import logging
 import math
@@ -200,6 +200,34 @@ class Trainer:
             self.data_system_storage_unit_infos,
             self.data_system_controller_info,
         )
+    @classmethod
+    def dict_to_tensordict(cls, data: dict[str, torch.Tensor | np.ndarray]) -> TensorDict:
+        """
+        Create a TensorDict from a dict of tensors and non_tensors.
+        Note that this requires tensordict version at least 0.10
+        """
+
+        tensors_batch = {}
+        batch_size = None
+        from tensordict import NonTensorData, NonTensorStack
+        for key, val in data.items():
+            print(key, val)
+            if isinstance(val, torch.Tensor | np.ndarray | NonTensorStack | list):
+                tensors_batch[key] = val
+            else:
+                raise ValueError(f"Unsupported type in ata {type(val)}")
+
+            if batch_size is None:
+                batch_size = len(val)
+            else:
+                assert len(val) == batch_size
+
+        if batch_size is None:
+            batch_size = []
+        else:
+            batch_size = [batch_size]
+
+        return TensorDict(tensors_batch, batch_size=batch_size)
 
     def _initialize_data_system(self):
         # 1. Initialize TransferQueueStorage
@@ -256,16 +284,63 @@ class Trainer:
         for epoch in range(1):
             train_dataloader = 1
             for step in range(train_dataloader):
-                input_ids = (
-                    torch.tensor([[1, 2], [3, 4], [5, 6], [7, 8], [10, 11], [100, 111], [200, 222], [300, 333]])
-                ) * (step + 1)
-                input_ids_repeated = torch.repeat_interleave(input_ids, self.config.num_n_samples, dim=0)
-                prompt_batch = TensorDict(
-                    {"input_ids": input_ids_repeated, "attention_mask": input_ids_repeated},
-                    batch_size=input_ids_repeated.size(0),
-                )
+                # Handle multi-modal data by storing them separately in data system,
+                # and only keep the metadata in the main batch in "multi_modal_data".
 
-                asyncio.run(self.data_system_client.async_put(data=prompt_batch, partition_id=f"train_{step}"))
+                # Data Format for Deepeyes: {'multi_modal_data':array([{'image':[<PIL>,<PIL>]}, {'image':[<PIL>]}])}
+                # It's better to transform PIL into tensor in DataLoader, so in the future it may become
+                # {'multi_modal_data':array([{'image':[torch.Tensor, torch.Tensor]}, {'image':[torch.Tensor]}])}
+
+                # 1. Split multi_modal_data into single items and put them into different partition
+                import numpy as np
+                batch_dict = {
+                    "multi_modal_data": np.array(
+                        [
+                            {"image": [torch.randn(3, 4), torch.randn(3, 4)], "video": [torch.randn(3, 4, 5)]},
+                            {"image": [torch.randn(4, 5)], "video": []},
+                        ]
+                    ),
+                    "tensor": [torch.randn(4, 5), torch.randn(4, 5)]
+                }
+
+                multi_modal_batch_meta = []
+                for mm_sample in batch_dict["multi_modal_data"]:
+                    mm_keys = list(mm_sample.keys())
+                    mm_sample_batch_meta = {}
+                    for modality in mm_keys:
+                        modality_data = mm_sample[modality]
+                        if len(modality_data) > 0:
+                            modality_partition_id = f"train_mm_{step - 1}_{modality}"
+                            modality_tensordict = TensorDict({modality: modality_data}, batch_size=len(modality_data))
+
+                            batch_meta = asyncio.run(
+                                self.data_system_client.async_put(data=modality_tensordict, partition_id=modality_partition_id)
+                            )
+                            mm_sample_batch_meta[modality] = batch_meta
+
+                            print(f"batch meta = {batch_meta}")
+                    multi_modal_batch_meta.append(mm_sample_batch_meta)
+
+                # replacing original multi-modal data
+                from tensordict import NonTensorStack
+                batch_dict["multi_modal_data"] = multi_modal_batch_meta
+
+                print(f"batch meta into NonTensorStack= {batch_dict['multi_modal_data']}")
+
+
+                batch: TensorDict = self.dict_to_tensordict(batch_dict)
+                batch_meta = asyncio.run(self.data_system_client.async_put(data=batch, partition_id=f"train_{step - 1}"))
+
+                data_0 = asyncio.run(self.data_system_client.async_get_data(batch_meta[0]))
+
+                print(f"data_0 = {data_0}")
+                print(f"data_0_mm_batch meta = {data_0['multi_modal_data']}")
+                data_0_mm = asyncio.run(self.data_system_client.async_get_data(data_0['multi_modal_data'][0]['image']))   # 如果是tensor，tensordict会合到一起
+
+                print(f"retrieved multi_modal data {data_0_mm['image']}")
+
+                time.sleep(500)
+
 
                 logger.info("demo put prompts ok! ")
                 time.sleep(5)
