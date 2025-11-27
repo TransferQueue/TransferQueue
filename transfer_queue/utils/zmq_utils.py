@@ -35,8 +35,11 @@ from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder
 from transfer_queue.utils.utils import (
     ExplicitEnum,
     TransferQueueRole,
+    get_env_bool,
 )
 
+
+USE_RPC_PICKLER = get_env_bool("USE_RPC_PICKLER", default=False) and USE_PRC_PICKLER
 _encoder = MsgpackEncoder()
 _decoder = MsgpackDecoder(torch.Tensor)
 
