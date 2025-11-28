@@ -41,6 +41,7 @@ jobs:
         pytest tests/test_put.py -xvs -s --timeout=60 | tee pytest-log.txt
     - name: Upload pytest log as artifact
       uses: actions/upload-artifact@v4  # 上传日志文件
+      if: always()
       with:
         name: pytest-output-log
         path: pytest-log.txt  # 日志文件路径
