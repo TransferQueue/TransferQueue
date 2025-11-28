@@ -330,7 +330,9 @@ class AsyncTransferQueueClient:
             f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
         )
 
-        # TODO (high priority): Update metadata after put_data and return it to the user
+        # update metadata after put
+        metadata = metadata.add_fields(data)
+
         return metadata
 
     async def async_get_data(self, metadata: BatchMeta) -> TensorDict:
