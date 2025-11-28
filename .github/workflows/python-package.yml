@@ -38,7 +38,7 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest tests/test_put.py -xvs
+        pytest tests/test_put.py -xvs -s
     - name: Run async demo
       run: |
         python recipe/simple_use_case/async_demo.py

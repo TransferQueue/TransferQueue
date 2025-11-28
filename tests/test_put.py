@@ -43,6 +43,9 @@ logger = logging.getLogger(__name__)
 def ray_setup():
     """Initialize Ray for testing."""
     ray.init(ignore_reinit_error=True)
+    print("=== Ray资源状态 ===")
+    print(f"总资源: {ray.cluster_resources()}")
+    print(f"可用资源: {ray.available_resources()}")
     yield
     ray.shutdown()
 
@@ -54,6 +57,13 @@ def data_system_setup(ray_setup):
     num_storage_units = 2
     storage_size = 10000
     storage_units = {}
+
+    from ray.util.placement_group import placement_group_table
+
+    pg_table = placement_group_table()
+    logger.info("=== Ray Placement Group状态 ===")
+    for pg_id, pg_info in pg_table.items():
+        logger.info(f"PG ID: {pg_id[:8]} | 状态: {pg_info['state']} | 资源: {pg_info['bundles']}")
 
     storage_placement_group = get_placement_group(num_storage_units, num_cpus_per_actor=1)
     for storage_unit_rank in range(num_storage_units):
@@ -116,6 +126,17 @@ class TestMultipleAsyncPut:
         """Setup for the test class."""
         if not ray.is_initialized():
             ray.init(ignore_reinit_error=True)
+
+        print("=== Ray资源状态 ===")
+        print(f"总资源: {ray.cluster_resources()}")
+        print(f"可用资源: {ray.available_resources()}")
+
+        from ray.util.placement_group import placement_group_table
+
+        pg_table = placement_group_table()
+        print("=== Ray Placement Group状态 ===")
+        for pg_id, pg_info in pg_table.items():
+            print(f"PG ID: {pg_id[:8]} | 状态: {pg_info['state']} | 资源: {pg_info['bundles']}")
 
         # Initialize data system
         num_storage_units = 2
