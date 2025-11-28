@@ -129,6 +129,7 @@ class TestMultipleAsyncPut:
 
         self.controller = TransferQueueController.remote()
 
+        print("Successfully Initialize Data System")
         # Wait for initialization
         await asyncio.sleep(2)
 
@@ -164,6 +165,8 @@ class TestMultipleAsyncPut:
         )
         client.initialize_storage_manager(manager_type="AsyncSimpleStorageManager", config=self.config)
         await asyncio.sleep(1)  # Wait for connections
+
+        print("Successfully Initialize Client")
         return client
 
 
@@ -177,6 +180,7 @@ async def test_concurrent_async_put():
         client = await test_instance.create_client("ConcurrentTestClient")
 
         async def put_operation(partition_id, data):
+            print("Begin async put operation")
             await client.async_put(data=data, partition_id=partition_id)
             return partition_id
 
@@ -189,6 +193,8 @@ async def test_concurrent_async_put():
 
         # Execute concurrently
         results = await asyncio.gather(*tasks)
+
+        print("End async put operation")
 
         assert len(results) == 5
         logger.info(f"Completed {len(results)} concurrent put operations")
@@ -225,10 +231,12 @@ async def test_sequential_async_put_with_verification():
             data = TensorDict({"sequential_data": tensor_data}, batch_size=[4])
 
             # Put data
+            print("Begin async put operation, with data verification")
             await client.async_put(data=data, partition_id=partition_id)
             logger.info(f"Put data to {partition_id}")
-
+            print("Successfully async put operation, with data verification")
             # Verify by reading back
+            print("Begin async get meta operation, with data verification")
             metadata = await client.async_get_meta(
                 data_fields=["sequential_data"],
                 batch_size=4,
@@ -236,8 +244,11 @@ async def test_sequential_async_put_with_verification():
                 mode="fetch",
                 task_name="verification_task",
             )
+            print("Successful async get meta operation, with data verification")
 
+            print("Begein get data")
             retrieved_data = await client.async_get_data(metadata)
+            print("End get data")
 
             # Verify shape and content
             assert retrieved_data["sequential_data"].shape == tensor_data.shape
