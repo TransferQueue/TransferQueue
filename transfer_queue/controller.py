@@ -1194,3 +1194,26 @@ class TransferQueueController:
     def get_zmq_server_info(self) -> ZMQServerInfo:
         """Get ZMQ server connection information."""
         return self.zmq_server_info
+
+    def close(self) -> None:
+        """Close all ZMQ sockets and context to prevent resource leaks."""
+
+        for sock in (self.handshake_socket, self.request_handle_socket, self.data_status_update_socket):
+            try:
+                if sock and not sock.closed:
+                    sock.close(linger=0)
+            except Exception as e:
+                logger.error(f"[{self.controller_id}]: Error closing socket {sock}: {str(e)}")
+
+        try:
+            if self.zmq_context:
+                self.zmq_context.term()
+        except Exception as e:
+            logger.error(f"[{self.controller_id}]: Error terminating zmq_context: {str(e)}")
+
+    def __del__(self):
+        """Destructor to ensure resources are cleaned up."""
+        try:
+            self.close()
+        except Exception as e:
+            logger.error(f"[{self.controller_id}]: Exception during __del__: {str(e)}")
