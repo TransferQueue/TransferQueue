@@ -352,6 +352,27 @@ class SimpleStorageUnit:
         """
         return self.zmq_server_info
 
+    def close(self) -> None:
+        """Close all ZMQ sockets and context to prevent resource leaks."""
+        try:
+            if self.put_get_socket and not self.put_get_socket.closed:
+                self.put_get_socket.close(linger=0)
+        except Exception as e:
+            logger.error(f"[{self.storage_unit_id}]: Error closing socket {self.put_get_socket}: {str(e)}")
+
+        try:
+            if self.zmq_context:
+                self.zmq_context.term()
+        except Exception as e:
+            logger.error(f"[{self.storage_unit_id}]: Error terminating zmq_context: {str(e)}")
+
+    def __del__(self):
+        """Destructor to ensure resources are cleaned up."""
+        try:
+            self.close()
+        except Exception as e:
+            logger.error(f"[{self.storage_unit_id}]: Exception during __del__: {str(e)}")
+
 
 @dataclass
 class StorageMetaGroup:
