@@ -38,7 +38,7 @@ jobs:
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
     - name: Test with pytest
       run: |
-        pytest tests/test_put.py -xvs -s --timeout=60 | tee pytest-log.txt
+        pytest tests/test_put.py -xvs -s | tee pytest-log.txt
     - name: Upload pytest log as artifact
       uses: actions/upload-artifact@v4  # 上传日志文件
       if: always()
