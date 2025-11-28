@@ -79,9 +79,9 @@ def data_system_setup(ray_setup):
     yield controller, storage_units, config
 
     # Cleanup
-    ray.kill(controller)
+    controller.close.remote()
     for storage_unit in storage_units.values():
-        ray.kill(storage_unit)
+        storage_unit.close.remote()
 
 
 @pytest.fixture
@@ -142,10 +142,10 @@ class TestMultipleAsyncPut:
     async def teardown(self):
         """Teardown for the test class."""
         if self.controller:
-            ray.kill(self.controller)
+            self.controller.close.remote()
         if self.storage_units:
             for storage in self.storage_units.values():
-                ray.kill(storage)
+                storage.close.remote()
         if ray.is_initialized():
             ray.shutdown()
 
