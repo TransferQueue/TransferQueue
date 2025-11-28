@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 import ray
 import torch
+from ray.util.placement_group import remove_placement_group
 from tensordict import TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent
@@ -79,9 +80,10 @@ def data_system_setup(ray_setup):
     yield controller, storage_units, config
 
     # Cleanup
-    controller.close.remote()
+    remove_placement_group(storage_placement_group)
+    ray.get(controller.close.remote())
     for storage_unit in storage_units.values():
-        storage_unit.close.remote()
+        ray.get(storage_unit.close.remote())
 
 
 @pytest.fixture
@@ -118,11 +120,11 @@ class TestMultipleAsyncPut:
         # Initialize data system
         num_storage_units = 2
         self.storage_units = {}
-        storage_placement_group = get_placement_group(num_storage_units, num_cpus_per_actor=1)
+        self.storage_placement_group = get_placement_group(num_storage_units, num_cpus_per_actor=1)
 
         for i in range(num_storage_units):
             self.storage_units[i] = SimpleStorageUnit.options(
-                placement_group=storage_placement_group, placement_group_bundle_index=i
+                placement_group=self.storage_placement_group, placement_group_bundle_index=i
             ).remote(storage_unit_size=10000)
 
         self.controller = TransferQueueController.remote()
@@ -142,10 +144,12 @@ class TestMultipleAsyncPut:
     async def teardown(self):
         """Teardown for the test class."""
         if self.controller:
-            self.controller.close.remote()
+            ray.get(self.controller.close.remote())
         if self.storage_units:
             for storage in self.storage_units.values():
-                storage.close.remote()
+                ray.get(storage.close.remote())
+        if self.storage_placement_group:
+            remove_placement_group(self.storage_placement_group)
         if ray.is_initialized():
             ray.shutdown()
 
