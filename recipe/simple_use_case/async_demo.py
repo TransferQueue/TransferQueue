@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import numpy as np
 import asyncio
 import logging
 import math
@@ -20,9 +19,11 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
 import ray
 import torch
 from omegaconf import OmegaConf
+from PIL import Image
 from tensordict import NonTensorData, TensorDict
 
 parent_dir = Path(__file__).resolve().parent.parent.parent
@@ -200,6 +201,7 @@ class Trainer:
             self.data_system_storage_unit_infos,
             self.data_system_controller_info,
         )
+
     @classmethod
     def dict_to_tensordict(cls, data: dict[str, torch.Tensor | np.ndarray]) -> TensorDict:
         """
@@ -209,7 +211,8 @@ class Trainer:
 
         tensors_batch = {}
         batch_size = None
-        from tensordict import NonTensorData, NonTensorStack
+        from tensordict import NonTensorStack
+
         for key, val in data.items():
             print(key, val)
             if isinstance(val, torch.Tensor | np.ndarray | NonTensorStack | list):
@@ -293,15 +296,29 @@ class Trainer:
 
                 # 1. Split multi_modal_data into single items and put them into different partition
                 import numpy as np
+
+                # batch_dict = {
+                #     "multi_modal_data": np.array(
+                #         [
+                #             {"image": [torch.randn(3, 4), torch.randn(3, 4)], "video": [torch.randn(3, 4, 5)]},
+                #             {"image": [torch.randn(4, 5)], "video": []},
+                #         ]
+                #     ),
+                #     "tensor": [torch.randn(4, 5), torch.randn(4, 5)],
+                # }
+
+                # New batch_dict using PIL.Image for image data
                 batch_dict = {
                     "multi_modal_data": np.array(
                         [
-                            {"image": [torch.randn(3, 4), torch.randn(3, 4)], "video": [torch.randn(3, 4, 5)]},
-                            {"image": [torch.randn(4, 5)], "video": []},
+                            {"image": [Image.new('RGB', (3, 4)), Image.new('RGB', (3, 4))], "video": [Image.new('RGB', (3, 4))]},
+                            {"image": [Image.new('RGB', (4, 5))], "video": []},
                         ]
                     ),
-                    "tensor": [torch.randn(4, 5), torch.randn(4, 5)]
+                    "tensor": [torch.randn(4, 5), torch.randn(4, 5)],
                 }
+
+                #
 
                 multi_modal_batch_meta = []
                 for mm_sample in batch_dict["multi_modal_data"]:
@@ -314,7 +331,9 @@ class Trainer:
                             modality_tensordict = TensorDict({modality: modality_data}, batch_size=len(modality_data))
 
                             batch_meta = asyncio.run(
-                                self.data_system_client.async_put(data=modality_tensordict, partition_id=modality_partition_id)
+                                self.data_system_client.async_put(
+                                    data=modality_tensordict, partition_id=modality_partition_id
+                                )
                             )
                             mm_sample_batch_meta[modality] = batch_meta
 
@@ -323,24 +342,31 @@ class Trainer:
 
                 # replacing original multi-modal data
                 from tensordict import NonTensorStack
-                batch_dict["multi_modal_data"] = multi_modal_batch_meta
+                batch_dict["multi_modal_data"] = NonTensorStack(*multi_modal_batch_meta)
 
                 print(f"batch meta into NonTensorStack= {batch_dict['multi_modal_data']}")
 
-
                 batch: TensorDict = self.dict_to_tensordict(batch_dict)
-                batch_meta = asyncio.run(self.data_system_client.async_put(data=batch, partition_id=f"train_{step - 1}"))
+                batch_meta = asyncio.run(
+                    self.data_system_client.async_put(data=batch, partition_id=f"train_{step - 1}")
+                )
 
                 data_0 = asyncio.run(self.data_system_client.async_get_data(batch_meta[0]))
 
                 print(f"data_0 = {data_0}")
-                print(f"data_0_mm_batch meta = {data_0['multi_modal_data']}")
-                data_0_mm = asyncio.run(self.data_system_client.async_get_data(data_0['multi_modal_data'][0]['image']))   # 如果是tensor，tensordict会合到一起
 
-                print(f"retrieved multi_modal data {data_0_mm['image']}")
+                print(f"try use tensordict get: {data_0.get('multi_modal_data')}")
+                print(f"data_0_mm_batch meta = {data_0['multi_modal_data']}, length = {len(data_0['multi_modal_data'])}")  # TODO: TensorDict will add a list warpper
+
+                print(f"{isinstance(data_0['multi_modal_data'], list), isinstance(data_0.get('multi_modal_data'), list), isinstance(data_0.get('multi_modal_data'), NonTensorStack)}")
+
+                data_0_mm = asyncio.run(
+                    self.data_system_client.async_get_data(data_0["multi_modal_data"][0]["image"])
+                )  # 如果是tensor，tensordict会合到一起
+
+                print(f"retrieved multi_modal data {data_0_mm['image'][0]}")
 
                 time.sleep(500)
-
 
                 logger.info("demo put prompts ok! ")
                 time.sleep(5)
