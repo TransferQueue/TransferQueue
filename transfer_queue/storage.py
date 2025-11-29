@@ -25,7 +25,7 @@ import zmq
 from ray.util import get_node_ip_address
 from tensordict import NonTensorStack, TensorDict
 
-from transfer_queue.utils.utils import TransferQueueRole
+from transfer_queue.utils.utils import TransferQueueRole, limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -72,29 +72,31 @@ class StorageUnitData:
         """
         result: dict[str, list] = {}
 
-        for field in fields:
-            # Validate field name
-            if field not in self.field_data:
-                raise ValueError(
-                    f"StorageUnitData get_data operation receive invalid field: {field} beyond {self.field_data.keys()}"
-                )
+        with limit_pytorch_auto_parallel_threads():
+            for field in fields:
+                # Validate field name
+                if field not in self.field_data:
+                    raise ValueError(
+                        f"StorageUnitData get_data operation receive invalid field: {field} beyond "
+                        f"{self.field_data.keys()}"
+                    )
 
-            if len(local_indexes) == 1:
-                # The unsqueeze op make the shape from n to (1, n)
-                gathered_item = self.field_data[field][local_indexes[0]]
-                if not isinstance(gathered_item, torch.Tensor):
-                    result[field] = NonTensorStack(gathered_item)
-                else:
-                    result[field] = gathered_item.unsqueeze(0)
-            else:
-                gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
-
-                if gathered_items:
-                    all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
-                    if all_tensors:
-                        result[field] = torch.nested.as_nested_tensor(gathered_items)
+                if len(local_indexes) == 1:
+                    # The unsqueeze op make the shape from n to (1, n)
+                    gathered_item = self.field_data[field][local_indexes[0]]
+                    if not isinstance(gathered_item, torch.Tensor):
+                        result[field] = NonTensorStack(gathered_item)
                     else:
-                        result[field] = NonTensorStack(*gathered_items)
+                        result[field] = gathered_item.unsqueeze(0)
+                else:
+                    gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
+
+                    if gathered_items:
+                        all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
+                        if all_tensors:
+                            result[field] = torch.nested.as_nested_tensor(gathered_items)
+                        else:
+                            result[field] = NonTensorStack(*gathered_items)
 
         return TensorDict(result)
 
