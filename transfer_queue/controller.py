@@ -1015,7 +1015,9 @@ class TransferQueueController:
 
             if self.handshake_socket in socks:
                 try:
-                    identity, serialized_msg = self.handshake_socket.recv_multipart()
+                    messages = self.handshake_socket.recv_multipart()
+                    identity = messages.pop(0)
+                    serialized_msg = messages
                     request_msg = ZMQMessage.deserialize(serialized_msg)
 
                     if request_msg.request_type == ZMQRequestType.HANDSHAKE:
@@ -1073,7 +1075,9 @@ class TransferQueueController:
     def _process_request(self):
         """Main request processing loop - adapted for partition-based operations."""
         while True:
-            identity, serialized_msg = self.request_handle_socket.recv_multipart()
+            messages = self.request_handle_socket.recv_multipart()
+            identity = messages.pop(0)
+            serialized_msg = messages
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.GET_META:
@@ -1160,7 +1164,9 @@ class TransferQueueController:
     def _update_data_status(self):
         """Process data status update messages from storage units - adapted for partitions."""
         while True:
-            identity, serialized_msg = self.data_status_update_socket.recv_multipart()
+            messages = self.data_status_update_socket.recv_multipart()
+            identity = messages.pop(0)
+            serialized_msg = messages
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:

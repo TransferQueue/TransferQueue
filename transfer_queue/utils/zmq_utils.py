@@ -128,7 +128,7 @@ class ZMQMessage:
             timestamp=time.time(),
         )
 
-    def serialize(self) -> list[bytes]:
+    def serialize(self, ) -> list[bytes] | bytes:
         """Using pickle to serialize ZMQMessage objects"""
         if TQ_ZERO_COPY_SERIALIZATION:
             print("+++++++++使用zero copy序列化+++++++++")
@@ -169,8 +169,8 @@ class ZMQMessage:
                 serialized_tensors = data
                 if len(serialized_tensors) % 2 != 0:
                     raise ValueError(
-                        "When enable TQ_ZERO_COPY_SERIALIZATION, serialized tensors should "
-                        "be a multiple of 2, but got {len(serialized_tensors)}"
+                        f"When enable TQ_ZERO_COPY_SERIALIZATION, serialized tensors should "
+                        f"be a multiple of 2, but got {len(serialized_tensors)}."
                     )
                 serialized_tensors = [serialized_tensors[i : i + 2] for i in range(0, len(serialized_tensors), 2)]
             elif isinstance(data, bytes):
@@ -184,7 +184,7 @@ class ZMQMessage:
             x = _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
             return x
         else:
-            return pickle.loads(data)
+            return pickle.loads(data[0])
 
 
 def get_free_port() -> str:

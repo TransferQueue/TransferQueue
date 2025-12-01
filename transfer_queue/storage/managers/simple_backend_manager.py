@@ -241,8 +241,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         try:
             data = request_msg.serialize()
             await socket.send_multipart(data)
-            serialized = await socket.recv_multipart()
-            response_msg = ZMQMessage.deserialize(serialized)
+            messages = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(messages)
 
             if response_msg.request_type != ZMQRequestType.PUT_DATA_RESPONSE:
                 raise RuntimeError(
@@ -329,8 +329,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         try:
             await socket.send_multipart(request_msg.serialize())
-            serialized = await socket.recv_multipart()
-            response_msg = ZMQMessage.deserialize(serialized)
+            messages = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(messages)
             logger.info(
                 f"[{self.storage_manager_id}]: get data response from storage unit "
                 f"{target_storage_unit}: {response_msg}"
@@ -385,8 +385,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             )
 
             await socket.send_multipart(request_msg.serialize())
-            serialized_msg = await socket.recv_multipart()
-            response_msg = ZMQMessage.deserialize(serialized_msg)
+            messages = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(messages)
 
             if response_msg.request_type != ZMQRequestType.CLEAR_DATA_RESPONSE:
                 raise RuntimeError(

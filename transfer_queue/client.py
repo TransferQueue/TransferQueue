@@ -225,8 +225,8 @@ class AsyncTransferQueueClient:
 
         try:
             await socket.send_multipart(request_msg.serialize())
-            response = await socket.recv_multipart()
-            response_msg = ZMQMessage.deserialize(response)
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
             logger.debug(
                 f"[{self.client_id}]: Client get datameta response: {response_msg} "
                 f"from controller {self._controller.id}"
@@ -425,8 +425,8 @@ class AsyncTransferQueueClient:
         )
 
         await socket.send_multipart(request_msg.serialize())
-        serialized = await socket.recv_multipart()
-        response_msg = ZMQMessage.deserialize(serialized)
+        response_serialized = await socket.recv_multipart()
+        response_msg = ZMQMessage.deserialize(response_serialized)
 
         if response_msg.request_type != ZMQRequestType.GET_CLEAR_META_RESPONSE:
             raise RuntimeError(
@@ -455,8 +455,8 @@ class AsyncTransferQueueClient:
             )
 
             await socket.send_multipart(request_msg.serialize())
-            serialized_msg = await socket.recv_multipart()
-            response_msg = ZMQMessage.deserialize(serialized_msg)
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
 
             if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
                 raise RuntimeError(
