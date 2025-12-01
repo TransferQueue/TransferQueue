@@ -1027,7 +1027,7 @@ class TransferQueueController:
                             sender_id=self.controller_id,
                             body={},
                         ).serialize()
-                        self.handshake_socket.send_multipart([identity, response_msg])
+                        self.handshake_socket.send_multipart([identity, *response_msg])
 
                         # Track new connections
                         if storage_manager_id not in self._connected_storage_managers:
@@ -1155,7 +1155,7 @@ class TransferQueueController:
                         "consumed": consumed,
                     },
                 )
-            self.request_handle_socket.send_multipart([identity, response_msg.serialize()])
+            self.request_handle_socket.send_multipart([identity, *response_msg.serialize()])
 
     def _update_data_status(self):
         """Process data status update messages from storage units - adapted for partitions."""
@@ -1189,7 +1189,7 @@ class TransferQueueController:
                         "success": success,
                     },
                 )
-                self.data_status_update_socket.send_multipart([identity, response_msg.serialize()])
+                self.data_status_update_socket.send_multipart([identity, *response_msg.serialize()])
 
     def get_zmq_server_info(self) -> ZMQServerInfo:
         """Get ZMQ server connection information."""

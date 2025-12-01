@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
 import pickle
 import socket
 import time
@@ -19,7 +20,6 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import uuid4
 
-import msgpack
 import psutil
 import torch
 import zmq
@@ -128,30 +128,61 @@ class ZMQMessage:
             timestamp=time.time(),
         )
 
-    def serialize(self) -> bytes:
+    def serialize(self) -> list[bytes]:
         """Using pickle to serialize ZMQMessage objects"""
         if TQ_ZERO_COPY_SERIALIZATION:
+            print("+++++++++使用zero copy序列化+++++++++")
+            t1 = time.time()
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
+            t2 = time.time()
+
             if len(tensors) > 0:
-                serialized_tensors = [None] * len(tensors)
+                tmp_serialized_tensors = [None] * len(tensors)
                 for i, tensor in enumerate(tensors):
-                    serialized_tensors[i] = _encoder.encode(tensor)  # type: ignore[call-overload]
+                    tmp_serialized_tensors[i] = _encoder.encode(tensor)  # type: ignore[call-overload]
+                # flatten list
+                serialized_tensors = list(itertools.chain.from_iterable(tmp_serialized_tensors))
             else:
                 serialized_tensors = []
+            t3 = time.time()
 
-            return msgpack.packb((pickled_bytes, serialized_tensors), use_bin_type=True)
+            print(
+                f"++++++++++++++++总时间{t3 - t1:.6f}; 序列化时间拆解：internal_rpc_pickler.serialize time: "
+                f"{t2 - t1:.6f}s, serializing tensors time: {t3 - t2:.6f}s"
+            )
+            return [pickled_bytes, *serialized_tensors]
         else:
-            return pickle.dumps(self)
+            print("+++++++++不使用zero copy序列化+++++++++")
+            t1 = time.time()
+            x = pickle.dumps(self)
+            t2 = time.time()
+            print(f"+++++++++pickle序列化总时间{t2 - t1:.6f}s+++++++++")
+            return [x]
 
     @classmethod
-    def deserialize(cls, data: bytes) -> "ZMQMessage":
+    def deserialize(cls, data: list[bytes] | bytes) -> "ZMQMessage":
         """Using pickle to deserialize ZMQMessage objects"""
         if TQ_ZERO_COPY_SERIALIZATION:
-            pickled_bytes, serialized_tensors = msgpack.unpackb(data, raw=False)
+            if isinstance(data, list):
+                # contain tensors
+                pickled_bytes = data.pop(0)
+                serialized_tensors = data
+                if len(serialized_tensors) % 2 != 0:
+                    raise ValueError(
+                        "When enable TQ_ZERO_COPY_SERIALIZATION, serialized tensors should "
+                        "be a multiple of 2, but got {len(serialized_tensors)}"
+                    )
+                serialized_tensors = [serialized_tensors[i : i + 2] for i in range(0, len(serialized_tensors), 2)]
+            elif isinstance(data, bytes):
+                # do not contain tensors
+                pickled_bytes = data
+                serialized_tensors = []
             tensors = [None] * len(serialized_tensors)
             for i, serialized_tensor in enumerate(serialized_tensors):
                 tensors[i] = _decoder.decode(serialized_tensor)
-            return _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
+
+            x = _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
+            return x
         else:
             return pickle.loads(data)
 

@@ -239,8 +239,9 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         )
 
         try:
-            await socket.send(request_msg.serialize())
-            serialized = await socket.recv()
+            data = request_msg.serialize()
+            await socket.send_multipart(data)
+            serialized = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(serialized)
 
             if response_msg.request_type != ZMQRequestType.PUT_DATA_RESPONSE:
@@ -327,8 +328,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         )
 
         try:
-            await socket.send(request_msg.serialize())
-            serialized = await socket.recv()
+            await socket.send_multipart(request_msg.serialize())
+            serialized = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(serialized)
             logger.info(
                 f"[{self.storage_manager_id}]: get data response from storage unit "
@@ -383,8 +384,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 body={"local_indexes": local_indexes},
             )
 
-            await socket.send(request_msg.serialize())
-            serialized_msg = await socket.recv()
+            await socket.send_multipart(request_msg.serialize())
+            serialized_msg = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(serialized_msg)
 
             if response_msg.request_type != ZMQRequestType.CLEAR_DATA_RESPONSE:

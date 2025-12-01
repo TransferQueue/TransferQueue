@@ -224,8 +224,8 @@ class AsyncTransferQueueClient:
         )
 
         try:
-            await socket.send(request_msg.serialize())
-            response = await socket.recv()
+            await socket.send_multipart(request_msg.serialize())
+            response = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(response)
             logger.debug(
                 f"[{self.client_id}]: Client get datameta response: {response_msg} "
@@ -424,8 +424,8 @@ class AsyncTransferQueueClient:
             body={"partition_id": partition_id},
         )
 
-        await socket.send(request_msg.serialize())
-        serialized = await socket.recv()
+        await socket.send_multipart(request_msg.serialize())
+        serialized = await socket.recv_multipart()
         response_msg = ZMQMessage.deserialize(serialized)
 
         if response_msg.request_type != ZMQRequestType.GET_CLEAR_META_RESPONSE:
@@ -454,8 +454,8 @@ class AsyncTransferQueueClient:
                 body={"partition_id": partition_id},
             )
 
-            await socket.send(request_msg.serialize())
-            serialized_msg = await socket.recv()
+            await socket.send_multipart(request_msg.serialize())
+            serialized_msg = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(serialized_msg)
 
             if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:

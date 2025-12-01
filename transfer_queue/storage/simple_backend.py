@@ -213,7 +213,9 @@ class SimpleStorageUnit:
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
             if self.put_get_socket in socks:
-                identity, serialized_msg = self.put_get_socket.recv_multipart()
+                messages = self.put_get_socket.recv_multipart()
+                identity = messages.pop(0)
+                serialized_msg = messages
 
                 try:
                     request_msg = ZMQMessage.deserialize(serialized_msg)
@@ -245,7 +247,7 @@ class SimpleStorageUnit:
                         },
                     )
 
-                self.put_get_socket.send_multipart([identity, response_msg.serialize()])
+                self.put_get_socket.send_multipart([identity, *response_msg.serialize()])
 
     def _handle_put(self, data_parts: ZMQMessage) -> ZMQMessage:
         """

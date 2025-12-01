@@ -166,7 +166,7 @@ class TransferQueueStorageManager(ABC):
             },
         ).serialize()
 
-        self.controller_handshake_socket.send(request_msg)
+        self.controller_handshake_socket.send_multipart(request_msg)
         logger.debug(
             f"[{self.storage_manager_id}]: Send handshake request from storage manager id "
             f"{self.storage_manager_id} to controller id #{self.controller_info.id} successfully."
@@ -215,7 +215,7 @@ class TransferQueueStorageManager(ABC):
                 },
             ).serialize()
 
-            self.data_status_update_socket.send(request_msg)
+            self.data_status_update_socket.send_multipart(request_msg)
             logger.debug(
                 f"[{self.storage_manager_id}]: Send data status update request "
                 f"from storage manager id #{self.storage_manager_id} "
@@ -232,7 +232,7 @@ class TransferQueueStorageManager(ABC):
                 },
             ).serialize()
 
-            self.data_status_update_socket.send(request_msg)
+            self.data_status_update_socket.send_multipart(request_msg)
 
         # Make sure controller successfully receives data status update information.
         response_received: bool = False
