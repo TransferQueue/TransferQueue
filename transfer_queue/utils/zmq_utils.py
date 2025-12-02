@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import itertools
+import logging
+import os
 import pickle
 import socket
 import time
@@ -37,6 +39,9 @@ from transfer_queue.utils.utils import (
     TransferQueueRole,
     get_env_bool,
 )
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False) and HAS_RPC_PICKLER
 _encoder = MsgpackEncoder()
@@ -145,7 +150,7 @@ class ZMQMessage:
             If TQ_ZERO_COPY_SERIALIZATION is disabled, returns a single-element list containing only the pickled bytes
             through pickle.
         """
-
+        logger.info(f"Serializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
         if TQ_ZERO_COPY_SERIALIZATION:
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
 
@@ -163,6 +168,7 @@ class ZMQMessage:
     @classmethod
     def deserialize(cls, data: list[bytestr] | bytestr) -> "ZMQMessage":
         """Deserialize a ZMQMessage object from serialized data."""
+        logger.info(f"Deserializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
         if TQ_ZERO_COPY_SERIALIZATION:
             if isinstance(data, list):
                 # contain tensors

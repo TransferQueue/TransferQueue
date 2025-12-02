@@ -92,7 +92,9 @@ class MockController:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.request_socket in socks:
-                    identity, serialized_msg = self.request_socket.recv_multipart()
+                    messages = self.request_socket.recv_multipart()
+                    identity = messages.pop(0)
+                    serialized_msg = messages
                     request_msg = ZMQMessage.deserialize(serialized_msg)
 
                     # Determine response based on request type
@@ -187,8 +189,10 @@ class MockStorage:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.data_socket in socks:
-                    identity, msg_bytes = self.data_socket.recv_multipart()
-                    msg = ZMQMessage.deserialize(msg_bytes)
+                    messages = self.data_socket.recv_multipart()
+                    identity = messages.pop(0)
+                    serialized_msg = messages
+                    msg = ZMQMessage.deserialize(serialized_msg)
 
                     # Handle different request types
                     if msg.request_type == ZMQRequestType.PUT_DATA:
