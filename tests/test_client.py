@@ -113,7 +113,7 @@ class MockController:
                         receiver_id=request_msg.sender_id,
                         body=response_body,
                     )
-                    self.request_socket.send_multipart([identity, response_msg.serialize()])
+                    self.request_socket.send_multipart([identity, *response_msg.serialize()])
             except zmq.Again:
                 continue
             except Exception as e:
@@ -208,7 +208,7 @@ class MockStorage:
                         receiver_id=msg.sender_id,
                         body=response_body,
                     )
-                    self.data_socket.send_multipart([identity, response_msg.serialize()])
+                    self.data_socket.send_multipart([identity, *response_msg.serialize()])
             except zmq.Again:
                 continue
             except Exception as e:
