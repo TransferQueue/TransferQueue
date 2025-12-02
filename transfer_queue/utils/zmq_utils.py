@@ -42,7 +42,7 @@ TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=
 _encoder = MsgpackEncoder()
 _decoder = MsgpackDecoder(torch.Tensor)
 
-bytestr: TypeAlias = bytes | bytearray | memoryview | zmq.Frame
+bytestr: TypeAlias = bytes | bytearray | memoryview
 
 
 class ZMQRequestType(ExplicitEnum):
@@ -133,16 +133,28 @@ class ZMQMessage:
     def serialize(
         self,
     ) -> list[bytestr]:
-        """Using pickle to serialize ZMQMessage objects"""
+        """
+        Serializes the ZMQMessage object.
+
+        Returns:
+            list[bytestr]: If TQ_ZERO_COPY_SERIALIZATION is enabled, returns a list where the first element
+            is the pickled bytes of the message, followed by the flattened serialized tensor parts as
+            [pickled_bytes, |<bytes>, <memoryview>, |<bytes>, <memoryview>|...].
+            From the second element, two elements is a group that will be used to restore a tensor.
+
+            If TQ_ZERO_COPY_SERIALIZATION is disabled, returns a single-element list containing only the pickled bytes
+            through pickle.
+        """
+
         if TQ_ZERO_COPY_SERIALIZATION:
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
 
-            tmp_serialized_tensors: list[list[bytestr]] = [[] for _ in range(len(tensors))]
+            nested_serialized_tensors: list[list[bytestr]] = [[] for _ in range(len(tensors))]
             for i, tensor in enumerate(tensors):
-                tmp_serialized_tensors[i] = _encoder.encode(tensor)  # type: ignore[call-overload]
+                nested_serialized_tensors[i] = _encoder.encode(tensor)  # type: ignore[call-overload]
 
-            # flatten list
-            serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(tmp_serialized_tensors))
+            # flatten the list
+            serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(nested_serialized_tensors))
 
             return [pickled_bytes, *serialized_tensors]
         else:
@@ -150,24 +162,28 @@ class ZMQMessage:
 
     @classmethod
     def deserialize(cls, data: list[bytestr] | bytestr) -> "ZMQMessage":
-        """Using pickle to deserialize ZMQMessage objects"""
+        """Deserialize a ZMQMessage object from serialized data."""
         if TQ_ZERO_COPY_SERIALIZATION:
             if isinstance(data, list):
                 # contain tensors
-                pickled_bytes = data.pop(0)
-                serialized_tensors = data
+                pickled_bytes = data[0]
+                serialized_tensors = data[1:]
                 if len(serialized_tensors) % 2 != 0:
+                    # Note: data is a list of [pickled_bytes, |<bytes>, <memoryview>, |<bytes>, <memoryview>|...].
+                    # From the second element, two elements is a group that will be used to restore a tensor.
                     raise ValueError(
-                        f"When enable TQ_ZERO_COPY_SERIALIZATION, serialized tensors should "
-                        f"be a multiple of 2, but got {len(serialized_tensors)}."
+                        f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should "
+                        f"be a list containing an odd number of elements, but got {len(serialized_tensors)}."
                     )
-                serialized_tensors = [serialized_tensors[i : i + 2] for i in range(0, len(serialized_tensors), 2)]
+                nested_serialized_tensors: list[list[bytestr]] = [
+                    serialized_tensors[i : i + 2] for i in range(0, len(serialized_tensors), 2)
+                ]
             else:
                 raise ValueError(
-                    f"When enable TQ_ZERO_COPY_SERIALIZATION, input data should be a list, but got {type(data)}."
+                    f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should be a list, but got {type(data)}."
                 )
-            tensors: list[Optional[torch.Tensor]] = [None] * len(serialized_tensors)
-            for i, serialized_tensor in enumerate(serialized_tensors):
+            tensors: list[Optional[torch.Tensor]] = [None] * len(nested_serialized_tensors)
+            for i, serialized_tensor in enumerate(nested_serialized_tensors):
                 tensors[i] = _decoder.decode(serialized_tensor)
 
             x = _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
@@ -178,10 +194,15 @@ class ZMQMessage:
             elif isinstance(data, list):
                 if len(data) > 1:
                     raise ValueError(
-                        f"When disable TQ_ZERO_COPY_SERIALIZATION, must have only 1 element in"
+                        f"When TQ_ZERO_COPY_SERIALIZATION is disabled, must have only 1 element in"
                         f" list for deserialization, but got {len(data)}."
                     )
                 return pickle.loads(data[0])
+            else:
+                raise ValueError(
+                    f"When TQ_ZERO_COPY_SERIALIZATION is disabled, input data should be a list of bytestr,"
+                    f" but got {type(data)}."
+                )
 
 
 def get_free_port() -> str:
