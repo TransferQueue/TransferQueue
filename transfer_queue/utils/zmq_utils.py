@@ -128,14 +128,10 @@ class ZMQMessage:
             timestamp=time.time(),
         )
 
-    def serialize(self, ) -> list[bytes] | bytes:
+    def serialize(self, ) -> list[bytes]:
         """Using pickle to serialize ZMQMessage objects"""
         if TQ_ZERO_COPY_SERIALIZATION:
-            print("+++++++++使用zero copy序列化+++++++++")
-            t1 = time.time()
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
-            t2 = time.time()
-
             if len(tensors) > 0:
                 tmp_serialized_tensors = [None] * len(tensors)
                 for i, tensor in enumerate(tensors):
@@ -144,20 +140,9 @@ class ZMQMessage:
                 serialized_tensors = list(itertools.chain.from_iterable(tmp_serialized_tensors))
             else:
                 serialized_tensors = []
-            t3 = time.time()
-
-            print(
-                f"++++++++++++++++总时间{t3 - t1:.6f}; 序列化时间拆解：internal_rpc_pickler.serialize time: "
-                f"{t2 - t1:.6f}s, serializing tensors time: {t3 - t2:.6f}s"
-            )
             return [pickled_bytes, *serialized_tensors]
         else:
-            print("+++++++++不使用zero copy序列化+++++++++")
-            t1 = time.time()
-            x = pickle.dumps(self)
-            t2 = time.time()
-            print(f"+++++++++pickle序列化总时间{t2 - t1:.6f}s+++++++++")
-            return [x]
+            return [pickle.dumps(self)]
 
     @classmethod
     def deserialize(cls, data: list[bytes] | bytes) -> "ZMQMessage":

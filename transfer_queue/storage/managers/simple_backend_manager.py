@@ -240,7 +240,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         try:
             data = request_msg.serialize()
-            await socket.send_multipart(data)
+            await socket.send_multipart(data, copy=False)
             messages = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(messages)
 
