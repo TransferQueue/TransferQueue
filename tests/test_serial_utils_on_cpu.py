@@ -47,6 +47,7 @@ def test_tensor_serialization(dtype):
 def test_zmq_msg_serialization():
     from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
+    # jagged tensor
     msg = ZMQMessage(
         request_type=ZMQRequestType.PUT_DATA,
         sender_id="test_sender",
@@ -58,6 +59,35 @@ def test_zmq_msg_serialization():
                 {
                     "nested_tensor": torch.nested.as_nested_tensor(
                         [torch.randn(2, 3), torch.randn(2, 4)], layout=torch.jagged
+                    ),
+                    "numpy_array": torch.randn(2, 2).numpy(),
+                },
+                batch_size=2,
+            )
+        },
+    )
+    encoded_msg = msg.serialize()
+    decoded_msg = ZMQMessage.deserialize(encoded_msg)
+    assert decoded_msg.request_type == msg.request_type
+    assert torch.allclose(decoded_msg.body["data"]["numpy_array"], msg.body["data"]["numpy_array"])
+    for i in range(len(msg.body["data"]["nested_tensor"].unbind())):
+        assert torch.allclose(
+            decoded_msg.body["data"]["nested_tensor"][i],
+            msg.body["data"]["nested_tensor"][i],
+        )
+
+    # strided tensor
+    msg = ZMQMessage(
+        request_type=ZMQRequestType.PUT_DATA,
+        sender_id="test_sender",
+        receiver_id="test_receiver",
+        request_id="test_request",
+        timestamp="test_timestamp",
+        body={
+            "data": TensorDict(
+                {
+                    "nested_tensor": torch.nested.as_nested_tensor(
+                        [torch.randn(4, 3), torch.randn(2, 4)], layout=torch.strided
                     ),
                     "numpy_array": torch.randn(2, 2).numpy(),
                 },

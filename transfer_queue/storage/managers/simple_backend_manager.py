@@ -299,12 +299,12 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         with limit_pytorch_auto_parallel_threads():
             tensor_data = {
                 field: (
-                    torch.stack(torch.nested.as_nested_tensor(v, layout=torch.jagged).unbind())
+                    torch.stack(torch.nested.as_nested_tensor(v).unbind())
                     if v
                     and all(isinstance(item, torch.Tensor) for item in v)
                     and all(item.shape == v[0].shape for item in v)
                     else (
-                        torch.nested.as_nested_tensor(v, layout=torch.jagged)
+                        torch.nested.as_nested_tensor(v)
                         if v and all(isinstance(item, torch.Tensor) for item in v)
                         else NonTensorStack(*v)
                     )

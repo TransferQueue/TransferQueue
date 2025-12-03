@@ -196,7 +196,7 @@ class ZMQMessage:
 
                     raise ValueError(
                         f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should "
-                        f"be a list containing an odd number of elements, but got {len(serialized_tensors)}."
+                        f"be a list containing an even number of elements, but got {len(data)}."
                     )
                 nested_serialized_tensors: list[list[bytestr]] = [
                     serialized_tensors[i : i + 2] for i in range(0, len(serialized_tensors), 2)
@@ -222,7 +222,7 @@ class ZMQMessage:
                     current_idx += 1
                 else:
                     tensors[i] = torch.nested.as_nested_tensor(
-                        [single_tensors[current_idx + j] for j in range(tensor_num)]
+                        [single_tensors[current_idx + j] for j in range(tensor_num)], layout=torch.strided
                     )
                     current_idx += tensor_num
 
