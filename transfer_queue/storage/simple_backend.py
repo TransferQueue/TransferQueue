@@ -96,7 +96,7 @@ class StorageUnitData:
                 if gathered_items:
                     all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
                     if all_tensors:
-                        result[field] = torch.nested.as_nested_tensor(gathered_items, layout=torch.jagged)
+                        result[field] = torch.nested.as_nested_tensor(gathered_items)
                     else:
                         result[field] = NonTensorStack(*gathered_items)
 
@@ -216,10 +216,9 @@ class SimpleStorageUnit:
                 messages = self.put_get_socket.recv_multipart()
                 identity = messages.pop(0)
                 serialized_msg = messages
-
+                request_msg = ZMQMessage.deserialize(serialized_msg)
+                operation = request_msg.request_type
                 try:
-                    request_msg = ZMQMessage.deserialize(serialized_msg)
-                    operation = request_msg.request_type
                     logger.debug(f"[{self.zmq_server_info.id}]: receive operation: {operation}, message: {request_msg}")
 
                     if operation == ZMQRequestType.PUT_DATA:

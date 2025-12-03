@@ -18,6 +18,7 @@ import os
 import pickle
 import socket
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Optional, TypeAlias
 from uuid import uuid4
@@ -144,8 +145,8 @@ class ZMQMessage:
         Returns:
             list[bytestr]: If TQ_ZERO_COPY_SERIALIZATION is enabled, returns a list where the first element
             is the pickled bytes of the message, followed by the flattened serialized tensor parts as
-            [pickled_bytes, |<bytes>, <memoryview>, |<bytes>, <memoryview>|...].
-            From the second element, two elements is a group that will be used to restore a tensor.
+            [pickled_bytes, <bytes>, |<bytes>, <memoryview>, |<bytes>, <memoryview>|...].
+            From the third element, two elements is a group that will be used to restore a tensor.
 
             If TQ_ZERO_COPY_SERIALIZATION is disabled, returns a single-element list containing only the pickled bytes
             through pickle.
@@ -154,14 +155,27 @@ class ZMQMessage:
         if TQ_ZERO_COPY_SERIALIZATION:
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
 
-            nested_serialized_tensors: list[list[bytestr]] = [[] for _ in range(len(tensors))]
+            nested_tensor_info = [1 for _ in range(len(tensors))]
+            double_layer_serialized_tensors: list[Sequence[bytestr]] = []
+
             for i, tensor in enumerate(tensors):
-                nested_serialized_tensors[i] = _encoder.encode(tensor)  # type: ignore[call-overload]
+                if tensor.is_nested and tensor.layout == torch.strided:
+                    tensor_list = tensor.unbind()
+                    serialized_inner_tensors: list[Sequence[bytestr]] = [[] for _ in range(len(tensor_list))]
+                    nested_tensor_info[i] = len(tensor_list)  # record number of tensors in nested tensor
+
+                    # encode each single tensor in nested tensor
+                    for j, inner_tensor in enumerate(tensor_list):
+                        serialized_inner_tensors[j] = _encoder.encode(inner_tensor)
+                    double_layer_serialized_tensors.extend(serialized_inner_tensors)
+                else:
+                    x = _encoder.encode(tensor)
+                    double_layer_serialized_tensors.append(x)  # type: ignore[call-overload]
 
             # flatten the list
-            serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(nested_serialized_tensors))
+            serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(double_layer_serialized_tensors))
 
-            return [pickled_bytes, *serialized_tensors]
+            return [pickled_bytes, pickle.dumps(nested_tensor_info), *serialized_tensors]
         else:
             return [pickle.dumps(self)]
 
@@ -173,10 +187,13 @@ class ZMQMessage:
             if isinstance(data, list):
                 # contain tensors
                 pickled_bytes = data[0]
-                serialized_tensors = data[1:]
+                nested_tensor_info = pickle.loads(data[1])
+                serialized_tensors = data[2:]
                 if len(serialized_tensors) % 2 != 0:
-                    # Note: data is a list of [pickled_bytes, |<bytes>, <memoryview>, |<bytes>, <memoryview>|...].
-                    # From the second element, two elements is a group that will be used to restore a tensor.
+                    # Note: data is a list of [pickled_bytes, <bytes>, |<bytes>, <memoryview>,
+                    # |<bytes>, <memoryview>|...].
+                    # From the third element, two elements is a group that will be used to restore a tensor.
+
                     raise ValueError(
                         f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should "
                         f"be a list containing an odd number of elements, but got {len(serialized_tensors)}."
@@ -188,9 +205,26 @@ class ZMQMessage:
                 raise ValueError(
                     f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should be a list, but got {type(data)}."
                 )
-            tensors: list[Optional[torch.Tensor]] = [None] * len(nested_serialized_tensors)
+
+            tensor_nums = sum(nested_tensor_info)
+            if tensor_nums != len(nested_serialized_tensors):
+                raise ValueError(f"Expecting {tensor_nums} tensors, but got {len(nested_serialized_tensors)}.")
+            single_tensors: list[Optional[torch.Tensor]] = [None] * len(nested_serialized_tensors)
             for i, serialized_tensor in enumerate(nested_serialized_tensors):
-                tensors[i] = _decoder.decode(serialized_tensor)
+                single_tensors[i] = _decoder.decode(serialized_tensor)
+
+            # restore nested tensor
+            tensors = [None] * len(nested_tensor_info)
+            current_idx = 0
+            for i, tensor_num in enumerate(nested_tensor_info):
+                if tensor_num == 1:
+                    tensors[i] = single_tensors[current_idx]
+                    current_idx += 1
+                else:
+                    tensors[i] = torch.nested.as_nested_tensor(
+                        [single_tensors[current_idx + j] for j in range(tensor_num)]
+                    )
+                    current_idx += tensor_num
 
             x = _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
             return x

@@ -222,7 +222,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         tensordict_data = TensorDict(
             {
                 field: (
-                    torch.nested.as_nested_tensor(transfer_data["field_data"][field], layout=torch.jagged)
+                    torch.nested.as_nested_tensor(transfer_data["field_data"][field])
                     if transfer_data["field_data"][field]
                     and all(isinstance(x, torch.Tensor) for x in transfer_data["field_data"][field])
                     else NonTensorStack(*transfer_data["field_data"][field])
