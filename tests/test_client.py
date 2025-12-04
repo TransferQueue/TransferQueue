@@ -48,7 +48,8 @@ TEST_DATA = TensorDict(
                 torch.tensor([-0.5, -1.2, -0.8]),
                 torch.tensor([-0.3, -1.5, -2.1, -0.9]),
                 torch.tensor([-1.1, -0.7]),
-            ]
+            ],
+            layout=torch.jagged,
         ),
         "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
     },
@@ -91,7 +92,9 @@ class MockController:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.request_socket in socks:
-                    identity, serialized_msg = self.request_socket.recv_multipart()
+                    messages = self.request_socket.recv_multipart()
+                    identity = messages.pop(0)
+                    serialized_msg = messages
                     request_msg = ZMQMessage.deserialize(serialized_msg)
 
                     # Determine response based on request type
@@ -112,7 +115,7 @@ class MockController:
                         receiver_id=request_msg.sender_id,
                         body=response_body,
                     )
-                    self.request_socket.send_multipart([identity, response_msg.serialize()])
+                    self.request_socket.send_multipart([identity, *response_msg.serialize()])
             except zmq.Again:
                 continue
             except Exception as e:
@@ -186,8 +189,10 @@ class MockStorage:
             try:
                 socks = dict(poller.poll(100))  # 100ms timeout
                 if self.data_socket in socks:
-                    identity, msg_bytes = self.data_socket.recv_multipart()
-                    msg = ZMQMessage.deserialize(msg_bytes)
+                    messages = self.data_socket.recv_multipart()
+                    identity = messages.pop(0)
+                    serialized_msg = messages
+                    msg = ZMQMessage.deserialize(serialized_msg)
 
                     # Handle different request types
                     if msg.request_type == ZMQRequestType.PUT_DATA:
@@ -207,7 +212,7 @@ class MockStorage:
                         receiver_id=msg.sender_id,
                         body=response_body,
                     )
-                    self.data_socket.send_multipart([identity, response_msg.serialize()])
+                    self.data_socket.send_multipart([identity, *response_msg.serialize()])
             except zmq.Again:
                 continue
             except Exception as e:
@@ -229,7 +234,7 @@ class MockStorage:
             if gathered_items:
                 all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
                 if all_tensors:
-                    result[field] = torch.nested.as_nested_tensor(gathered_items)
+                    result[field] = torch.nested.as_nested_tensor(gathered_items, layout=torch.jagged)
                 else:
                     result[field] = NonTensorStack(*gathered_items)
 

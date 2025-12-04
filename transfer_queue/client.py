@@ -224,9 +224,9 @@ class AsyncTransferQueueClient:
         )
 
         try:
-            await socket.send(request_msg.serialize())
-            response = await socket.recv()
-            response_msg = ZMQMessage.deserialize(response)
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
             logger.debug(
                 f"[{self.client_id}]: Client get datameta response: {response_msg} "
                 f"from controller {self._controller.id}"
@@ -248,7 +248,7 @@ class AsyncTransferQueueClient:
         data: TensorDict,
         metadata: Optional[BatchMeta] = None,
         partition_id: Optional[str] = None,
-    ):
+    ) -> BatchMeta:
         """Asynchronously write data to storage units based on metadata.
 
         If metadata is not provided, it will be created automatically using insert mode
@@ -263,6 +263,10 @@ class AsyncTransferQueueClient:
             metadata: Records the metadata of a batch of data samples, containing index and
                       storage unit information. If None, metadata will be auto-generated.
             partition_id: Target data partition id (required if metadata is not provided)
+
+        Returns:
+            BatchMeta: The metadata used for the put operation (currently returns the input metadata or auto-retrieved
+                       metadata; will be updated in a future version to reflect the post-put state)
 
         Raises:
             ValueError: If metadata is None or empty, or if partition_id is None when metadata is not provided
@@ -325,6 +329,11 @@ class AsyncTransferQueueClient:
         logger.info(
             f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
         )
+
+        # update metadata after put
+        metadata = metadata.add_fields(data)
+
+        return metadata
 
     async def async_get_data(self, metadata: BatchMeta) -> TensorDict:
         """Asynchronously fetch data from storage units and organize into TensorDict.
@@ -415,9 +424,9 @@ class AsyncTransferQueueClient:
             body={"partition_id": partition_id},
         )
 
-        await socket.send(request_msg.serialize())
-        serialized = await socket.recv()
-        response_msg = ZMQMessage.deserialize(serialized)
+        await socket.send_multipart(request_msg.serialize())
+        response_serialized = await socket.recv_multipart()
+        response_msg = ZMQMessage.deserialize(response_serialized)
 
         if response_msg.request_type != ZMQRequestType.GET_CLEAR_META_RESPONSE:
             raise RuntimeError(
@@ -445,9 +454,9 @@ class AsyncTransferQueueClient:
                 body={"partition_id": partition_id},
             )
 
-            await socket.send(request_msg.serialize())
-            serialized_msg = await socket.recv()
-            response_msg = ZMQMessage.deserialize(serialized_msg)
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
 
             if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
                 raise RuntimeError(
@@ -517,13 +526,19 @@ class TransferQueueClient(AsyncTransferQueueClient):
             controller_info,
         )
 
-    def put(self, data: TensorDict, metadata: Optional[BatchMeta] = None, partition_id: Optional[str] = None):
+    def put(
+        self, data: TensorDict, metadata: Optional[BatchMeta] = None, partition_id: Optional[str] = None
+    ) -> BatchMeta:
         """Synchronously write data to storage units.
 
         Args:
             data: Data to write as TensorDict
             metadata: Optional metadata containing index and storage unit information
             partition_id: Target data partition id (required if metadata is not provided)
+
+        Returns:
+            BatchMeta: The metadata used for the put operation (currently returns the input metadata or auto-retrieved
+                       metadata; will be updated in a future version to reflect the post-put state)
         """
         return asyncio.run(self.async_put(data, metadata, partition_id))
 

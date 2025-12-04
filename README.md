@@ -19,13 +19,13 @@
 TransferQueue is a high-performance data storage and transfer module with panoramic data visibility and streaming scheduling capabilities, optimized for efficient dataflow in post-training workflows.
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761356010763-b05751d3-f975-4890-ba59-c8d753cf95f2.png" width="70%">
+  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/tq_arch.png?raw=true" width="70%">
 </p>
 
 TransferQueue offers **fine-grained, sample-level** data management and **load-balancing** (on the way) capabilities, serving as a data gateway that decouples explicit data dependencies across computational tasks. This enables a divide-and-conquer approach, significantly simplifies the algorithm controller design.
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1758696791245-fa7baf96-46af-4c19-8606-28ffadc4556c.png" width="70%">
+  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/main_func.png?raw=true" width="70%">
 </p>
 
 <h2 id="updates">🔄 Updates</h2>
@@ -48,7 +48,7 @@ In the control plane, `TransferQueueController` tracks the **production status**
 For consumption status, we record the consumption records for each computational task (e.g., `generate_sequences`, `compute_log_prob`, etc.). Therefore, even when different computation tasks require the same data field, they can consume the data independently without interfering with each other.
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1758696820173-456c1784-42ba-40c8-a292-2ff1401f49c5.png" width="70%">
+  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/control_plane.png?raw=true" width="70%">
 </p>
 
 To make the data retrieval process more customizable, we provide a `Sampler` class that allows users to define their own data retrieval and consumption logic. Refer to the [Customize](#customize) section for details.
@@ -70,9 +70,9 @@ This class encapsulates the core interaction logic within the TransferQueue syst
 Currently, we support the following storage backends:
 
 - SimpleStorageUnit: A basic CPU memory storage with minimal data format constraints and easy usability.
-- [MoonCakeStore](https://github.com/kvcache-ai/Mooncake): A high-performance, KV-based hierarchical storage that supports RDMA transport between GPU and DRAM.
 - [Yuanrong](https://gitee.com/openeuler/yuanrong-datasystem): An Ascend native data system that provides hierarchical storage interfaces including HBM/DRAM/SSD.
-- [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html): Ray's new feature that allows Ray to store and pass objects directly between Ray actors.
+- [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) (WIP): A high-performance, KV-based hierarchical storage that supports RDMA transport between GPU and DRAM.
+- [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html) ([WIP](https://github.com/TransferQueue/TransferQueue/pull/108)): Ray's new feature that allows Ray to store and pass objects directly between Ray actors.
 
 Among them, `SimpleStorageUnit` serves as our default storage backend, coordinated by the `AsyncSimpleStorageManager` class. Each storage unit can be deployed on a separate node, allowing for distributed data management.
 
@@ -84,7 +84,7 @@ Among them, `SimpleStorageUnit` serves as our default storage backend, coordinat
 This data structure design is motivated by the computational characteristics of the post-training process, where each training sample is generated in a relayed manner across task pipelines. It provides an accurate addressing capability, which allows fine-grained, concurrent data read/write operations in a streaming manner.
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1758696805154-3817011f-84e6-40d0-a80c-58b7e3e5f6a7.png" width="70%">
+  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/data_plane.png?raw=true" width="70%">
 </p>
 
 ### User Interface: Asynchronous & Synchronous Client
@@ -119,7 +119,7 @@ We will soon release a detailed tutorial and API documentation.
 #### verl
 The primary motivation for integrating TransferQueue to verl now is to **alleviate the data transfer bottleneck of the single controller `RayPPOTrainer`**. Currently, all `DataProto` objects must be routed through `RayPPOTrainer`, resulting in a single point bottleneck of the whole post-training system.
 
-![verl_dataflow_DataProto](https://cdn.nlark.com/yuque/0/2025/jpeg/23208217/1758704289414-bcc54228-716b-4d4a-ad3b-f9ace6d10fcf.jpeg)
+![verl_dataflow_DataProto](https://github.com/TransferQueue/community_doc/blob/main/docs/verl_workflow.jpeg?raw=true)
 
 Leveraging TransferQueue, we separate experience data transfer from metadata dispatch by
 
@@ -127,7 +127,7 @@ Leveraging TransferQueue, we separate experience data transfer from metadata dis
 - Preserving verl's original Dispatch/Collect logic via BatchMeta (maintaining single-controller debuggability)
 - Accelerating data transfer by TransferQueue's distributed storage units
 
-![verl_dataflow_TransferQueue](https://cdn.nlark.com/yuque/0/2025/jpeg/23208217/1758704301666-0807dc06-766c-4a2d-9cde-889a6bb56b34.jpeg)
+![verl_dataflow_TransferQueue](https://github.com/TransferQueue/community_doc/blob/main/docs/verl_workflow_with_tq.jpeg?raw=true)
 
 You may refer to the [recipe](https://github.com/TransferQueue/TransferQueue/tree/dev/recipe/simple_use_case), where we mimic the verl usage in both async & sync scenarios. Official integration to verl is also available now at [verl/pulls/3649](https://github.com/volcengine/verl/pull/3649) (with subsequent PRs to further optimize the integration).
 
@@ -136,7 +136,7 @@ You may refer to the [recipe](https://github.com/TransferQueue/TransferQueue/tre
 Work in progress :)
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1758696840817-14ba4c3b-b96e-4390-ac7c-4ecf7b8c0ac3.png" width="70%">
+  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/tq_streaming_dataloader.png?raw=true" width="70%">
 </p>
 
 <h2 id="quick-start">🚀 Quick Start</h2>
@@ -167,12 +167,12 @@ Follow these steps to build and install:
 <h2 id="performance">📊 Performance</h2>
 
 <p align="center">
-  <img src="https://cdn.nlark.com/yuque/0/2025/png/23208217/1761294403612-76ca20a7-9108-42fc-b3f5-60f84d70f39b.png" width="100%">
+  <img src="https://github.com/TransferQueue/community_doc/blob/main/docs/performance_0.1.1.dev2.png?raw=true" width="100%">
 </p>
 
 > Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
 
-For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/obi4ovmy9wf08zz3?singleDoc#).
+For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/tml8ke0zkgn6roey?singleDoc#).
 
 <h2 id="customize"> 🛠️ Customize TransferQueue</h2>
 

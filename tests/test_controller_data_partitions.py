@@ -66,8 +66,7 @@ def test_data_partition_status():
     print("✓ Consumption status creation works")
 
     # Test marking samples as consumed
-    success = partition.mark_consumed("test_task", [0, 1])
-    assert success
+    partition.mark_consumed("test_task", [0, 1])
     assert consumption_tensor[0] == 1
     assert consumption_tensor[1] == 1
     assert consumption_tensor[2] == 0  # Not marked
@@ -300,13 +299,6 @@ def test_edge_cases_and_error_handling():
     consumption_tensor = partition.get_consumption_status(task_name)
     assert consumption_tensor is not None
     assert consumption_tensor.shape[0] == partition.total_samples_num
-
-    # Mark consumed samples that don't exist yet - this may fail gracefully
-    success = partition.mark_consumed(task_name, [1000])  # Very large index
-    # The current implementation may not handle this gracefully, so we don't assert success
-    print(f"✓ Large index consumption marking result: {success}")
-
-    print("✓ Consumption status edge cases handled correctly")
 
     # Test 4: Production status update error conditions
     # Test with empty lists
