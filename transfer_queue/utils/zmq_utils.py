@@ -150,7 +150,6 @@ class ZMQMessage:
             If TQ_ZERO_COPY_SERIALIZATION is disabled, returns a single-element list containing only the pickled bytes
             through pickle.
         """
-        t1 = time.time()
         logger.info(f"Serializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
         if TQ_ZERO_COPY_SERIALIZATION:
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
@@ -174,20 +173,15 @@ class ZMQMessage:
                 itertools.chain.from_iterable(serialized for _, serialized in nested_tensor_info_and_serialized_tensors)
             )
             serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(double_layer_serialized_tensors))
-            t2 = time.time()
-            logger.warning(f"开启序列化优化，序列化耗时{t2 - t1:6f}")
+
             return [pickled_bytes, pickle.dumps(nested_tensor_info), *serialized_tensors]
         else:
-            x = [pickle.dumps(self)]
-            t2 = time.time()
-            logger.warning(f"关闭序列化优化，序列化耗时{t2 - t1:6f}")
-            return x
+            return [pickle.dumps(self)]
 
     @classmethod
     def deserialize(cls, data: list[bytestr] | bytestr) -> "ZMQMessage":
         """Deserialize a ZMQMessage object from serialized data."""
         logger.info(f"Deserializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
-        t1 = time.time()
         if TQ_ZERO_COPY_SERIALIZATION:
             if isinstance(data, list):
                 # contain tensors
@@ -227,26 +221,17 @@ class ZMQMessage:
                     tensors[i] = torch.nested.as_nested_tensor(single_tensors[current_idx : current_idx + tensor_num])
                     current_idx += tensor_num
 
-            x = _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
-            t2 = time.time()
-            logger.warning(f"开启序列化优化，反序列化耗时{t2 - t1:6f}")
-            return x
+            return _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
         else:
             if isinstance(data, bytestr):
-                x = pickle.loads(data)
-                t2 = time.time()
-                logger.warning(f"关闭序列化优化，反序列化耗时{t2 - t1:6f}")
-                return x
+                return pickle.loads(data)
             elif isinstance(data, list):
                 if len(data) > 1:
                     raise ValueError(
                         f"When TQ_ZERO_COPY_SERIALIZATION is disabled, must have only 1 element in"
                         f" list for deserialization, but got {len(data)}."
                     )
-                x = pickle.loads(data[0])
-                t2 = time.time()
-                logger.warning(f"关闭序列化优化，反序列化耗时{t2 - t1:6f}")
-                return x
+                return pickle.loads(data[0])
             else:
                 raise ValueError(
                     f"When TQ_ZERO_COPY_SERIALIZATION is disabled, input data should be a list of bytestr,"

@@ -326,7 +326,6 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             receiver_id=target_storage_unit,
             body={"local_indexes": local_indexes, "fields": fields},
         )
-
         try:
             await socket.send_multipart(request_msg.serialize())
             messages = await socket.recv_multipart()
