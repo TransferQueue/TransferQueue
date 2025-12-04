@@ -15,11 +15,9 @@
 from .base import TransferQueueStorageManager
 from .factory import TransferQueueStorageManagerFactory
 from .simple_backend_manager import AsyncSimpleStorageManager
-from .ray_kv_manager import RayKVStorageManager
 
 __all__ = [
     "TransferQueueStorageManager",
     "TransferQueueStorageManagerFactory",
     "AsyncSimpleStorageManager",
-    "RayKVStorageManager",
 ]

@@ -26,6 +26,7 @@ from torch import Tensor
 
 from transfer_queue.metadata import BatchMeta
 from transfer_queue.storage.clients.factory import StorageClientFactory
+from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
 
 logger = logging.getLogger(__name__)
@@ -296,6 +297,7 @@ class TransferQueueStorageManager(ABC):
             logger.error(f"[{self.storage_manager_id}]: Exception during __del__: {str(e)}")
 
 
+@TransferQueueStorageManagerFactory.register("KV")
 class KVStorageManager(TransferQueueStorageManager):
     """
     A storage manager that uses a key-value (KV) backend (e.g., YuanRong) to store and retrieve tensor data.
