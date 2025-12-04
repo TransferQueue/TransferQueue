@@ -7,9 +7,8 @@ from tensordict import NonTensorData, TensorDict
 
 from transfer_queue.client import AsyncTransferQueueClient
 from transfer_queue.metadata import BatchMeta, FieldMeta, SampleMeta
-from transfer_queue.storage.managers.base import KVStorageManager
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
-from transfer_queue.storage.managers.ray_kv_manager import RayKVStorageManager
+from transfer_queue.storage.managers.kv_manager import KVStorageManager
 from transfer_queue.utils.zmq_utils import ZMQServerInfo
 
 # Step 1: Mock Controller Role
@@ -37,8 +36,8 @@ def create_mock_controller():
 
 
 # Step 2: Mock Storage Manager (Skip Controller Connect)
-@TransferQueueStorageManagerFactory.register("RAY_MOCK")
-class MockRayKVStorageManager(RayKVStorageManager):
+@TransferQueueStorageManagerFactory.register("KV_MOCK")
+class MockKVStorageManager(KVStorageManager):
     def _connect_to_controller(self):
         pass
 
@@ -120,7 +119,7 @@ async def main():
             "controller_info": controller_info,
         }
 
-        client.initialize_storage_manager("RAY_MOCK", config)
+        client.initialize_storage_manager("KV_MOCK", config)
         print("Storage manager initialized (mocked controller)")
 
         # Step 4: Create Data & Metadata with Non-Tensor Fields
