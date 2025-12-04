@@ -18,7 +18,6 @@ import os
 import pickle
 import socket
 import time
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Optional, TypeAlias
 from uuid import uuid4
@@ -151,38 +150,44 @@ class ZMQMessage:
             If TQ_ZERO_COPY_SERIALIZATION is disabled, returns a single-element list containing only the pickled bytes
             through pickle.
         """
+        t1 = time.time()
         logger.info(f"Serializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
         if TQ_ZERO_COPY_SERIALIZATION:
             pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
 
-            nested_tensor_info = [1 for _ in range(len(tensors))]
-            double_layer_serialized_tensors: list[Sequence[bytestr]] = []
-
-            for i, tensor in enumerate(tensors):
+            # Process tensors and collect nested tensor info efficiently
+            def process_tensor(tensor):
                 if tensor.is_nested and tensor.layout == torch.strided:
                     tensor_list = tensor.unbind()
-                    serialized_inner_tensors: list[Sequence[bytestr]] = [[] for _ in range(len(tensor_list))]
-                    nested_tensor_info[i] = len(tensor_list)  # record number of tensors in nested tensor
-
-                    # encode each single tensor in nested tensor
-                    for j, inner_tensor in enumerate(tensor_list):
-                        serialized_inner_tensors[j] = _encoder.encode(inner_tensor)
-                    double_layer_serialized_tensors.extend(serialized_inner_tensors)
+                    tensor_count = len(tensor_list)
+                    serialized_tensors = [_encoder.encode(inner_tensor) for inner_tensor in tensor_list]
+                    return tensor_count, serialized_tensors
                 else:
-                    x = _encoder.encode(tensor)
-                    double_layer_serialized_tensors.append(x)  # type: ignore[call-overload]
+                    return 1, [_encoder.encode(tensor)]
 
-            # flatten the list
+            # Use map to process all tensors in parallel-like fashion
+            nested_tensor_info_and_serialized_tensors = list(map(process_tensor, tensors))
+
+            # Extract nested_tensor_info and flatten serialized tensors using itertools
+            nested_tensor_info = [info for info, _ in nested_tensor_info_and_serialized_tensors]
+            double_layer_serialized_tensors: list[list[bytestr]] = list(
+                itertools.chain.from_iterable(serialized for _, serialized in nested_tensor_info_and_serialized_tensors)
+            )
             serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(double_layer_serialized_tensors))
-
+            t2 = time.time()
+            logger.warning(f"开启序列化优化，序列化耗时{t2 - t1:6f}")
             return [pickled_bytes, pickle.dumps(nested_tensor_info), *serialized_tensors]
         else:
-            return [pickle.dumps(self)]
+            x = [pickle.dumps(self)]
+            t2 = time.time()
+            logger.warning(f"关闭序列化优化，序列化耗时{t2 - t1:6f}")
+            return x
 
     @classmethod
     def deserialize(cls, data: list[bytestr] | bytestr) -> "ZMQMessage":
         """Deserialize a ZMQMessage object from serialized data."""
         logger.info(f"Deserializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
+        t1 = time.time()
         if TQ_ZERO_COPY_SERIALIZATION:
             if isinstance(data, list):
                 # contain tensors
@@ -198,8 +203,10 @@ class ZMQMessage:
                         f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should "
                         f"be a list containing an even number of elements, but got {len(data)}."
                     )
-                nested_serialized_tensors: list[list[bytestr]] = [
-                    serialized_tensors[i : i + 2] for i in range(0, len(serialized_tensors), 2)
+                # deserializing each single tensor
+                single_tensors: list[torch.Tensor] = [
+                    _decoder.decode(pair)
+                    for pair in zip(serialized_tensors[::2], serialized_tensors[1::2], strict=False)
                 ]
             else:
                 raise ValueError(
@@ -207,13 +214,9 @@ class ZMQMessage:
                 )
 
             tensor_nums = sum(nested_tensor_info)
-            if tensor_nums != len(nested_serialized_tensors):
-                raise ValueError(f"Expecting {tensor_nums} tensors, but got {len(nested_serialized_tensors)}.")
-            single_tensors: list[Optional[torch.Tensor]] = [None] * len(nested_serialized_tensors)
-            for i, serialized_tensor in enumerate(nested_serialized_tensors):
-                single_tensors[i] = _decoder.decode(serialized_tensor)
+            if tensor_nums != len(single_tensors):
+                raise ValueError(f"Expecting {tensor_nums} tensors, but got {len(single_tensors)}.")
 
-            # restore nested tensor
             tensors = [None] * len(nested_tensor_info)
             current_idx = 0
             for i, tensor_num in enumerate(nested_tensor_info):
@@ -221,23 +224,29 @@ class ZMQMessage:
                     tensors[i] = single_tensors[current_idx]
                     current_idx += 1
                 else:
-                    tensors[i] = torch.nested.as_nested_tensor(
-                        [single_tensors[current_idx + j] for j in range(tensor_num)], layout=torch.strided
-                    )
+                    tensors[i] = torch.nested.as_nested_tensor(single_tensors[current_idx : current_idx + tensor_num])
                     current_idx += tensor_num
 
             x = _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
+            t2 = time.time()
+            logger.warning(f"开启序列化优化，反序列化耗时{t2 - t1:6f}")
             return x
         else:
             if isinstance(data, bytestr):
-                return pickle.loads(data)
+                x = pickle.loads(data)
+                t2 = time.time()
+                logger.warning(f"关闭序列化优化，反序列化耗时{t2 - t1:6f}")
+                return x
             elif isinstance(data, list):
                 if len(data) > 1:
                     raise ValueError(
                         f"When TQ_ZERO_COPY_SERIALIZATION is disabled, must have only 1 element in"
                         f" list for deserialization, but got {len(data)}."
                     )
-                return pickle.loads(data[0])
+                x = pickle.loads(data[0])
+                t2 = time.time()
+                logger.warning(f"关闭序列化优化，反序列化耗时{t2 - t1:6f}")
+                return x
             else:
                 raise ValueError(
                     f"When TQ_ZERO_COPY_SERIALIZATION is disabled, input data should be a list of bytestr,"
