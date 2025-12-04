@@ -7,8 +7,8 @@ from tensordict import TensorDict
 
 from transfer_queue.client import TransferQueueClient
 from transfer_queue.metadata import BatchMeta, FieldMeta, SampleMeta
-from transfer_queue.storage.managers.base import KVStorageManager
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
+from transfer_queue.storage.managers.kv_manager import KVStorageManager
 from transfer_queue.utils.zmq_utils import ZMQServerInfo
 
 TEST_CONFIGS: list[tuple[tuple[int, int], torch.dtype]] = [

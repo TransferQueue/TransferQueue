@@ -2,8 +2,8 @@ import logging
 import os
 from typing import Any
 
-from transfer_queue.storage.managers.base import KVStorageManager
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
+from transfer_queue.storage.managers.kv_manager import KVStorageManager
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))

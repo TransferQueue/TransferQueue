@@ -8,7 +8,7 @@ from transfer_queue.metadata import (
     FieldMeta,
     SampleMeta,
 )
-from transfer_queue.storage.managers.base import KVStorageManager
+from transfer_queue.storage.managers.kv_manager import KVStorageManager
 
 
 class Test(unittest.TestCase):
