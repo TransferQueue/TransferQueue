@@ -133,8 +133,8 @@ class MsgpackDecoder:
         if not buffer:  # torch.frombuffer doesn't like empty buffers
             assert 0 in shape
             return torch.empty(shape, dtype=torch_dtype)
-        # Create uint8 array
-        arr = torch.frombuffer(buffer, dtype=torch.uint8)
+        # Create uint8 array and convert read-only buffer into writable bytearray
+        arr = torch.frombuffer(bytearray(buffer), dtype=torch.uint8)
         # Convert back to proper shape & type
         return arr.view(torch_dtype).view(shape)
 
