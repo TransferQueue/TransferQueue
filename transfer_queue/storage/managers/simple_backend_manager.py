@@ -222,7 +222,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         tensordict_data = TensorDict(
             {
                 field: (
-                    torch.nested.as_nested_tensor(transfer_data["field_data"][field], layout=torch.jagged)
+                    torch.nested.as_nested_tensor(transfer_data["field_data"][field])
                     if transfer_data["field_data"][field]
                     and all(isinstance(x, torch.Tensor) for x in transfer_data["field_data"][field])
                     else NonTensorStack(*transfer_data["field_data"][field])
@@ -239,9 +239,10 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         )
 
         try:
-            await socket.send(request_msg.serialize())
-            serialized = await socket.recv()
-            response_msg = ZMQMessage.deserialize(serialized)
+            data = request_msg.serialize()
+            await socket.send_multipart(data, copy=False)
+            messages = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(messages)
 
             if response_msg.request_type != ZMQRequestType.PUT_DATA_RESPONSE:
                 raise RuntimeError(
@@ -298,12 +299,12 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         with limit_pytorch_auto_parallel_threads():
             tensor_data = {
                 field: (
-                    torch.stack(torch.nested.as_nested_tensor(v, layout=torch.jagged).unbind())
+                    torch.stack(torch.nested.as_nested_tensor(v).unbind())
                     if v
                     and all(isinstance(item, torch.Tensor) for item in v)
                     and all(item.shape == v[0].shape for item in v)
                     else (
-                        torch.nested.as_nested_tensor(v, layout=torch.jagged)
+                        torch.nested.as_nested_tensor(v)
                         if v and all(isinstance(item, torch.Tensor) for item in v)
                         else NonTensorStack(*v)
                     )
@@ -325,11 +326,10 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             receiver_id=target_storage_unit,
             body={"local_indexes": local_indexes, "fields": fields},
         )
-
         try:
-            await socket.send(request_msg.serialize())
-            serialized = await socket.recv()
-            response_msg = ZMQMessage.deserialize(serialized)
+            await socket.send_multipart(request_msg.serialize())
+            messages = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(messages)
             logger.info(
                 f"[{self.storage_manager_id}]: get data response from storage unit "
                 f"{target_storage_unit}: {response_msg}"
@@ -383,9 +383,9 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 body={"local_indexes": local_indexes},
             )
 
-            await socket.send(request_msg.serialize())
-            serialized_msg = await socket.recv()
-            response_msg = ZMQMessage.deserialize(serialized_msg)
+            await socket.send_multipart(request_msg.serialize())
+            messages = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(messages)
 
             if response_msg.request_type != ZMQRequestType.CLEAR_DATA_RESPONSE:
                 raise RuntimeError(

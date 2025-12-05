@@ -15,7 +15,6 @@
 
 # This implementation is inspired by https://github.com/vllm-project/vllm/blob/main/vllm/v1/serial_utils.py
 
-import os
 import pickle
 from collections.abc import Sequence
 from inspect import isclass
@@ -27,7 +26,6 @@ import torch
 import zmq
 from msgspec import msgpack
 
-TQ_MSGPACK_ZERO_COPY_THRESHOLD = int(os.environ.get("TQ_MSGPACK_ZERO_COPY_THRESHOLD", 256))
 CUSTOM_TYPE_PICKLE = 1
 CUSTOM_TYPE_CLOUDPICKLE = 2
 CUSTOM_TYPE_RAW_VIEW = 3
@@ -46,15 +44,12 @@ class MsgpackEncoder:
     via dedicated messages. Note that this is a per-tensor limit.
     """
 
-    def __init__(self, size_threshold: Optional[int] = None):
-        if size_threshold is None:
-            size_threshold = TQ_MSGPACK_ZERO_COPY_THRESHOLD
+    def __init__(self):
         self.encoder = msgpack.Encoder(enc_hook=self.enc_hook)
         # This is used as a local stash of buffers that we can then access from
         # our custom `msgspec` hook, `enc_hook`. We don't have a way to
         # pass custom data to the hook otherwise.
         self.aux_buffers: Optional[list[bytestr]] = None
-        self.size_threshold = size_threshold
 
     def encode(self, obj: Any) -> Sequence[bytestr]:
         try:
@@ -92,13 +87,8 @@ class MsgpackEncoder:
         assert self.aux_buffers is not None
         # view the tensor as a contiguous 1D array of bytes
         arr = obj.flatten().contiguous().view(torch.uint8).numpy()
-        if obj.nbytes < self.size_threshold:
-            # Smaller tensors are encoded inline, just like ndarrays.
-            data = msgpack.Ext(CUSTOM_TYPE_RAW_VIEW, arr.data)
-        else:
-            # Otherwise encode index of backing buffer to avoid copy.
-            data = len(self.aux_buffers)
-            self.aux_buffers.append(arr.data)
+        data = len(self.aux_buffers)
+        self.aux_buffers.append(arr.data)
         dtype = str(obj.dtype).removeprefix("torch.")
         return dtype, obj.shape, data
 
@@ -143,8 +133,8 @@ class MsgpackDecoder:
         if not buffer:  # torch.frombuffer doesn't like empty buffers
             assert 0 in shape
             return torch.empty(shape, dtype=torch_dtype)
-        # Create uint8 array
-        arr = torch.frombuffer(buffer, dtype=torch.uint8)
+        # Create uint8 array and convert read-only buffer into writable bytearray
+        arr = torch.frombuffer(bytearray(buffer), dtype=torch.uint8)
         # Convert back to proper shape & type
         return arr.view(torch_dtype).view(shape)
 

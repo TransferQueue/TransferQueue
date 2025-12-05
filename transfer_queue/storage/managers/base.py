@@ -139,7 +139,7 @@ class TransferQueueStorageManager(ABC):
 
             if (socks.get(self.controller_handshake_socket, 0) & zmq.POLLIN) and pending_connection:
                 try:
-                    response_msg = ZMQMessage.deserialize(self.controller_handshake_socket.recv())
+                    response_msg = ZMQMessage.deserialize(self.controller_handshake_socket.recv_multipart())
 
                     if response_msg.request_type == ZMQRequestType.HANDSHAKE_ACK:
                         is_connected = True
@@ -165,8 +165,7 @@ class TransferQueueStorageManager(ABC):
                 "storage_manager_type": self.__class__.__name__,
             },
         ).serialize()
-
-        self.controller_handshake_socket.send(request_msg)
+        self.controller_handshake_socket.send_multipart(request_msg)
         logger.debug(
             f"[{self.storage_manager_id}]: Send handshake request from storage manager id "
             f"{self.storage_manager_id} to controller id #{self.controller_info.id} successfully."
@@ -215,7 +214,7 @@ class TransferQueueStorageManager(ABC):
                 },
             ).serialize()
 
-            self.data_status_update_socket.send(request_msg)
+            self.data_status_update_socket.send_multipart(request_msg)
             logger.debug(
                 f"[{self.storage_manager_id}]: Send data status update request "
                 f"from storage manager id #{self.storage_manager_id} "
@@ -232,7 +231,7 @@ class TransferQueueStorageManager(ABC):
                 },
             ).serialize()
 
-            self.data_status_update_socket.send(request_msg)
+            self.data_status_update_socket.send_multipart(request_msg)
 
         # Make sure controller successfully receives data status update information.
         response_received: bool = False
@@ -245,7 +244,7 @@ class TransferQueueStorageManager(ABC):
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
             if self.data_status_update_socket in socks:
-                response_msg = ZMQMessage.deserialize(self.data_status_update_socket.recv())
+                response_msg = ZMQMessage.deserialize(self.data_status_update_socket.recv_multipart())
 
                 if response_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE_ACK:
                     response_received = True

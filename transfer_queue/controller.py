@@ -1015,7 +1015,9 @@ class TransferQueueController:
 
             if self.handshake_socket in socks:
                 try:
-                    identity, serialized_msg = self.handshake_socket.recv_multipart()
+                    messages = self.handshake_socket.recv_multipart()
+                    identity = messages.pop(0)
+                    serialized_msg = messages
                     request_msg = ZMQMessage.deserialize(serialized_msg)
 
                     if request_msg.request_type == ZMQRequestType.HANDSHAKE:
@@ -1027,7 +1029,7 @@ class TransferQueueController:
                             sender_id=self.controller_id,
                             body={},
                         ).serialize()
-                        self.handshake_socket.send_multipart([identity, response_msg])
+                        self.handshake_socket.send_multipart([identity, *response_msg])
 
                         # Track new connections
                         if storage_manager_id not in self._connected_storage_managers:
@@ -1073,7 +1075,9 @@ class TransferQueueController:
     def _process_request(self):
         """Main request processing loop - adapted for partition-based operations."""
         while True:
-            identity, serialized_msg = self.request_handle_socket.recv_multipart()
+            messages = self.request_handle_socket.recv_multipart()
+            identity = messages.pop(0)
+            serialized_msg = messages
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.GET_META:
@@ -1155,12 +1159,14 @@ class TransferQueueController:
                         "consumed": consumed,
                     },
                 )
-            self.request_handle_socket.send_multipart([identity, response_msg.serialize()])
+            self.request_handle_socket.send_multipart([identity, *response_msg.serialize()])
 
     def _update_data_status(self):
         """Process data status update messages from storage units - adapted for partitions."""
         while True:
-            identity, serialized_msg = self.data_status_update_socket.recv_multipart()
+            messages = self.data_status_update_socket.recv_multipart()
+            identity = messages.pop(0)
+            serialized_msg = messages
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
@@ -1189,7 +1195,7 @@ class TransferQueueController:
                         "success": success,
                     },
                 )
-                self.data_status_update_socket.send_multipart([identity, response_msg.serialize()])
+                self.data_status_update_socket.send_multipart([identity, *response_msg.serialize()])
 
     def get_zmq_server_info(self) -> ZMQServerInfo:
         """Get ZMQ server connection information."""
