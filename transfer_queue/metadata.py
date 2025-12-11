@@ -268,6 +268,9 @@ class BatchMeta:
 
         Args:
             field_names (list[str]): List of field names to retain.
+
+        Returns:
+            BatchMeta: A new BatchMeta instance containing only the specified fields from all samples.
         """
         # select fields for each SampleMeta
         new_samples = [sample.select_fields(field_names=field_names) for sample in self.samples]
