@@ -270,7 +270,7 @@ class BatchMeta:
         new_samples = [sample.select_fields(field_names=field_names) for sample in self.samples]
 
         # construct new BatchMeta instance
-        new_batch_meta = BatchMeta(samples=new_samples, extra_info=self.extra_info)
+        new_batch_meta = BatchMeta(samples=new_samples, extra_info=self.extra_info.copy())
 
         return new_batch_meta
 
