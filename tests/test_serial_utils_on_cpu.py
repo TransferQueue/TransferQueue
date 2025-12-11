@@ -75,6 +75,8 @@ def test_zmq_msg_serialization():
     assert decoded_msg.request_type == msg.request_type
     assert torch.allclose(decoded_msg.body["data"]["numpy_array"], msg.body["data"]["numpy_array"])
     assert torch.allclose(decoded_msg.body["data"]["normal_tensor"], msg.body["data"]["normal_tensor"])
+    assert msg.body["data"]["nested_tensor"].layout == decoded_msg.body["data"]["nested_tensor"].layout
+    assert msg.body["data"]["jagged_tensor"].layout == decoded_msg.body["data"]["jagged_tensor"].layout
     for i in range(len(msg.body["data"]["nested_tensor"].unbind())):
         assert torch.allclose(
             decoded_msg.body["data"]["nested_tensor"][i],
@@ -118,4 +120,5 @@ def test_tensor_serialization_with_views(dtype, make_view):
     deserialized = decoder.decode(serialized)
 
     assert deserialized.shape == view.shape
+    assert deserialized.dtype == view.dtype
     assert torch.allclose(view, deserialized)

@@ -135,6 +135,8 @@ class ZMQMessage:
             timestamp=time.time(),
         )
 
+    # TODO: split the zero copy optimization from zmq_utils.py to serial_utils.py.
+    #       We hope to provide a general serialization util for tensordict (both device-side and cpu-side)
     def serialize(
         self,
     ) -> list[bytestr]:

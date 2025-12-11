@@ -85,6 +85,7 @@ class MsgpackEncoder:
 
     def _encode_tensor(self, obj: torch.Tensor) -> tuple[str, list[tensorenc]] | tensorenc:
         assert self.aux_buffers is not None
+        assert obj.device.type == "cpu", f"MsgpackEncoder only supports CPU tensors, got {obj.device}"
         # view the tensor as a contiguous 1D array of bytes
         arr = obj.flatten().contiguous().view(torch.uint8).numpy()
         data = len(self.aux_buffers)
