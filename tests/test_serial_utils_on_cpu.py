@@ -90,11 +90,11 @@ def test_zmq_msg_serialization():
 @pytest.mark.parametrize(
     "make_view",
     [
-        lambda x: x[:, :5],  # 前半列
-        lambda x: x[::2],  # 跨步取行
-        lambda x: x[..., 1:],  # 去掉第一个列
-        lambda x: x.transpose(0, 1),  # 维度交换（通常非 contiguous）
-        lambda x: x[1:-1, 2:8:2],  # 组合切片
+        lambda x: x[:, :5],
+        lambda x: x[::2],
+        lambda x: x[..., 1:],
+        lambda x: x.transpose(0, 1),
+        lambda x: x[1:-1, 2:8:2],
     ],
 )
 @pytest.mark.parametrize(
