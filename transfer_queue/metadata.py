@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
 
+# TODO: Add UT for metadata operations
 @dataclass
 class FieldMeta:
     """Records the metadata of a single data field (name, dtype, shape, etc.)."""
@@ -261,6 +262,12 @@ class BatchMeta:
         chunk_list = []
         n = len(self.samples)
 
+        if n < chunks:
+            logger.warning(
+                f"Chunk size {chunks} > number of samples in BatchMeta {n}, this will return some "
+                f"empty BatchMeta chunks."
+            )
+
         # Calculate the base size and remainder of each chunk
         base_size = n // chunks
         remainder = n % chunks
@@ -277,7 +284,7 @@ class BatchMeta:
         return chunk_list
 
     @classmethod
-    def concat(cls, data: list["BatchMeta"], validate: bool = True) -> Optional["BatchMeta"]:
+    def concat(cls, data: list["BatchMeta"], validate: bool = True) -> "BatchMeta":
         """
         Concatenate multiple BatchMeta chunks into one large batch.
 
@@ -292,7 +299,15 @@ class BatchMeta:
             ValueError: If validation fails (e.g., field names do not match)
         """
         if not data:
-            return None
+            logger.warning("Try to concat empty BatchMeta chunks. Returning empty BatchMeta.")
+            return BatchMeta(samples=[], extra_info={})
+
+        # skip empty chunks
+        data = [chunk for chunk in data if chunk and len(chunk.samples) > 0]
+
+        if len(data) == 0:
+            logger.warning("No valid BatchMeta chunks to concatenate. Returning empty BatchMeta.")
+            return BatchMeta(samples=[], extra_info={})
 
         if validate:
             base_fields = data[0].field_names
