@@ -365,7 +365,8 @@ class AsyncTransferQueueClient:
                 "Call initialize_storage_manager() before performing storage operations."
             )
 
-        if not metadata or metadata.size == 0:
+        if not metadata or metadata.size == 0 or len(metadata._field_names) == 0:
+            logger.warning(f"[{self.client_id}]: Empty BatchMeta provided to get_data. Returning empty TensorDict.")
             return TensorDict({}, batch_size=0)
 
         results = await self.storage_manager.get_data(metadata)
