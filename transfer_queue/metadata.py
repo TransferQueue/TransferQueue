@@ -110,6 +110,9 @@ class SampleMeta:
 
         Args:
             field_names (list[str]): List of field names to retain.
+
+        Returns:
+            SampleMeta: A new SampleMeta instance containing only the specified fields.
         """
         selected_fields = {name: self.fields[name] for name in field_names if name in self.fields}
 
