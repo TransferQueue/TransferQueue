@@ -103,6 +103,26 @@ class SampleMeta:
         object.__setattr__(self, "_is_ready", all(field.is_ready for field in self.fields.values()))
         return self
 
+    def select_fields(self, field_names: list[str]) -> "SampleMeta":
+        """
+        Select specific fields from this sample.
+        This will construct a new SampleMeta instance containing only the specified fields.
+
+        Args:
+            field_names (list[str]): List of field names to retain.
+
+        Returns:
+            SampleMeta: A new SampleMeta instance containing only the specified fields.
+        """
+        selected_fields = {name: self.fields[name] for name in field_names if name in self.fields}
+
+        # construct new SampleMeta instance
+        selected_sample_meta = SampleMeta(
+            fields=selected_fields, partition_id=self.partition_id, global_index=self.global_index
+        )
+
+        return selected_sample_meta
+
     def union(self, other: "SampleMeta", validate: bool = True) -> "SampleMeta":
         """
         Create a union of this sample's fields with another sample's fields.
@@ -160,8 +180,11 @@ class BatchMeta:
 
             object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
 
-            # assume all samples have the same fields.
-            object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
+            # check if all samples have the same field names
+            first_sample_field_names = sorted(self.samples[0].field_names)
+            if not all(sorted(sample.field_names) == first_sample_field_names for sample in self.samples):
+                raise ValueError("All samples in BatchMeta must have the same field_names.")
+            object.__setattr__(self, "_field_names", first_sample_field_names)
         else:
             object.__setattr__(self, "_global_indexes", [])
             object.__setattr__(self, "_field_names", [])
@@ -237,6 +260,25 @@ class BatchMeta:
             object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
             object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
         return self
+
+    def select_fields(self, field_names: list[str]) -> "BatchMeta":
+        """
+        Select specific fields from all samples in this batch.
+        This will construct a new BatchMeta instance containing only the specified fields.
+
+        Args:
+            field_names (list[str]): List of field names to retain.
+
+        Returns:
+            BatchMeta: A new BatchMeta instance containing only the specified fields from all samples.
+        """
+        # select fields for each SampleMeta
+        new_samples = [sample.select_fields(field_names=field_names) for sample in self.samples]
+
+        # construct new BatchMeta instance
+        new_batch_meta = BatchMeta(samples=new_samples, extra_info=self.extra_info.copy())
+
+        return new_batch_meta
 
     def __len__(self) -> int:
         """Return the number of samples in this batch."""

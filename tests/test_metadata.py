@@ -111,6 +111,60 @@ class TestSampleMeta:
         assert "field2" in sample.fields
         assert sample.is_ready is True
 
+    def test_sample_meta_select_fields(self):
+        """Example: Select specific fields from a sample."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+            "field3": FieldMeta(name="field3", dtype=torch.bool, shape=(4,)),
+        }
+        sample = SampleMeta(partition_id="partition_0", global_index=0, fields=fields)
+
+        # Select only field1 and field3
+        selected_sample = sample.select_fields(["field1", "field3"])
+
+        assert "field1" in selected_sample.fields
+        assert "field3" in selected_sample.fields
+        assert "field2" not in selected_sample.fields
+        # Original sample is unchanged
+        assert len(sample.fields) == 3
+        # Selected sample has correct metadata
+        assert selected_sample.fields["field1"].dtype == torch.float32
+        assert selected_sample.fields["field1"].shape == (2,)
+        assert selected_sample.global_index == 0
+        assert selected_sample.partition_id == "partition_0"
+
+    def test_sample_meta_select_fields_with_nonexistent_fields(self):
+        """Example: Select fields ignores non-existent field names."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+        }
+        sample = SampleMeta(partition_id="partition_0", global_index=0, fields=fields)
+
+        # Try to select a field that doesn't exist
+        selected_sample = sample.select_fields(["field1", "nonexistent_field"])
+
+        # Only existing field is selected
+        assert "field1" in selected_sample.fields
+        assert "nonexistent_field" not in selected_sample.fields
+        assert "field2" not in selected_sample.fields
+
+    def test_sample_meta_select_fields_empty_list(self):
+        """Example: Select with empty field list returns sample with no fields."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+        }
+        sample = SampleMeta(partition_id="partition_0", global_index=0, fields=fields)
+
+        # Select with empty list
+        selected_sample = sample.select_fields([])
+
+        assert len(selected_sample.fields) == 0
+        assert selected_sample.global_index == 0
+        assert selected_sample.partition_id == "partition_0"
+
 
 class TestBatchMeta:
     """BatchMeta learning examples - Core Operations."""
@@ -132,6 +186,21 @@ class TestBatchMeta:
         assert len(chunks[0]) == 4  # First chunk gets extra element
         assert len(chunks[1]) == 3
         assert len(chunks[2]) == 3
+
+    def test_batch_meta_init_validation_error_different_field_names(self):
+        """Example: Init validation catches samples with different field names."""
+        # Create first sample with field1
+        fields1 = {"field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,))}
+        sample1 = SampleMeta(partition_id="partition_0", global_index=0, fields=fields1)
+
+        # Create second sample with field2
+        fields2 = {"field2": FieldMeta(name="field2", dtype=torch.float32, shape=(2,))}
+        sample2 = SampleMeta(partition_id="partition_0", global_index=1, fields=fields2)
+
+        # Attempt to create BatchMeta with samples having different field names
+        with pytest.raises(ValueError) as exc_info:
+            BatchMeta(samples=[sample1, sample2])
+        assert "All samples in BatchMeta must have the same field_names." in str(exc_info.value)
 
     def test_batch_meta_concat(self):
         """Example: Concatenate multiple batches."""
@@ -354,6 +423,117 @@ class TestBatchMeta:
             assert "new_field1" in sample.fields
             assert "new_field2" in sample.fields
             assert sample.is_ready is True
+
+    def test_batch_meta_select_fields(self):
+        """Example: Select specific fields from all samples in a batch."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+            "field3": FieldMeta(name="field3", dtype=torch.bool, shape=(4,)),
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples, extra_info={"test_key": "test_value"})
+
+        # Select only field1 and field3
+        selected_batch = batch.select_fields(["field1", "field3"])
+
+        # Check all samples have correct fields
+        assert len(selected_batch) == 2
+        for sample in selected_batch.samples:
+            assert "field1" in sample.fields
+            assert "field3" in sample.fields
+            assert "field2" not in sample.fields
+        # Original batch is unchanged
+        assert len(batch.samples[0].fields) == 3
+        # Extra info is preserved
+        assert selected_batch.extra_info["test_key"] == "test_value"
+        # Global indexes are preserved
+        assert selected_batch.global_indexes == [0, 1]
+
+    def test_batch_meta_select_fields_with_nonexistent_fields(self):
+        """Example: Select fields ignores non-existent field names in batch."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples)
+
+        # Try to select fields including non-existent ones
+        selected_batch = batch.select_fields(["field1", "nonexistent_field"])
+
+        # Only existing fields are selected
+        for sample in selected_batch.samples:
+            assert "field1" in sample.fields
+            assert "nonexistent_field" not in sample.fields
+            assert "field2" not in sample.fields
+
+    def test_batch_meta_select_fields_empty_list(self):
+        """Example: Select with empty field list returns batch with no fields."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples)
+
+        # Select with empty list
+        selected_batch = batch.select_fields([])
+
+        assert len(selected_batch) == 2
+        for sample in selected_batch.samples:
+            assert len(sample.fields) == 0
+        # Global indexes are preserved
+        assert selected_batch.global_indexes == [0, 1]
+
+    def test_batch_meta_select_fields_single_sample(self):
+        """Example: Select fields works correctly for batch with single sample."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+        }
+        sample = SampleMeta(partition_id="partition_0", global_index=0, fields=fields)
+        batch = BatchMeta(samples=[sample])
+
+        # Select only field2
+        selected_batch = batch.select_fields(["field2"])
+
+        assert len(selected_batch) == 1
+        assert "field2" in selected_batch.samples[0].fields
+        assert "field1" not in selected_batch.samples[0].fields
+
+    def test_batch_meta_select_fields_preserves_field_metadata(self):
+        """Example: Selected fields preserve their original metadata."""
+        fields = {
+            "field1": FieldMeta(
+                name="field1", dtype=torch.float32, shape=(2, 3), production_status=ProductionStatus.READY_FOR_CONSUME
+            ),
+            "field2": FieldMeta(
+                name="field2", dtype=torch.int64, shape=(5,), production_status=ProductionStatus.NOT_PRODUCED
+            ),
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples)
+
+        # Select field1
+        selected_batch = batch.select_fields(["field1"])
+        selected_field = selected_batch.samples[0].fields["field1"]
+
+        assert selected_field.dtype == torch.float32
+        assert selected_field.shape == (2, 3)
+        assert selected_field.production_status == ProductionStatus.READY_FOR_CONSUME
+        assert selected_field.name == "field1"
 
     def test_batch_meta_extra_info_operations(self):
         """Example: Extra info management operations."""
