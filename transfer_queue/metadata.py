@@ -261,6 +261,12 @@ class BatchMeta:
         chunk_list = []
         n = len(self.samples)
 
+        if n < chunks:
+            logger.warning(
+                f"Chunk size {chunks} > number of samples in BatchMeta {n}, this will return some "
+                f"empty BatchMeta chunks."
+            )
+
         # Calculate the base size and remainder of each chunk
         base_size = n // chunks
         remainder = n % chunks
@@ -292,6 +298,14 @@ class BatchMeta:
             ValueError: If validation fails (e.g., field names do not match)
         """
         if not data:
+            logger.warning("Try to concat empty BatchMeta chunks. Returning None.")
+            return None
+
+        # skip empty chunks
+        data = [chunk for chunk in data if chunk and len(chunk.samples) > 0]
+
+        if len(data) == 0:
+            logger.warning("No valid BatchMeta chunks to concatenate. Returning None.")
             return None
 
         if validate:
