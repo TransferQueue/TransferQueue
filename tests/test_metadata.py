@@ -187,6 +187,21 @@ class TestBatchMeta:
         assert len(chunks[1]) == 3
         assert len(chunks[2]) == 3
 
+    def test_batch_meta_init_validation_error_different_field_names(self):
+        """Example: Init validation catches samples with different field names."""
+        # Create first sample with field1
+        fields1 = {"field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,))}
+        sample1 = SampleMeta(partition_id="partition_0", global_index=0, fields=fields1)
+
+        # Create second sample with field2
+        fields2 = {"field2": FieldMeta(name="field2", dtype=torch.float32, shape=(2,))}
+        sample2 = SampleMeta(partition_id="partition_0", global_index=1, fields=fields2)
+
+        # Attempt to create BatchMeta with samples having different field names
+        with pytest.raises(ValueError) as exc_info:
+            BatchMeta(samples=[sample1, sample2])
+        assert "All samples in BatchMeta must have the same field_names." in str(exc_info.value)
+
     def test_batch_meta_concat(self):
         """Example: Concatenate multiple batches."""
         fields = {
