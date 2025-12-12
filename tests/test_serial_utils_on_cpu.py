@@ -410,9 +410,7 @@ def test_zero_copy_serialization_dtype_preservation(enable_zero_copy):
 # ============================================================================
 # Edge Case and Error Handling Tests
 # ============================================================================
-
-
-def test_serialization_with_extreme_shapes(enable_zero_copy):
+def test_serialization_with_extreme_shapes():
     """Test serialization with extreme tensor shapes."""
     encoder = MsgpackEncoder()
     decoder = MsgpackDecoder(torch.Tensor)
