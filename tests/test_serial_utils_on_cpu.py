@@ -46,7 +46,7 @@ def test_tensor_serialization(dtype, enable_zero_copy):
         deserialized = decoder.decode(serialized)
         assert torch.allclose(tensor, deserialized)
         assert deserialized.shape == tensor.shape
-        assert isinstance(deserialized.shape, torch.Size | tuple)
+        assert isinstance(deserialized.shape, torch.Size)
 
 
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
@@ -114,23 +114,21 @@ def test_zmq_msg_serialization(enable_zero_copy):
         torch.float32,
     ],
 )
-@pytest.mark.parametrize("enable_zero_copy", [True, False])
-def test_tensor_serialization_with_views(dtype, make_view, enable_zero_copy):
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
-        encoder = MsgpackEncoder()
-        decoder = MsgpackDecoder(torch.Tensor)
+def test_tensor_serialization_with_views(dtype, make_view):
+    encoder = MsgpackEncoder()
+    decoder = MsgpackDecoder(torch.Tensor)
 
-        base = torch.randn(16, 16, dtype=dtype)
-        view = make_view(base)
+    base = torch.randn(16, 16, dtype=dtype)
+    view = make_view(base)
 
-        print("is_view_like:", view._base is not None, "is_contiguous:", view.is_contiguous())
+    print("is_view_like:", view._base is not None, "is_contiguous:", view.is_contiguous())
 
-        serialized = encoder.encode(view)
-        deserialized = decoder.decode(serialized)
+    serialized = encoder.encode(view)
+    deserialized = decoder.decode(serialized)
 
-        assert deserialized.shape == view.shape
-        assert deserialized.dtype == view.dtype
-        assert torch.allclose(view, deserialized)
+    assert deserialized.shape == view.shape
+    assert deserialized.dtype == view.dtype
+    assert torch.allclose(view, deserialized)
 
 
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
@@ -414,42 +412,38 @@ def test_zero_copy_serialization_dtype_preservation(enable_zero_copy):
 # ============================================================================
 
 
-@pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_serialization_with_extreme_shapes(enable_zero_copy):
     """Test serialization with extreme tensor shapes."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
-        encoder = MsgpackEncoder()
-        decoder = MsgpackDecoder(torch.Tensor)
+    encoder = MsgpackEncoder()
+    decoder = MsgpackDecoder(torch.Tensor)
 
-        # Very thin tensors
-        thin_tensor = torch.randn(1000, 1)
-        serialized = encoder.encode(thin_tensor)
-        deserialized = decoder.decode(serialized)
-        assert torch.allclose(thin_tensor, deserialized)
+    # Very thin tensors
+    thin_tensor = torch.randn(1000, 1)
+    serialized = encoder.encode(thin_tensor)
+    deserialized = decoder.decode(serialized)
+    assert torch.allclose(thin_tensor, deserialized)
 
-        # Very wide tensors
-        wide_tensor = torch.randn(1, 1000)
-        serialized = encoder.encode(wide_tensor)
-        deserialized = decoder.decode(serialized)
-        assert torch.allclose(wide_tensor, deserialized)
+    # Very wide tensors
+    wide_tensor = torch.randn(1, 1000)
+    serialized = encoder.encode(wide_tensor)
+    deserialized = decoder.decode(serialized)
+    assert torch.allclose(wide_tensor, deserialized)
 
 
-@pytest.mark.parametrize("enable_zero_copy", [True, False])
-def test_serialization_memory_contiguity(enable_zero_copy):
+def test_serialization_memory_contiguity():
     """Test that serialized tensors maintain proper memory layout."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
-        encoder = MsgpackEncoder()
-        decoder = MsgpackDecoder(torch.Tensor)
+    encoder = MsgpackEncoder()
+    decoder = MsgpackDecoder(torch.Tensor)
 
-        # Create non-contiguous tensor
-        base = torch.randn(10, 10)
-        non_contiguous = base[::2, ::2]
+    # Create non-contiguous tensor
+    base = torch.randn(10, 10)
+    non_contiguous = base[::2, ::2]
 
-        serialized = encoder.encode(non_contiguous)
-        deserialized = decoder.decode(serialized)
+    serialized = encoder.encode(non_contiguous)
+    deserialized = decoder.decode(serialized)
 
-        assert deserialized.shape == non_contiguous.shape
-        assert torch.allclose(non_contiguous, deserialized)
+    assert deserialized.shape == non_contiguous.shape
+    assert torch.allclose(non_contiguous, deserialized)
 
 
 @pytest.mark.parametrize("batch_size", [0, 1, 100])
@@ -491,26 +485,24 @@ def test_tensordict_boundary_batch_sizes(batch_size, enable_zero_copy):
             assert torch.allclose(decoded_msg.body["data"]["data"], td["data"])
 
 
-@pytest.mark.parametrize("enable_zero_copy", [True, False])
-def test_serialization_with_special_values(enable_zero_copy):
+def test_serialization_with_special_values():
     """Test serialization with special float values."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
-        encoder = MsgpackEncoder()
-        decoder = MsgpackDecoder(torch.Tensor)
+    encoder = MsgpackEncoder()
+    decoder = MsgpackDecoder(torch.Tensor)
 
-        # Test with special values
-        special_tensor = torch.tensor([[float("inf"), float("-inf"), float("nan")], [0.0, -0.0, 1e-10]])
+    # Test with special values
+    special_tensor = torch.tensor([[float("inf"), float("-inf"), float("nan")], [0.0, -0.0, 1e-10]])
 
-        serialized = encoder.encode(special_tensor)
-        deserialized = decoder.decode(serialized)
+    serialized = encoder.encode(special_tensor)
+    deserialized = decoder.decode(serialized)
 
-        # Check regular values
-        assert torch.allclose(deserialized[1, :], special_tensor[1, :])
-        # Check NaN (can't use allclose for NaN)
-        assert torch.isnan(deserialized[0, 2]) and torch.isnan(special_tensor[0, 2])
-        # Check infinities
-        assert torch.isinf(deserialized[0, 0]) and deserialized[0, 0] > 0
-        assert torch.isinf(deserialized[0, 1]) and deserialized[0, 1] < 0
+    # Check regular values
+    assert torch.allclose(deserialized[1, :], special_tensor[1, :])
+    # Check NaN (can't use allclose for NaN)
+    assert torch.isnan(deserialized[0, 2]) and torch.isnan(special_tensor[0, 2])
+    # Check infinities
+    assert torch.isinf(deserialized[0, 0]) and deserialized[0, 0] > 0
+    assert torch.isinf(deserialized[0, 1]) and deserialized[0, 1] < 0
 
 
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
