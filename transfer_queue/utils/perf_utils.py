@@ -19,8 +19,8 @@ class IntervalPerfMonitor:
     counts, rates, and timing metrics (average, max, min) per operation type.
 
     Usage:
-        monitor = IntervalPerfMonitor("MyComponent")
-        with monitor.measure("upload"):
+        monitor = IntervalPerfMonitor("Your Class")
+        with monitor.measure("method_name"):
             # perform upload operation
 
     At each interval (controlled by TQ_PERF_LOG_FLUSH_INTERVAL), the monitor logs aggregated
@@ -29,6 +29,7 @@ class IntervalPerfMonitor:
     Args:
         caller_name (str): Name of the component or caller using the monitor, included in logs.
     """
+
     def __init__(self, caller_name: str):
         self.caller_name = caller_name
         self.last_flush_time = time.perf_counter()
