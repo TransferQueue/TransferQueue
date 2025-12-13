@@ -32,6 +32,7 @@ from transfer_queue.metadata import (
     SampleMeta,
 )
 from transfer_queue.sampler import BaseSampler, SequentialSampler
+from transfer_queue.utils.perf_utils import IntervalPerfMonitor
 from transfer_queue.utils.utils import (
     ProductionStatus,
     TransferQueueRole,
@@ -584,7 +585,7 @@ class TransferQueueController:
 
         self.partitions[partition_id] = DataPartitionStatus(partition_id=partition_id)
 
-        logger.info(f"Created partition {partition_id} with dynamic capacity")
+        logger.info(f"Created partition {partition_id}")
         return True
 
     def get_partition(self, partition_id: str) -> Optional[DataPartitionStatus]:
@@ -1008,7 +1009,7 @@ class TransferQueueController:
         poller = zmq.Poller()
         poller.register(self.handshake_socket, zmq.POLLIN)
 
-        logger.info(f"Dynamic Controller {self.controller_id} started waiting for storage connections...")
+        logger.info(f"Controller {self.controller_id} started waiting for storage connections...")
 
         while True:
             socks = dict(poller.poll(TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL * 1000))
@@ -1036,23 +1037,23 @@ class TransferQueueController:
                             self._connected_storage_managers.add(storage_manager_id)
                             storage_manager_type = request_msg.body.get("storage_manager_type", "Unknown")
                             logger.info(
-                                f"Dynamic Controller {self.controller_id} received handshake from "
+                                f"Controller {self.controller_id} received handshake from "
                                 f"storage manager {storage_manager_id} (type: {storage_manager_type}). "
                                 f"Total connected: {len(self._connected_storage_managers)}"
                             )
                         else:
                             logger.debug(
-                                f"Dynamic Controller {self.controller_id} received duplicate handshake from "
+                                f"Controller {self.controller_id} received duplicate handshake from "
                                 f"storage manager {storage_manager_id}. Resending ACK."
                             )
 
                 except Exception as e:
-                    logger.error(f"Dynamic Controller {self.controller_id} error processing handshake: {e}")
+                    logger.error(f"Controller {self.controller_id} error processing handshake: {e}")
 
     def _start_process_handshake(self):
         """Start the handshake process thread."""
         self.wait_connection_thread = Thread(
-            target=self._wait_connection, name="DynamicTransferQueueControllerWaitConnectionThread", daemon=True
+            target=self._wait_connection, name="TransferQueueControllerWaitConnectionThread", daemon=True
         )
         self.wait_connection_thread.start()
 
@@ -1060,7 +1061,7 @@ class TransferQueueController:
         """Start the data status update processing thread."""
         self.process_update_data_status_thread = Thread(
             target=self._update_data_status,
-            name="DynamicTransferQueueControllerProcessUpdateDataStatusThread",
+            name="TransferQueueControllerProcessUpdateDataStatusThread",
             daemon=True,
         )
         self.process_update_data_status_thread.start()
@@ -1068,12 +1069,17 @@ class TransferQueueController:
     def _start_process_request(self):
         """Start the request processing thread."""
         self.process_request_thread = Thread(
-            target=self._process_request, name="DynamicTransferQueueControllerProcessRequestThread", daemon=True
+            target=self._process_request, name="TransferQueueControllerProcessRequestThread", daemon=True
         )
         self.process_request_thread.start()
 
     def _process_request(self):
         """Main request processing loop - adapted for partition-based operations."""
+
+        logger.info(f"[{self.controller_id}]: start processing requests...")
+
+        perf_monitor = IntervalPerfMonitor(caller_name=self.controller_id)
+
         while True:
             messages = self.request_handle_socket.recv_multipart()
             identity = messages.pop(0)
@@ -1081,88 +1087,96 @@ class TransferQueueController:
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.GET_META:
-                params = request_msg.body
+                with perf_monitor.measure(op_type="GET_META"):
+                    params = request_msg.body
 
-                metadata = self.get_metadata(
-                    data_fields=params["data_fields"],
-                    batch_size=params["batch_size"],
-                    partition_id=params["partition_id"],
-                    mode=params.get("mode", "fetch"),
-                    task_name=params.get("task_name"),
-                    sampling_config=params.get("sampling_config"),
-                )
+                    metadata = self.get_metadata(
+                        data_fields=params["data_fields"],
+                        batch_size=params["batch_size"],
+                        partition_id=params["partition_id"],
+                        mode=params.get("mode", "fetch"),
+                        task_name=params.get("task_name"),
+                        sampling_config=params.get("sampling_config"),
+                    )
 
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.GET_META_RESPONSE,
-                    sender_id=self.controller_id,
-                    receiver_id=request_msg.sender_id,
-                    body={"metadata": metadata},
-                )
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.GET_META_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"metadata": metadata},
+                    )
 
             elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
-                params = request_msg.body
-                partition_id = params["partition_id"]
+                with perf_monitor.measure(op_type="GET_CLEAR_META"):
+                    params = request_msg.body
+                    partition_id = params["partition_id"]
 
-                metadata = self.get_metadata(
-                    data_fields=[],
-                    partition_id=partition_id,
-                    mode="insert",
-                )
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.GET_CLEAR_META_RESPONSE,
-                    sender_id=self.controller_id,
-                    receiver_id=request_msg.sender_id,
-                    body={"metadata": metadata},
-                )
+                    metadata = self.get_metadata(
+                        data_fields=[],
+                        partition_id=partition_id,
+                        mode="insert",
+                    )
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.GET_CLEAR_META_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"metadata": metadata},
+                    )
             elif request_msg.request_type == ZMQRequestType.CLEAR_META:
-                params = request_msg.body
-                partition_id = params["partition_id"]
+                with perf_monitor.measure(op_type="CLEAR_META"):
+                    params = request_msg.body
+                    partition_id = params["partition_id"]
 
-                clear_success = self.clear(partition_id)
-                if clear_success:
-                    response_msg = ZMQMessage.create(
-                        request_type=ZMQRequestType.CLEAR_META_RESPONSE,
-                        sender_id=self.controller_id,
-                        receiver_id=request_msg.sender_id,
-                        body={"message": f"Clear operation completed by controller {self.controller_id}"},
-                    )
-                else:
-                    response_msg = ZMQMessage.create(
-                        request_type=ZMQRequestType.CLEAR_META_RESPONSE,
-                        sender_id=self.controller_id,
-                        receiver_id=request_msg.sender_id,
-                        body={"error": f"Clear operation failed for partition {partition_id}"},
-                    )
+                    clear_success = self.clear(partition_id)
+                    if clear_success:
+                        response_msg = ZMQMessage.create(
+                            request_type=ZMQRequestType.CLEAR_META_RESPONSE,
+                            sender_id=self.controller_id,
+                            receiver_id=request_msg.sender_id,
+                            body={"message": f"Clear operation completed by controller {self.controller_id}"},
+                        )
+                    else:
+                        response_msg = ZMQMessage.create(
+                            request_type=ZMQRequestType.CLEAR_META_RESPONSE,
+                            sender_id=self.controller_id,
+                            receiver_id=request_msg.sender_id,
+                            body={"error": f"Clear operation failed for partition {partition_id}"},
+                        )
 
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
-                # Handle consumption status checks
-                params = request_msg.body
+                with perf_monitor.measure(op_type="CHECK_CONSUMPTION"):
+                    # Handle consumption status checks
+                    params = request_msg.body
 
-                consumption_status = self.get_consumption_status(params["partition_id"], params["task_name"])
-                sample_filter = params.get("sample_filter")
+                    consumption_status = self.get_consumption_status(params["partition_id"], params["task_name"])
+                    sample_filter = params.get("sample_filter")
 
-                if consumption_status is not None and sample_filter:
-                    batch_status = consumption_status[sample_filter]
-                    consumed = torch.all(batch_status == 1).item()
-                elif consumption_status is not None:
-                    batch_status = consumption_status
-                    consumed = torch.all(batch_status == 1).item()
-                else:
-                    consumed = False
+                    if consumption_status is not None and sample_filter:
+                        batch_status = consumption_status[sample_filter]
+                        consumed = torch.all(batch_status == 1).item()
+                    elif consumption_status is not None:
+                        batch_status = consumption_status
+                        consumed = torch.all(batch_status == 1).item()
+                    else:
+                        consumed = False
 
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.CONSUMPTION_RESPONSE,
-                    sender_id=self.controller_id,
-                    receiver_id=request_msg.sender_id,
-                    body={
-                        "partition_id": params["partition_id"],
-                        "consumed": consumed,
-                    },
-                )
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.CONSUMPTION_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={
+                            "partition_id": params["partition_id"],
+                            "consumed": consumed,
+                        },
+                    )
             self.request_handle_socket.send_multipart([identity, *response_msg.serialize()])
 
     def _update_data_status(self):
         """Process data status update messages from storage units - adapted for partitions."""
+        logger.info(f"[{self.controller_id}]: start receiving update_data_status requests...")
+
+        perf_monitor = IntervalPerfMonitor(caller_name=self.controller_id)
+
         while True:
             messages = self.data_status_update_socket.recv_multipart()
             identity = messages.pop(0)
@@ -1170,32 +1184,33 @@ class TransferQueueController:
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
-                message_data = request_msg.body
-                partition_id = message_data.get("partition_id")
+                with perf_monitor.measure(op_type="NOTIFY_DATA_UPDATE"):
+                    message_data = request_msg.body
+                    partition_id = message_data.get("partition_id")
 
-                # Update production status
-                success = self.update_production_status(
-                    partition_id=partition_id,
-                    global_indexes=message_data.get("global_indexes", []),
-                    field_names=message_data.get("fields", []),
-                    dtypes=message_data.get("dtypes", {}),
-                    shapes=message_data.get("shapes", {}),
-                )
+                    # Update production status
+                    success = self.update_production_status(
+                        partition_id=partition_id,
+                        global_indexes=message_data.get("global_indexes", []),
+                        field_names=message_data.get("fields", []),
+                        dtypes=message_data.get("dtypes", {}),
+                        shapes=message_data.get("shapes", {}),
+                    )
 
-                if success:
-                    logger.info(f"Updated production status for partition {partition_id}")
+                    if success:
+                        logger.info(f"Updated production status for partition {partition_id}")
 
-                # Send acknowledgment
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ACK,
-                    sender_id=self.controller_id,
-                    body={
-                        "controller_id": self.controller_id,
-                        "partition_id": partition_id,
-                        "success": success,
-                    },
-                )
-                self.data_status_update_socket.send_multipart([identity, *response_msg.serialize()])
+                    # Send acknowledgment
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ACK,
+                        sender_id=self.controller_id,
+                        body={
+                            "controller_id": self.controller_id,
+                            "partition_id": partition_id,
+                            "success": success,
+                        },
+                    )
+                    self.data_status_update_socket.send_multipart([identity, *response_msg.serialize()])
 
     def get_zmq_server_info(self) -> ZMQServerInfo:
         """Get ZMQ server connection information."""
