@@ -11,6 +11,24 @@ TQ_PERF_LOG_FLUSH_INTERVAL = float(os.environ.get("TQ_PERF_LOG_FLUSH_INTERVAL", 
 
 
 class IntervalPerfMonitor:
+    """
+    Monitors and logs performance statistics for operations over configurable time intervals.
+
+    This class is designed to be used in contexts where you want to track the number of successful
+    operations and their processing times, and periodically log summary statistics such as request
+    counts, rates, and timing metrics (average, max, min) per operation type.
+
+    Usage:
+        monitor = IntervalPerfMonitor("MyComponent")
+        with monitor.measure("upload"):
+            # perform upload operation
+
+    At each interval (controlled by TQ_PERF_LOG_FLUSH_INTERVAL), the monitor logs aggregated
+    statistics and resets its counters.
+
+    Args:
+        caller_name (str): Name of the component or caller using the monitor, included in logs.
+    """
     def __init__(self, caller_name: str):
         self.caller_name = caller_name
         self.last_flush_time = time.perf_counter()
