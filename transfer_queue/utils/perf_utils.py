@@ -37,6 +37,16 @@ class IntervalPerfMonitor:
         self.process_time: dict[str, list[float]] = defaultdict(list)
 
     def _flush_logs(self):
+        """
+        Internal method to conditionally flush (log) aggregated performance statistics.
+
+        If the configured time interval (TQ_PERF_LOG_FLUSH_INTERVAL) has passed since the last flush,
+        this method logs:
+          - Total number of successful requests and requests per minute.
+          - Average processing time across all operations.
+          - For each operation type: request count, requests per minute, average, max, and min processing times.
+        After logging, all statistics are reset and the flush timer is updated.
+        """
         now = time.perf_counter()
 
         # only flush if the interval has passed
