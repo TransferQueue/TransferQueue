@@ -230,7 +230,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                     else NonTensorStack(*transfer_data["field_data"][field])
                 )
                 for field in transfer_data["field_data"]
-            }
+            },
+            batch_size=len(local_indexes),
         )
 
         request_msg = ZMQMessage.create(
