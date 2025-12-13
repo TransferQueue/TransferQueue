@@ -261,6 +261,25 @@ class BatchMeta:
             object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
         return self
 
+    def select_samples(self, sample_indices: list[int]) -> "BatchMeta":
+        """
+        Select specific samples from this batch.
+        This will construct a new BatchMeta instance containing only the specified samples.
+
+        Args:
+            sample_indices (list[int]): List of sample indices to retain.
+
+        Returns:
+            BatchMeta: A new BatchMeta instance containing only the specified samples.
+        """
+
+        selected_samples = [self.samples[i] for i in sample_indices]
+
+        # construct new BatchMeta instance
+        selected_batch_meta = BatchMeta(samples=selected_samples, extra_info=self.extra_info.copy())
+
+        return selected_batch_meta
+
     def select_fields(self, field_names: list[str]) -> "BatchMeta":
         """
         Select specific fields from all samples in this batch.
@@ -287,7 +306,7 @@ class BatchMeta:
     def __getitem__(self, item):
         if isinstance(item, int | np.integer):
             sample_meta = self.samples[item] if self.samples else []
-            return BatchMeta(samples=[sample_meta], extra_info=self.extra_info)
+            return BatchMeta(samples=[sample_meta], extra_info=self.extra_info.copy())
         else:
             raise TypeError(f"Indexing with {type(item)} is not supported now!")
 
@@ -430,7 +449,7 @@ class BatchMeta:
 
         # Merge extra info dictionaries
         merged_extra_info = {**self.extra_info, **other.extra_info}
-        return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
+        return BatchMeta(samples=merged_samples, extra_info=merged_extra_info.copy())
 
     def reorder(self, indices: list[int]):
         """
@@ -507,6 +526,13 @@ class BatchMeta:
         if extra_info is None:
             extra_info = {}
         return cls(samples=[], extra_info=extra_info)
+
+    def __str__(self):
+        sample_strs = ", ".join(str(sample) for sample in self.samples)
+        return (
+            f"BatchMeta(size={self.size}, field_names={self.field_names}, is_ready={self.is_ready},"
+            f"samples=[{sample_strs}], extra_info={self.extra_info})"
+        )
 
 
 def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) -> dict[str, FieldMeta]:
