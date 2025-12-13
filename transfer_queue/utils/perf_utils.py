@@ -5,7 +5,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 
 logger = logging.getLogger(__name__)
-logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.INFO))
 
 TQ_PERF_LOG_FLUSH_INTERVAL = float(os.environ.get("TQ_PERF_LOG_FLUSH_INTERVAL", 10))  # in seconds
 
@@ -54,8 +54,7 @@ class IntervalPerfMonitor:
                 f"Per-operation statistics: {'; '.join(op_detail_stats)}"
             )
 
-            print(log_msg)
-            logger.error(log_msg)
+            logger.info(log_msg)
 
             # reset counts
             self.success_counts.clear()
