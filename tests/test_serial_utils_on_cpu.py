@@ -541,3 +541,56 @@ def test_nested_jagged_tensor_serialization(enable_zero_copy):
         # Verify individual components
         for i in range(len(outer_td["nested_jagged1"].unbind())):
             assert torch.allclose(decoded_msg.body["data"]["nested_jagged1"][i], outer_td["nested_jagged1"][i])
+
+
+@pytest.mark.parametrize("enable_zero_copy", [True, False])
+def test_single_nested_tensor_serialization(enable_zero_copy):
+    """Test serialization of nested tensor with only one element (edge case for zero-copy)."""
+    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+        from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
+
+        # Create nested tensor with only one element
+        # This is the critical edge case where a nested tensor with 1 element
+        # must be distinguished from a regular tensor during deserialization
+        single_nested = torch.nested.as_nested_tensor([torch.randn(4, 3)], layout=torch.strided)
+        # For normal tensor, expand to batch_size=1 to match the nested tensor's batch dimension
+        normal_tensor = torch.randn(1, 4, 3)
+
+        # Create TensorDict with both types
+        td = TensorDict(
+            {
+                "single_nested_tensor": single_nested,
+                "normal_tensor": normal_tensor,
+            },
+            batch_size=1,
+        )
+
+        msg = ZMQMessage(
+            request_type=ZMQRequestType.PUT_DATA,
+            sender_id="test",
+            receiver_id="test",
+            request_id="test",
+            timestamp=0.0,
+            body={"data": td},
+        )
+
+        encoded_msg = msg.serialize()
+        decoded_msg = ZMQMessage.deserialize(encoded_msg)
+
+        # Verify batch sizes
+        assert decoded_msg.body["data"].batch_size == td.batch_size
+
+        # Verify normal tensor
+        assert torch.allclose(decoded_msg.body["data"]["normal_tensor"], td["normal_tensor"])
+        assert decoded_msg.body["data"]["normal_tensor"].shape == td["normal_tensor"].shape
+
+        # Verify single nested tensor is properly reconstructed as nested
+        assert decoded_msg.body["data"]["single_nested_tensor"].is_nested
+        assert decoded_msg.body["data"]["single_nested_tensor"].layout == torch.strided
+        assert len(decoded_msg.body["data"]["single_nested_tensor"].unbind()) == 1
+        assert torch.allclose(decoded_msg.body["data"]["single_nested_tensor"][0], td["single_nested_tensor"][0])
+
+        # Ensure the nested tensor with single element is correctly distinguished from regular tensor
+        # Both should have the same data but different types
+        assert not decoded_msg.body["data"]["normal_tensor"].is_nested
+        assert decoded_msg.body["data"]["single_nested_tensor"].is_nested

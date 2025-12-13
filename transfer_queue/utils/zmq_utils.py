@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, TypeAlias
 from uuid import uuid4
 
+import numpy as np
 import psutil
 import torch
 import zmq
@@ -162,15 +163,15 @@ class ZMQMessage:
                     tensor_list = tensor.unbind()
                     tensor_count = len(tensor_list)
                     serialized_tensors = [_encoder.encode(inner_tensor) for inner_tensor in tensor_list]
-                    return tensor_count, serialized_tensors
+                    return tensor_count, serialized_tensors  # tensor_count may equal to 1 for single nested tensor
                 else:
-                    return 1, [_encoder.encode(tensor)]
+                    return -1, [_encoder.encode(tensor)]  # use -1 to indicate regular single tensor
 
             # Use map to process all tensors in parallel-like fashion
             nested_tensor_info_and_serialized_tensors = list(map(process_tensor, tensors))
 
             # Extract nested_tensor_info and flatten serialized tensors using itertools
-            nested_tensor_info = [info for info, _ in nested_tensor_info_and_serialized_tensors]
+            nested_tensor_info = np.array([info for info, _ in nested_tensor_info_and_serialized_tensors])
             double_layer_serialized_tensors: list[list[bytestr]] = list(
                 itertools.chain.from_iterable(serialized for _, serialized in nested_tensor_info_and_serialized_tensors)
             )
@@ -209,14 +210,14 @@ class ZMQMessage:
                     f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should be a list, but got {type(data)}."
                 )
 
-            tensor_nums = sum(nested_tensor_info)
+            tensor_nums = np.abs(nested_tensor_info).sum()
             if tensor_nums != len(single_tensors):
                 raise ValueError(f"Expecting {tensor_nums} tensors, but got {len(single_tensors)}.")
 
             tensors = [None] * len(nested_tensor_info)
             current_idx = 0
             for i, tensor_num in enumerate(nested_tensor_info):
-                if tensor_num == 1:
+                if tensor_num == -1:
                     tensors[i] = single_tensors[current_idx]
                     current_idx += 1
                 else:
