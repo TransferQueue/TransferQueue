@@ -173,6 +173,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             metadata: BatchMeta containing storage location information.
         """
 
+        logger.info(f"{__class__.__name__}: receive put_data request, putting {metadata.size} samples.")
+
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(
             metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
@@ -262,6 +264,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         Returns:
             TensorDict containing the retrieved data.
         """
+
+        logger.info(f"{__class__.__name__}: receive get_data request, getting {metadata.size} samples.")
 
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(
