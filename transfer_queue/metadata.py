@@ -273,6 +273,9 @@ class BatchMeta:
             BatchMeta: A new BatchMeta instance containing only the specified samples.
         """
 
+        if any(i < 0 or i >= len(self.samples) for i in sample_indices):
+            raise ValueError(f"Sample indices must be in range [0, {len(self.samples)})")
+
         selected_samples = [self.samples[i] for i in sample_indices]
 
         # construct new BatchMeta instance
@@ -449,7 +452,7 @@ class BatchMeta:
 
         # Merge extra info dictionaries
         merged_extra_info = {**self.extra_info, **other.extra_info}
-        return BatchMeta(samples=merged_samples, extra_info=merged_extra_info.copy())
+        return BatchMeta(samples=merged_samples, extra_info=merged_extra_info)
 
     def reorder(self, indices: list[int]):
         """
@@ -530,7 +533,7 @@ class BatchMeta:
     def __str__(self):
         sample_strs = ", ".join(str(sample) for sample in self.samples)
         return (
-            f"BatchMeta(size={self.size}, field_names={self.field_names}, is_ready={self.is_ready},"
+            f"BatchMeta(size={self.size}, field_names={self.field_names}, is_ready={self.is_ready}, "
             f"samples=[{sample_strs}], extra_info={self.extra_info})"
         )
 

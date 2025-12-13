@@ -667,8 +667,6 @@ class TestBatchMeta:
         ]
         batch = BatchMeta(samples=samples)
 
-        print(batch)
-
         # Add various extra info types
         batch.extra_info["tensor"] = torch.randn(3, 4)
         batch.extra_info["string"] = "test_string"
