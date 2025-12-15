@@ -51,8 +51,16 @@ def test_data_partition_status():
     success = partition.update_production_status(
         global_indices=[0, 1, 2],
         field_names=["input_ids", "attention_mask"],
-        dtypes={0: {"input_ids": "torch.int32"}, 1: {"attention_mask": "torch.bool"}},
-        shapes={0: {"input_ids": (512,)}, 1: {"attention_mask": (512,)}},
+        dtypes={
+            0: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+            1: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+            2: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+        },
+        shapes={
+            0: {"input_ids": (512,), "attention_mask": (512,)},
+            1: {"input_ids": (512,), "attention_mask": (512,)},
+            2: {"input_ids": (512,), "attention_mask": (512,)},
+        },
     )
 
     assert success
@@ -149,14 +157,29 @@ def test_dynamic_expansion_scenarios():
     partition = DataPartitionStatus(partition_id="expansion_test")
 
     # Scenario 1: Adding samples with large gaps
-    partition.update_production_status([0, 5, 10], ["field1"])
+    partition.update_production_status(
+        global_indices=[0, 5, 10],
+        field_names=["field1"],
+        dtypes={
+            0: {"field_1": "torch.bool"},
+            5: {"field_1": "torch.bool"},
+            10: {"field_1": "torch.bool"},
+        },
+        shapes={
+            0: {"field_1": (32,)},
+            5: {"field_1": (32,)},
+            10: {"field_1": (32,)},
+        },
+    )
     assert partition.total_samples_num >= 11  # Should accommodate index 10
 
     print("✓ Large index gaps handled correctly")
 
     # Scenario 2: Adding many fields dynamically
     for i in range(15):
-        partition.update_production_status([0], [f"field_{i}"])
+        partition.update_production_status(
+            [0], [f"field_{i}"], {0: {f"field_{i}": "torch.bool"}}, {0: {f"field_{i}": (32,)}}
+        )
 
     assert partition.total_fields_num == 16  # Original + 15 new fields
     assert partition.allocated_fields_num >= 16
@@ -194,7 +217,9 @@ def test_data_partition_status_advanced():
     assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
 
     # Add data to trigger expansion
-    partition.update_production_status([0, 1, 2, 3, 4], ["field_a", "field_b", "field_c"])
+    dtypes = {i: {f"dynamic_field_{s}": "torch.bool" for s in ["a", "b", "c"]} for i in range(5)}
+    shapes = {i: {f"dynamic_field_{s}": (32,) for s in ["a", "b", "c"]} for i in range(5)}
+    partition.update_production_status([0, 1, 2, 3, 4], ["field_a", "field_b", "field_c"], dtypes, shapes)
 
     # Properties should reflect current state
     assert partition.total_samples_num >= 5  # At least 5 samples
@@ -213,7 +238,19 @@ def test_data_partition_status_advanced():
     assert initial_consumption[1] == 1
 
     # Expand samples and verify consumption data preserved
-    partition.update_production_status([10, 11, 12], ["field_d"])  # Triggers sample expansion
+    dtypes = (
+        {
+            10: {"field_d": "torch.bool"},
+            11: {"field_d": "torch.bool"},
+            12: {"field_d": "torch.bool"},
+        },
+    )
+    shapes = {
+        10: {"field_d": (32,)},
+        11: {"field_d": (32,)},
+        12: {"field_d": (32,)},
+    }
+    partition.update_production_status([10, 11, 12], ["field_d"], dtypes, shapes)  # Triggers sample expansion
     expanded_consumption = partition.get_consumption_status(task_name)
     assert expanded_consumption[0] == 1  # Preserved
     assert expanded_consumption[1] == 1  # Preserved
@@ -223,11 +260,15 @@ def test_data_partition_status_advanced():
 
     # Test 3: Complex field addition scenarios
     # Start with some fields
-    partition.update_production_status([0], ["initial_field"])
+    dtypes = {0: {"initial_field": "torch.bool"}}
+    shapes = {0: {"field_d": (32,)}}
+    partition.update_production_status([0], ["initial_field"], dtypes, shapes)
 
     # Add many fields to trigger column expansion
     new_fields = [f"dynamic_field_{i}" for i in range(20)]
-    partition.update_production_status([1], new_fields)
+    dtypes = {1: {f"dynamic_field_{i}": "torch.bool" for i in range(20)}}
+    shapes = {1: {f"dynamic_field_{i}": (32,) for i in range(20)}}
+    partition.update_production_status([1], new_fields, dtypes, shapes)
 
     # Verify all fields are registered and accessible
     assert "initial_field" in partition.field_name_mapping
@@ -316,11 +357,13 @@ def test_edge_cases_and_error_handling():
 
     # Test 4: Production status update error conditions
     # Test with empty lists
-    success = partition.update_production_status([], [])
+    success = partition.update_production_status([], [], [], [])
     assert success  # Should handle empty lists gracefully
 
     # Test with valid data but ensure no crashes
-    success = partition.update_production_status([0], ["new_field"])
+    dtypes = {0: {"new_field": "torch.int64"}}
+    shapes = {0: {"new_field": (32,)}}
+    success = partition.update_production_status([0], ["new_field"], dtypes=dtypes, shapes=shapes)
     assert success
 
     print("✓ Production status update edge cases handled correctly")
@@ -339,8 +382,16 @@ def test_backward_compatibility():
     # Test 1: Basic workflow should work as before
     sample_indices = [0, 1, 2, 3, 4]
     field_names = ["input_ids", "attention_mask", "labels"]
-
-    success = partition.update_production_status(sample_indices, field_names)
+    dtypes = {
+        k: {"input_ids": "torch.int64", "attention_mask": "torch.bool", "labels": "torch.int64"} for k in sample_indices
+    }
+    shapes = {k: {"input_ids": (32,), "attention_mask": (32,), "labels": (32,)} for k in sample_indices}
+    success = partition.update_production_status(
+        sample_indices,
+        field_names,
+        dtypes=dtypes,
+        shapes=shapes,
+    )
     assert success
 
     # Traditional consumption tracking
@@ -372,8 +423,8 @@ def test_backward_compatibility():
             # These should return reasonable values or None
             dtype = partition.get_field_dtype(sample_idx, field)
             shape = partition.get_field_shape(sample_idx, field)
-            assert dtype is None
-            assert shape is None
+            assert dtype is not None
+            assert shape is not None
             # Should not crash even if metadata wasn't provided
 
     print("✓ Metadata access patterns preserved")
@@ -406,7 +457,9 @@ def test_performance_characteristics():
     start_time = time.time()
     field_count = 100  # Reduced from 1000 to avoid potential issues
     many_fields = [f"perf_field_{i}" for i in range(field_count)]
-    partition.update_production_status([0], many_fields)
+    dtypes = {0: {f"perf_field_{i}": "torch.bool" for i in range(field_count)}}
+    shapes = {0: {f"perf_field_{i}": (32,) for i in range(field_count)}}
+    partition.update_production_status([0], many_fields, dtypes, shapes)
     field_creation_time = time.time() - start_time
 
     assert partition.total_fields_num == field_count
@@ -416,7 +469,9 @@ def test_performance_characteristics():
     # Test 2: Large number of samples
     start_time = time.time()
     many_samples = list(range(5000))
-    partition.update_production_status(many_samples, ["test_field"])
+    dtypes = {k: {"test_field": "torch.int64"} for k in many_samples}
+    shapes = {k: {"test_field": (32,)} for k in many_samples}
+    partition.update_production_status(many_samples, ["test_field"], dtypes=dtypes, shapes=shapes)
     sample_creation_time = time.time() - start_time
 
     assert partition.total_samples_num >= 5000
@@ -442,7 +497,9 @@ def test_performance_characteristics():
     initial_samples = partition.total_samples_num
 
     # Add more data (should reuse existing space where possible)
-    partition.update_production_status([100], ["new_field"])
+    dtypes = {100: {"new_field": "torch.int64"}}
+    shapes = {100: {"new_field": (32,)}}
+    partition.update_production_status([100], ["new_field"], dtypes=dtypes, shapes=shapes)
 
     # Memory growth should be reasonable
     final_allocated = partition.allocated_fields_num
