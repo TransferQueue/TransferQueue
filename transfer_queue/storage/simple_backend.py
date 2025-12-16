@@ -35,6 +35,12 @@ from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServer
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+# Ensure logger has a handler (for Ray Actor subprocess)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+
 TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
 
 

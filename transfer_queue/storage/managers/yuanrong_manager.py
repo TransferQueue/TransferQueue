@@ -8,6 +8,12 @@ from transfer_queue.storage.managers.factory import TransferQueueStorageManagerF
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+# Ensure logger has a handler
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+
 
 @TransferQueueStorageManagerFactory.register("YuanrongStorageManager")
 class YuanrongStorageManager(KVStorageManager):
