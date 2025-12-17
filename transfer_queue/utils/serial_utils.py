@@ -28,7 +28,6 @@ import numpy as np
 import torch
 import zmq
 from msgspec import msgpack
-from tensordict import TensorDict
 
 from transfer_queue.utils.utils import get_env_bool
 
@@ -174,7 +173,7 @@ _decoder = MsgpackDecoder(torch.Tensor)
 
 
 # Process tensors and collect nested tensor info efficiently
-def _process_tensor(tensor):
+def _process_tensor(tensor: torch.Tensor) -> Any:
     if tensor.is_nested and tensor.layout == torch.strided:
         tensor_list = tensor.unbind()
         tensor_count = len(tensor_list)
@@ -212,23 +211,22 @@ def serialization(obj: Any) -> list[bytestr]:
             itertools.chain.from_iterable(serialized for _, serialized in nested_tensor_info_and_serialized_tensors)
         )
         serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(double_layer_serialized_tensors))
-
         return [pickled_bytes, pickle.dumps(nested_tensor_info), *serialized_tensors]
     else:
         return [pickle.dumps(obj)]
 
 
-def deserialization(obj: list[bytestr] | bytestr) -> TensorDict:
-    """Deserialize an object from serialized data."""
+def deserialization(data: list[bytestr] | bytestr) -> Any:
+    """Deserialize any object from serialized data."""
 
-    logger.info(f"Deserializing TensorDict with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
+    logger.info(f"Deserializing an obj with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
 
     if TQ_ZERO_COPY_SERIALIZATION:
-        if isinstance(obj, list):
+        if isinstance(data, list):
             # contain tensors
-            pickled_bytes = obj[0]
-            nested_tensor_info = pickle.loads(obj[1])
-            serialized_tensors = obj[2:]
+            pickled_bytes = data[0]
+            nested_tensor_info = pickle.loads(data[1])
+            serialized_tensors = data[2:]
             if len(serialized_tensors) % 2 != 0:
                 # Note: data is a list of [pickled_bytes, <bytes>, |<bytes>, <memoryview>,
                 # |<bytes>, <memoryview>|...].
@@ -236,7 +234,7 @@ def deserialization(obj: list[bytestr] | bytestr) -> TensorDict:
 
                 raise ValueError(
                     f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should "
-                    f"be a list containing an even number of elements, but got {len(obj)}."
+                    f"be a list containing an even number of elements, but got {len(data)}."
                 )
             # deserializing each single tensor
             single_tensors: list[torch.Tensor] = [
@@ -244,7 +242,7 @@ def deserialization(obj: list[bytestr] | bytestr) -> TensorDict:
             ]
         else:
             raise ValueError(
-                f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should be a list, but got {type(obj)}."
+                f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should be a list, but got {type(data)}."
             )
 
         tensor_nums = np.abs(nested_tensor_info).sum()
@@ -263,17 +261,17 @@ def deserialization(obj: list[bytestr] | bytestr) -> TensorDict:
 
         return _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
     else:
-        if isinstance(obj, bytestr):
-            return pickle.loads(obj)
-        elif isinstance(obj, list):
-            if len(obj) > 1:
+        if isinstance(data, bytestr):
+            return pickle.loads(data)
+        elif isinstance(data, list):
+            if len(data) > 1:
                 raise ValueError(
                     f"When TQ_ZERO_COPY_SERIALIZATION is disabled, must have only 1 element in"
-                    f" list for deserialization, but got {len(obj)}."
+                    f" list for deserialization, but got {len(data)}."
                 )
-            return pickle.loads(obj[0])
+            return pickle.loads(data[0])
         else:
             raise ValueError(
                 f"When TQ_ZERO_COPY_SERIALIZATION is disabled, input data should be a list of bytestr,"
-                f" but got {type(obj)}."
+                f" but got {type(data)}."
             )
