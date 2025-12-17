@@ -462,9 +462,11 @@ class BatchMeta:
 
     def reorder(self, indices: list[int]):
         """
-        Reorder the SampleMeta in the BatchMeta according to the given indices.
+        Reorder the SampleMeta in the BatchMeta according to the given indices (must equal to the length of samples).
 
         The operation is performed in-place, modifying the current BatchMeta's SampleMeta order.
+
+        To select a subset of samples or repeat specific samples, please use the non-inplace method select_samples().
 
         Args:
             indices : list[int]
@@ -472,10 +474,10 @@ class BatchMeta:
                 represents the current index of the SampleMeta in the BatchMeta.
         """
 
-        if len(indices) != len(self.samples):
+        if len(indices) != self.size:
             raise ValueError(
                 f"Try to reorder with indices length {len(indices)} that is not matching samples length "
-                f"{len(self.samples)}. Please use non-inplace method select_samples() instead if you try to "
+                f"{self.size}. Please use non-inplace method select_samples() instead if you try to "
                 f"select a subset of samples or repeat specific samples."
             )
 
