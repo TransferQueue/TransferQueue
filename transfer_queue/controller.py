@@ -59,15 +59,15 @@ TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METAD
 TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 0.2))
 TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL", 2))
 
-TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
-TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
+TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 1))  # Initial number of samples
+TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 1))
 
 # Expansion configuration - Unified approach using minimum expansion sizes
 TQ_SAMPLE_MIN_EXPANSION_SIZE = int(
-    os.environ.get("TQ_SAMPLE_MIN_EXPANSION_SIZE", 10)
+    os.environ.get("TQ_SAMPLE_MIN_EXPANSION_SIZE", 1)
 )  # Minimum expansion size for samples (rows)
 TQ_FIELD_MIN_EXPANSION_SIZE = int(
-    os.environ.get("TQ_FIELD_MIN_EXPANSION_SIZE", 5)
+    os.environ.get("TQ_FIELD_MIN_EXPANSION_SIZE", 1)
 )  # Minimum expansion size for fields (columns)
 
 

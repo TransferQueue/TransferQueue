@@ -28,7 +28,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from transfer_queue import TransferQueueController  # noqa: E402
-from transfer_queue.controller import TQ_INIT_FIELD_NUM  # noqa: E402
 from transfer_queue.utils.utils import ProductionStatus  # noqa: E402
 
 
@@ -95,15 +94,25 @@ class TestTransferQueueController:
         partition = ray.get(tq_controller.get_partition.remote(partition_id))
         assert partition.production_status is not None
         assert partition.production_status.size(0) == gbs * num_n_samples
-        assert partition.production_status.size(1) == TQ_INIT_FIELD_NUM
+
+        # Total fields should match the number of fields we added
+        assert partition.total_fields_num == len(data_fields)
+
+        # Allocated fields should be at least the number of actual fields
+        assert partition.allocated_fields_num >= partition.total_fields_num
+
+        # Check production status for the fields we added
         assert torch.equal(
             sum(partition.production_status[:, : len(data_fields)]),
             torch.Tensor([gbs * num_n_samples, gbs * num_n_samples]),
         )
-        assert torch.equal(
-            sum(partition.production_status[:, len(data_fields) :]),
-            torch.zeros(1 * (TQ_INIT_FIELD_NUM - len(data_fields))),
-        )
+
+        # Any additional allocated fields should be zero (unused)
+        if partition.allocated_fields_num > len(data_fields):
+            assert torch.equal(
+                sum(partition.production_status[:, len(data_fields) :]),
+                torch.zeros(1 * (partition.allocated_fields_num - len(data_fields))),
+            )
 
         print(f"✓ Updated production status for partition {partition_id}")
 
