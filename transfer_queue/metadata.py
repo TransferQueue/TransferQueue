@@ -471,6 +471,14 @@ class BatchMeta:
                 A list of integers specifying the new order of SampleMeta. Each integer
                 represents the current index of the SampleMeta in the BatchMeta.
         """
+
+        if len(indices) != len(self.samples):
+            raise ValueError(
+                f"Try to reorder with indices length {len(indices)} that is not matching samples length "
+                f"{len(self.samples)}. Please use non-inplace method select_samples() instead if you try to "
+                f"select a subset of samples or repeat specific samples."
+            )
+
         # Reorder the samples
         reordered_samples = [self.samples[i] for i in indices]
         object.__setattr__(self, "samples", reordered_samples)
