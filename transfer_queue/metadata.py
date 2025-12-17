@@ -474,14 +474,20 @@ class BatchMeta:
                 represents the current index of the SampleMeta in the BatchMeta.
         """
 
-        if (len(indices) != self.size) or (len(set(indices)) != self.size) or (len(indices) != len(set(indices))):
+        if len(indices) != self.size:
             raise ValueError(
                 f"Attempted to reorder with indices length {len(indices)} that does not match samples length "
                 f"{self.size}. Please use non-inplace method select_samples() instead if you want to "
                 f"select a subset of samples or repeat specific samples."
             )
 
-        if (min(indices) < 0) or (max(indices) >= self.size):
+        if len(set(indices)) != self.size:
+            raise ValueError(
+                f"Indices={indices} contain duplicates. Please use non-inplace method "
+                f"select_samples() instead if you want to select a subset of samples or repeat specific samples."
+            )
+
+        if any(i < 0 or i >= len(self.samples) for i in indices):
             raise ValueError(f"Reorder indices must be in the range [0, {self.size}).")
 
         # Reorder the samples
