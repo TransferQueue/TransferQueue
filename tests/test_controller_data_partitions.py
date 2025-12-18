@@ -468,7 +468,7 @@ def test_multiple_partition_isolation():
     inference_ready = partition_inference.scan_data_status(inference_fields, task_name)
     eval_ready = partition_eval.scan_data_status(eval_fields, task_name)
 
-    assert 2 in train_ready and 0 not in train_ready and 1 not in train_ready
+    assert 2 in train_ready and 10 in train_ready and 0 not in train_ready and 1 not in train_ready
     assert 0 in inference_ready and 4 in inference_ready
     assert 1 not in inference_ready and 2 not in inference_ready and 3 not in inference_ready
     assert 1 in eval_ready and 3 in eval_ready

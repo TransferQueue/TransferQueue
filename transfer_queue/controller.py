@@ -197,7 +197,9 @@ class DataPartitionStatus:
     consumption_status: dict[str, torch.Tensor] = field(default_factory=dict)
 
     # Sample metadata
-    global_indexes: set[int] = field(default_factory=set)
+    global_indexes: set[int] = field(
+        default_factory=set
+    )  # set of global indexes that have been added to this partition
 
     # Field metadata
     field_name_mapping: dict[str, int] = field(default_factory=dict)  # field_name -> column_index
