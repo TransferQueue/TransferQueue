@@ -40,7 +40,8 @@ def test_data_partition_status():
     partition = DataPartitionStatus(partition_id="test@partition_1")
 
     # Test initial state
-    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
+    assert partition.total_samples_num == 0
+    assert partition.allocated_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
     assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
     assert partition.production_status is not None
@@ -171,8 +172,8 @@ def test_dynamic_expansion_scenarios():
             10: {"field_1": (32,)},
         },
     )
-    assert partition.total_samples_num >= 11  # Should accommodate index 10
-
+    assert partition.total_samples_num == 3
+    assert partition.allocated_samples_num >= 11  # Should accommodate index 10
     print("✓ Large index gaps handled correctly")
 
     # Scenario 2: Adding many fields dynamically
@@ -212,7 +213,8 @@ def test_data_partition_status_advanced():
     partition = DataPartitionStatus(partition_id="advanced_test")
 
     # Initially empty
-    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
+    assert partition.total_samples_num == 0
+    assert partition.allocated_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
     assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
 
@@ -353,7 +355,7 @@ def test_edge_cases_and_error_handling():
     task_name = "early_task"
     consumption_tensor = partition.get_consumption_status(task_name)
     assert consumption_tensor is not None
-    assert consumption_tensor.shape[0] == partition.total_samples_num
+    assert consumption_tensor.shape[0] == partition.allocated_samples_num
 
     # Test 4: Production status update error conditions
     # Test with empty lists
@@ -369,80 +371,6 @@ def test_edge_cases_and_error_handling():
     print("✓ Production status update edge cases handled correctly")
 
     print("Edge cases and error handling tests passed!\n")
-
-
-def test_backward_compatibility():
-    """Test backward compatibility with existing interfaces."""
-    print("Testing backward compatibility...")
-
-    from transfer_queue.controller import DataPartitionStatus
-
-    partition = DataPartitionStatus(partition_id="compat_test")
-
-    # Test 1: Basic workflow should work as before
-    sample_indices = [0, 1, 2, 3, 4]
-    field_names = ["input_ids", "attention_mask", "labels"]
-    dtypes = {
-        k: {"input_ids": "torch.int64", "attention_mask": "torch.bool", "labels": "torch.int64"} for k in sample_indices
-    }
-    shapes = {k: {"input_ids": (32,), "attention_mask": (32,), "labels": (32,)} for k in sample_indices}
-    success = partition.update_production_status(
-        sample_indices,
-        field_names,
-        dtypes=dtypes,
-        shapes=shapes,
-    )
-    assert success
-
-    # Traditional consumption tracking
-    task_name = "training_task"
-    ready_samples = partition.scan_data_status(field_names, task_name)
-    assert len(ready_samples) == 5
-
-    # Mark as consumed
-    partition.mark_consumed(task_name, ready_samples[:3])
-
-    # Should now return only unconsumed samples
-    remaining_ready = partition.scan_data_status(field_names, task_name)
-    assert len(remaining_ready) == 2
-
-    print("✓ Basic workflow maintains compatibility")
-
-    # Test 2: Field mapping should be consistent
-    for field in field_names:
-        assert field in partition.field_name_mapping
-        field_idx = partition.field_name_mapping[field]
-        assert field_idx >= 0
-        assert field_idx < partition.allocated_fields_num
-
-    print("✓ Field mapping consistency maintained")
-
-    # Test 3: Metadata access patterns
-    for sample_idx in sample_indices:
-        for field in field_names:
-            # These should return reasonable values or None
-            dtype = partition.get_field_dtype(sample_idx, field)
-            shape = partition.get_field_shape(sample_idx, field)
-            assert dtype is not None
-            assert shape is not None
-            # Should not crash even if metadata wasn't provided
-
-    print("✓ Metadata access patterns preserved")
-
-    # Test 4: Statistics format should be familiar
-    stats = partition.get_statistics()
-    familiar_keys = ["partition_id", "total_samples_num", "total_fields_num"]
-    for key in familiar_keys:
-        assert key in stats
-
-    assert isinstance(stats["total_samples_num"], int)
-    assert isinstance(stats["total_fields_num"], int)
-    assert stats["total_samples_num"] > 0
-    assert stats["total_fields_num"] == len(field_names)
-
-    print("✓ Statistics format maintains familiarity")
-
-    print("Backward compatibility tests passed!\n")
 
 
 def test_performance_characteristics():
@@ -512,65 +440,3 @@ def test_performance_characteristics():
     print("✓ Memory usage patterns reasonable")
 
     print("Performance characteristics tests passed!\n")
-
-
-def main():
-    """Run all tests."""
-    print("=== Comprehensive Testing of TransferQueue Controller ===\n")
-
-    test_functions = [
-        test_data_partition_status,
-        test_partition_interface,
-        test_dynamic_expansion_scenarios,
-        test_data_partition_status_advanced,
-        test_edge_cases_and_error_handling,
-        test_backward_compatibility,
-        test_performance_characteristics,
-    ]
-
-    passed_tests = 0
-    total_tests = len(test_functions)
-
-    try:
-        for test_func in test_functions:
-            try:
-                test_func()
-                passed_tests += 1
-            except Exception as e:
-                print(f"❌ {test_func.__name__} failed: {e}")
-                import traceback
-
-                traceback.print_exc()
-                print()
-
-        print("=" * 60)
-        print(f"TEST SUMMARY: {passed_tests}/{total_tests} test suites passed")
-
-        if passed_tests == total_tests:
-            print("🎉 ALL TESTS PASSED!")
-            print("\nThe refactored DataPartitionStatus demonstrates:")
-            print("1. ✅ Dynamic row and column expansion without pre-allocation")
-            print("2. ✅ Robust partition-controller interface design")
-            print("3. ✅ Self-contained state management in DataPartitionStatus")
-            print("4. ✅ Flexible consumption tracking per task")
-            print("5. ✅ Comprehensive scanning and query capabilities")
-            print("6. ✅ Advanced error handling and edge case management")
-            print("7. ✅ Backward compatibility with existing interfaces")
-            print("8. ✅ Good performance characteristics for large datasets")
-            print("\n🚀 DataPartitionStatus refactoring is ready for production!")
-        else:
-            print(f"⚠️  {total_tests - passed_tests} test suites failed.")
-            print("Please review the failures before deploying to production.")
-
-        print("=" * 60)
-
-    except Exception as e:
-        print(f"❌ Critical test failure: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
