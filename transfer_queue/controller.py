@@ -408,8 +408,6 @@ class DataPartitionStatus:
         """
         try:
             consumption_status = self.get_consumption_status(task_name)
-            if consumption_status.shape[0] < self.allocated_samples_num:
-                self.ensure_samples_capacity()
 
             if consumption_status.numel() > 0 and global_indices:
                 consumption_status[global_indices] = 1
