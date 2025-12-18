@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import os
 import time
@@ -535,6 +536,40 @@ class DataPartitionStatus:
 
         return stats
 
+    # ==================== Serialization ====================
+
+    def to_snapshot(self):
+        """
+        Get a snapshot of partition status information.
+
+        Returns:
+            DataPartitionStatus object without threading.Lock()
+        """
+
+        def _perform_copy():
+            cls = self.__class__
+            snapshot = cls.__new__(cls)
+
+            for name, value in self.__dict__.items():
+                if name == "data_status_lock":
+                    continue
+
+                if isinstance(value, torch.Tensor):
+                    new_val = value.clone().detach()
+                else:
+                    new_val = copy.deepcopy(value)
+
+                setattr(snapshot, name, new_val)
+            return snapshot
+
+        lock_obj = getattr(self, "data_status_lock", None)
+
+        if lock_obj:
+            with lock_obj:
+                return _perform_copy()
+        else:
+            return _perform_copy()
+
     def clear_data(self, global_indexes_range: list[int], clear_consumption: bool = True) -> bool:
         """Clear all production and optionally consumption data."""
         try:
@@ -632,7 +667,7 @@ class TransferQueueController:
         logger.info(f"Created partition {partition_id}")
         return True
 
-    def get_partition(self, partition_id: str) -> Optional[DataPartitionStatus]:
+    def _get_partition(self, partition_id: str) -> Optional[DataPartitionStatus]:
         """
         Get partition status information.
 
@@ -643,6 +678,18 @@ class TransferQueueController:
             DataPartitionStatus object if partition exists, None otherwise
         """
         return self.partitions.get(partition_id)
+
+    def get_partition_snapshot(self, partition_id: str) -> Optional[DataPartitionStatus]:
+        """
+        Get a copy of partition status information, without threading.Lock().
+
+        Args:
+            partition_id: ID of the partition to retrieve
+
+        Returns:
+            DataPartitionStatus object if partition exists, None otherwise
+        """
+        return self.partitions.get(partition_id).to_snapshot()
 
     def list_partitions(self) -> list[str]:
         """
@@ -708,7 +755,7 @@ class TransferQueueController:
         Returns:
             True if update was successful, False otherwise
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             logger.error(f"Partition {partition_id} not found")
             return False
@@ -735,7 +782,7 @@ class TransferQueueController:
         Returns:
             Consumption status tensor if partition exists, None otherwise
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             return None
 
@@ -884,7 +931,7 @@ class TransferQueueController:
         start_time = time.time()
 
         while True:
-            partition = self.get_partition(partition_id)
+            partition = self._get_partition(partition_id)
             if not partition:
                 if time.time() - start_time > timeout:
                     raise TimeoutError(f"Partition {partition_id} not found")
@@ -938,7 +985,7 @@ class TransferQueueController:
         Raises:
             ValueError: If partition doesn't exist or invalid mode
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             raise ValueError(f"Partition {partition_id} not found")
 
@@ -1001,7 +1048,7 @@ class TransferQueueController:
         Returns:
             True if cleared successfully, False otherwise
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             raise ValueError(f"Partition {partition_id} not found")
 

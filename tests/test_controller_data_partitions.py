@@ -128,7 +128,7 @@ def test_partition_interface():
 
     # Test that the class can be imported and has expected methods
     assert hasattr(TransferQueueController, "create_partition")
-    assert hasattr(TransferQueueController, "get_partition")
+    assert hasattr(TransferQueueController, "get_partition_snapshot")
     assert hasattr(TransferQueueController, "update_production_status")
     assert hasattr(TransferQueueController, "scan_data_status")
     assert hasattr(TransferQueueController, "generate_batch_meta")
