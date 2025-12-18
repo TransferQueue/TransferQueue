@@ -18,7 +18,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from operator import itemgetter
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -212,6 +212,10 @@ class DataPartitionStatus:
     field_dtypes: dict[int, dict[str, Any]] = field(default_factory=dict)  # global_idx -> {field: dtype}
     field_shapes: dict[int, dict[str, Any]] = field(default_factory=dict)  # global_idx -> {field: shape}
 
+    # Threading lock for concurrency control; only for preventing mask operation error when expanding production_status.
+    # No need to strictly lock for every read/write operation since freshness is not critical.
+    data_status_lock: Lock = Lock()
+
     # Dynamic configuration - these are computed from the current state
     @property
     def total_samples_num(self) -> int:
@@ -323,7 +327,8 @@ class DataPartitionStatus:
             required_samples = max_sample_idx + 1
 
             # Ensure we have enough rows
-            self.ensure_samples_capacity(required_samples)
+            with self.data_status_lock:
+                self.ensure_samples_capacity(required_samples)
 
             # Register new fields if needed
             new_fields = [field for field in field_names if field not in self.field_name_mapping]
@@ -333,7 +338,8 @@ class DataPartitionStatus:
                     self.field_name_mapping[field] = len(self.field_name_mapping)
 
                 required_fields = len(self.field_name_mapping)
-                self.ensure_fields_capacity(required_fields)
+                with self.data_status_lock:
+                    self.ensure_fields_capacity(required_fields)
 
             # Update production status
             if self.production_status is not None and global_indices and field_names:
@@ -448,22 +454,23 @@ class DataPartitionStatus:
             if field_name not in self.field_name_mapping:
                 return []
 
-        row_mask = torch.ones(self.allocated_samples_num, dtype=torch.bool)
+        with self.data_status_lock:
+            row_mask = torch.ones(self.allocated_samples_num, dtype=torch.bool)
 
-        # Apply consumption filter (exclude already consumed samples)
-        consumption_status = self.get_consumption_status(task_name)
-        if consumption_status is not None:
-            unconsumed_mask = consumption_status == 0
-            row_mask &= unconsumed_mask
+            # Apply consumption filter (exclude already consumed samples)
+            consumption_status = self.get_consumption_status(task_name)
+            if consumption_status is not None:
+                unconsumed_mask = consumption_status == 0
+                row_mask &= unconsumed_mask
 
-        # Create column mask for requested fields
-        col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
-        field_indices = [self.field_name_mapping[field] for field in field_names]
-        if field_indices:
-            col_mask[field_indices] = True
+            # Create column mask for requested fields
+            col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
+            field_indices = [self.field_name_mapping[field] for field in field_names]
+            if field_indices:
+                col_mask[field_indices] = True
 
-        # Filter production status by masks
-        relevant_status = self.production_status[row_mask][:, col_mask]
+            # Filter production status by masks
+            relevant_status = self.production_status[row_mask][:, col_mask]
 
         # Check if all required fields are ready for each sample
         all_fields_ready = torch.all(relevant_status, dim=1)
