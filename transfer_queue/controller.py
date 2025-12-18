@@ -486,6 +486,7 @@ class DataPartitionStatus:
             "created_at": self.created_at,
             "total_samples_num": self.total_samples_num,
             "total_fields_num": self.total_fields_num,
+            "allocated_samples_num": self.allocated_samples_num,
             "allocated_fields_num": self.allocated_fields_num,
             "registered_tasks": list(self.consumption_status.keys()),
         }

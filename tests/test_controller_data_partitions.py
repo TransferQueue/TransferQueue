@@ -291,6 +291,7 @@ def test_data_partition_status_advanced():
         "created_at",
         "total_samples_num",
         "total_fields_num",
+        "allocated_samples_num",
         "allocated_fields_num",
         "registered_tasks",
         "produced_samples",
