@@ -188,11 +188,18 @@ class DataPartitionStatus:
 
     # Production status tensor - dynamically expandable
     # Values: 0 = not produced, 1 = ready for consumption
-    production_status: Optional[torch.Tensor] = torch.zeros(TQ_INIT_SAMPLE_NUM, TQ_INIT_FIELD_NUM, dtype=torch.int8)
+    production_status: Optional[torch.Tensor] = field(
+        default_factory=lambda: torch.zeros(TQ_INIT_SAMPLE_NUM, TQ_INIT_FIELD_NUM, dtype=torch.int8)
+    )
 
     # Consumption status per task - task_name -> consumption_tensor
     # Each tensor tracks which samples have been consumed by that task
     consumption_status: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    # Sample metadata
+    global_indexes: set[int] = field(
+        default_factory=set
+    )  # set of global indexes that have been added to this partition
 
     # Field metadata
     field_name_mapping: dict[str, int] = field(default_factory=dict)  # field_name -> column_index
@@ -202,8 +209,8 @@ class DataPartitionStatus:
     # Dynamic configuration - these are computed from the current state
     @property
     def total_samples_num(self) -> int:
-        """Current number of samples (rows) in the partition."""
-        return self.production_status.shape[0] if self.production_status is not None else 0
+        """Current number of samples in the partition."""
+        return len(self.global_indexes)
 
     @property
     def total_fields_num(self) -> int:
@@ -230,26 +237,26 @@ class DataPartitionStatus:
         Args:
             required_samples: Minimum number of samples needed
         """
-        current_samples = self.production_status.shape[0]
-        if required_samples > current_samples:
+        current_sample_space = self.allocated_samples_num
+        if required_samples > current_sample_space:
             # Expand rows using minimum expansion size for predictable memory usage
-            expansion_needed = required_samples - current_samples
+            expansion_needed = required_samples - current_sample_space
             min_expansion = max(TQ_SAMPLE_MIN_EXPANSION_SIZE, expansion_needed)
-            new_samples = current_samples + min_expansion
+            new_samples = current_sample_space + min_expansion
             new_fields = self.production_status.shape[1]
 
             expanded_tensor = torch.zeros(new_samples, new_fields, dtype=torch.int8)
-            expanded_tensor[:current_samples, :] = self.production_status
+            expanded_tensor[:current_sample_space, :] = self.production_status
             self.production_status = expanded_tensor
 
             # Update consumption tensors for all tasks
             for task_name, consumption_tensor in self.consumption_status.items():
                 expanded_consumption = torch.zeros(new_samples, dtype=torch.int8)
-                expanded_consumption[:current_samples] = consumption_tensor
+                expanded_consumption[:current_sample_space] = consumption_tensor
                 self.consumption_status[task_name] = expanded_consumption
 
             logger.debug(
-                f"Expanded partition {self.partition_id} from {current_samples} to {new_samples} samples "
+                f"Expanded partition {self.partition_id} from {current_sample_space} to {new_samples} samples "
                 f"(added {min_expansion} samples)"
             )
 
@@ -328,7 +335,10 @@ class DataPartitionStatus:
                 self.production_status[torch.tensor(global_indices)[:, None], torch.tensor(field_indices)] = 1
 
             # Update field metadata
-            self._update_field_metadata(global_indices, field_names, dtypes, shapes)
+            self._update_field_metadata(global_indices, dtypes, shapes)
+
+            # Save these global_indexes
+            self.global_indexes.update(global_indices)
 
             return True
 
@@ -339,7 +349,6 @@ class DataPartitionStatus:
     def _update_field_metadata(
         self,
         global_indices: list[int],
-        field_names: list[str],
         dtypes: Optional[dict[int, dict[str, Any]]],
         shapes: Optional[dict[int, dict[str, Any]]],
     ):
@@ -384,7 +393,7 @@ class DataPartitionStatus:
         """
         if task_name not in self.consumption_status:
             if self.production_status is not None:
-                self.consumption_status[task_name] = torch.zeros(self.total_samples_num, dtype=torch.int8)
+                self.consumption_status[task_name] = torch.zeros(self.allocated_samples_num, dtype=torch.int8)
             else:
                 self.consumption_status[task_name] = torch.zeros(0, dtype=torch.int8)
 
@@ -401,6 +410,7 @@ class DataPartitionStatus:
         """
         try:
             consumption_status = self.get_consumption_status(task_name)
+
             if consumption_status.numel() > 0 and global_indices:
                 consumption_status[global_indices] = 1
         except Exception as e:
@@ -432,7 +442,7 @@ class DataPartitionStatus:
             if field_name not in self.field_name_mapping:
                 return []
 
-        row_mask = torch.ones(self.total_samples_num, dtype=torch.bool)
+        row_mask = torch.ones(self.allocated_samples_num, dtype=torch.bool)
 
         # Apply consumption filter (exclude already consumed samples)
         consumption_status = self.get_consumption_status(task_name)
@@ -478,6 +488,7 @@ class DataPartitionStatus:
             "created_at": self.created_at,
             "total_samples_num": self.total_samples_num,
             "total_fields_num": self.total_fields_num,
+            "allocated_samples_num": self.allocated_samples_num,
             "allocated_fields_num": self.allocated_fields_num,
             "registered_tasks": list(self.consumption_status.keys()),
         }

@@ -40,7 +40,8 @@ def test_data_partition_status():
     partition = DataPartitionStatus(partition_id="test@partition_1")
 
     # Test initial state
-    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
+    assert partition.total_samples_num == 0
+    assert partition.allocated_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
     assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
     assert partition.production_status is not None
@@ -171,8 +172,8 @@ def test_dynamic_expansion_scenarios():
             10: {"field_1": (32,)},
         },
     )
-    assert partition.total_samples_num >= 11  # Should accommodate index 10
-
+    assert partition.total_samples_num == 3
+    assert partition.allocated_samples_num >= 11  # Should accommodate index 10
     print("✓ Large index gaps handled correctly")
 
     # Scenario 2: Adding many fields dynamically
@@ -212,7 +213,8 @@ def test_data_partition_status_advanced():
     partition = DataPartitionStatus(partition_id="advanced_test")
 
     # Initially empty
-    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
+    assert partition.total_samples_num == 0
+    assert partition.allocated_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
     assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
 
@@ -289,6 +291,7 @@ def test_data_partition_status_advanced():
         "created_at",
         "total_samples_num",
         "total_fields_num",
+        "allocated_samples_num",
         "allocated_fields_num",
         "registered_tasks",
         "produced_samples",
@@ -353,7 +356,7 @@ def test_edge_cases_and_error_handling():
     task_name = "early_task"
     consumption_tensor = partition.get_consumption_status(task_name)
     assert consumption_tensor is not None
-    assert consumption_tensor.shape[0] == partition.total_samples_num
+    assert consumption_tensor.shape[0] == partition.allocated_samples_num
 
     # Test 4: Production status update error conditions
     # Test with empty lists
@@ -371,78 +374,149 @@ def test_edge_cases_and_error_handling():
     print("Edge cases and error handling tests passed!\n")
 
 
-def test_backward_compatibility():
-    """Test backward compatibility with existing interfaces."""
-    print("Testing backward compatibility...")
+def test_multiple_partition_isolation():
+    """Test that multiple DataPartitionStatus objects do not interfere with each other."""
+    print("Testing multiple DataPartitionStatus isolation...")
 
+    # Create three independent test partitions.
     from transfer_queue.controller import DataPartitionStatus
 
-    partition = DataPartitionStatus(partition_id="compat_test")
+    partition_train = DataPartitionStatus(partition_id="train@global_batch_0")
+    partition_inference = DataPartitionStatus(partition_id="inference@global_batch_1")
+    partition_eval = DataPartitionStatus(partition_id="eval@global_batch_2")
 
-    # Test 1: Basic workflow should work as before
-    sample_indices = [0, 1, 2, 3, 4]
-    field_names = ["input_ids", "attention_mask", "labels"]
-    dtypes = {
-        k: {"input_ids": "torch.int64", "attention_mask": "torch.bool", "labels": "torch.int64"} for k in sample_indices
+    # Set up different fields for each partition.
+    train_fields = ["input_ids", "attention_mask", "labels"]
+    inference_fields = ["hidden_states", "logits", "past_key_values"]
+    eval_fields = ["input_ids", "labels", "metadata"]
+
+    dtypes_train = {
+        i: {f: "torch.int64" if f != "attention_mask" else "torch.bool" for f in train_fields} for i in [0, 1, 2, 10]
     }
-    shapes = {k: {"input_ids": (32,), "attention_mask": (32,), "labels": (32,)} for k in sample_indices}
-    success = partition.update_production_status(
-        sample_indices,
-        field_names,
-        dtypes=dtypes,
-        shapes=shapes,
-    )
-    assert success
+    shapes_train = {i: {f: (128,) for f in train_fields} for i in [0, 1, 2, 10]}
+    partition_train.update_production_status([0, 1, 2, 10], train_fields, dtypes_train, shapes_train)
 
-    # Traditional consumption tracking
-    task_name = "training_task"
-    ready_samples = partition.scan_data_status(field_names, task_name)
-    assert len(ready_samples) == 5
+    dtypes_inference = {i: {f: "torch.float32" for f in inference_fields} for i in range(5)}
+    shapes_inference = {
+        i: {f: (512, 768) if f == "hidden_states" else (32, 1000) for f in inference_fields} for i in range(5)
+    }
+    partition_inference.update_production_status([0, 1, 2, 3, 4], inference_fields, dtypes_inference, shapes_inference)
 
-    # Mark as consumed
-    partition.mark_consumed(task_name, ready_samples[:3])
+    dtypes_eval = {
+        i: {f: "torch.int64" if f in ["input_ids", "labels"] else str for f in eval_fields} for i in range(4)
+    }
+    shapes_eval = {i: {f: (64,) if f in ["input_ids", "labels"] else str for f in eval_fields} for i in range(4)}
+    partition_eval.update_production_status([0, 1, 2, 3], eval_fields, dtypes_eval, shapes_eval)
 
-    # Should now return only unconsumed samples
-    remaining_ready = partition.scan_data_status(field_names, task_name)
-    assert len(remaining_ready) == 2
+    # Test that field registrations are independent across partitions."""
+    assert set(partition_train.field_name_mapping.keys()) == set(train_fields)
+    assert set(partition_inference.field_name_mapping.keys()) == set(inference_fields)
+    assert set(partition_eval.field_name_mapping.keys()) == set(eval_fields)
 
-    print("✓ Basic workflow maintains compatibility")
+    assert "hidden_states" not in partition_train.field_name_mapping
+    assert "input_ids" not in partition_inference.field_name_mapping
+    assert "logits" not in partition_eval.field_name_mapping
 
-    # Test 2: Field mapping should be consistent
-    for field in field_names:
-        assert field in partition.field_name_mapping
-        field_idx = partition.field_name_mapping[field]
-        assert field_idx >= 0
-        assert field_idx < partition.allocated_fields_num
+    print("✓ Independent field registrations work correctly")
 
-    print("✓ Field mapping consistency maintained")
+    # Test that sample management is independent across partitions."""
+    assert partition_train.total_samples_num == 4
+    assert partition_inference.total_samples_num == 5
+    assert partition_eval.total_samples_num == 4
 
-    # Test 3: Metadata access patterns
-    for sample_idx in sample_indices:
-        for field in field_names:
-            # These should return reasonable values or None
-            dtype = partition.get_field_dtype(sample_idx, field)
-            shape = partition.get_field_shape(sample_idx, field)
-            assert dtype is not None
-            assert shape is not None
-            # Should not crash even if metadata wasn't provided
+    assert partition_train.allocated_samples_num >= 11
+    assert partition_inference.allocated_samples_num >= 5
+    assert partition_eval.allocated_samples_num >= 4
 
-    print("✓ Metadata access patterns preserved")
+    assert partition_train.production_status is not partition_inference.production_status
+    assert partition_train.production_status is not partition_eval.production_status
+    assert partition_inference.production_status is not partition_eval.production_status
 
-    # Test 4: Statistics format should be familiar
-    stats = partition.get_statistics()
-    familiar_keys = ["partition_id", "total_samples_num", "total_fields_num"]
-    for key in familiar_keys:
-        assert key in stats
+    train_shape = partition_train.production_status.shape
+    inference_shape = partition_inference.production_status.shape
+    eval_shape = partition_eval.production_status.shape
 
-    assert isinstance(stats["total_samples_num"], int)
-    assert isinstance(stats["total_fields_num"], int)
-    assert stats["total_samples_num"] > 0
-    assert stats["total_fields_num"] == len(field_names)
+    assert train_shape != inference_shape
+    assert train_shape != eval_shape
+    assert inference_shape != eval_shape
 
-    print("✓ Statistics format maintains familiarity")
+    print("✓ Independent sample management works correctly")
 
-    print("Backward compatibility tests passed!\n")
+    # Test that consumption tracking is independent across partitions."""
+    task_name = "shared_task"
+
+    partition_train.mark_consumed(task_name, [0, 1])
+    partition_inference.mark_consumed(task_name, [1, 2, 3])
+    partition_eval.mark_consumed(task_name, [0, 2])
+
+    train_consumption = partition_train.get_consumption_status(task_name)
+    inference_consumption = partition_inference.get_consumption_status(task_name)
+    eval_consumption = partition_eval.get_consumption_status(task_name)
+
+    assert train_consumption[0] == 1 and train_consumption[1] == 1
+    assert inference_consumption[1] == 1 and inference_consumption[2] == 1 and inference_consumption[3] == 1
+    assert eval_consumption[0] == 1 and eval_consumption[2] == 1
+
+    assert train_consumption[2] == 0
+    assert inference_consumption[0] == 0
+    assert eval_consumption[1] == 0 and eval_consumption[3] == 0
+
+    print("✓ Independent consumption tracking works correctly")
+
+    # Test that scanning results are independent across partitions.
+    train_ready = partition_train.scan_data_status(train_fields, task_name)
+    inference_ready = partition_inference.scan_data_status(inference_fields, task_name)
+    eval_ready = partition_eval.scan_data_status(eval_fields, task_name)
+
+    assert 2 in train_ready and 10 in train_ready and 0 not in train_ready and 1 not in train_ready
+    assert 0 in inference_ready and 4 in inference_ready
+    assert 1 not in inference_ready and 2 not in inference_ready and 3 not in inference_ready
+    assert 1 in eval_ready and 3 in eval_ready
+    assert 0 not in eval_ready and 2 not in eval_ready
+
+    assert len(set(train_ready) & set(inference_ready)) == 0
+    assert len(set(train_ready) & set(eval_ready)) == 0
+    assert len(set(inference_ready) & set(eval_ready)) == 0
+
+    print("✓ Independent scanning results work correctly")
+
+    # Test that statistics are independent across partitions."""
+    train_stats = partition_train.get_statistics()
+    inference_stats = partition_inference.get_statistics()
+    eval_stats = partition_eval.get_statistics()
+
+    assert train_stats["total_fields_num"] == 3
+    assert inference_stats["total_fields_num"] == 3
+    assert eval_stats["total_fields_num"] == 3
+
+    assert task_name in train_stats["registered_tasks"]
+    assert task_name in inference_stats["registered_tasks"]
+    assert task_name in eval_stats["registered_tasks"]
+
+    assert train_stats["consumption_statistics"][task_name]["consumed_samples"] == 2
+    assert inference_stats["consumption_statistics"][task_name]["consumed_samples"] == 3
+    assert eval_stats["consumption_statistics"][task_name]["consumed_samples"] == 2
+
+    print("✓ Independent statistics work correctly")
+
+    # Test that expansion behavior is independent across partitions.
+    initial_train_shape = partition_train.production_status.shape
+    initial_inference_shape = partition_inference.production_status.shape
+    initial_eval_shape = partition_eval.production_status.shape
+
+    dtypes_expand = {10: {"new_field": "torch.bool"}, 11: {"new_field": "torch.bool"}}
+    shapes_expand = {10: {"new_field": (64,)}, 11: {"new_field": (64,)}}
+    partition_train.update_production_status([10, 11], ["new_field"], dtypes_expand, shapes_expand)
+
+    assert partition_inference.production_status.shape == initial_inference_shape
+    assert partition_eval.production_status.shape == initial_eval_shape
+
+    assert partition_train.production_status.shape[0] >= initial_train_shape[0]
+    assert partition_train.total_fields_num == 4
+
+    print("✓ Independent expansion behavior works correctly")
+
+    print("Multiple DataPartitionStatus isolation tests passed!\n")
 
 
 def test_performance_characteristics():
@@ -512,65 +586,3 @@ def test_performance_characteristics():
     print("✓ Memory usage patterns reasonable")
 
     print("Performance characteristics tests passed!\n")
-
-
-def main():
-    """Run all tests."""
-    print("=== Comprehensive Testing of TransferQueue Controller ===\n")
-
-    test_functions = [
-        test_data_partition_status,
-        test_partition_interface,
-        test_dynamic_expansion_scenarios,
-        test_data_partition_status_advanced,
-        test_edge_cases_and_error_handling,
-        test_backward_compatibility,
-        test_performance_characteristics,
-    ]
-
-    passed_tests = 0
-    total_tests = len(test_functions)
-
-    try:
-        for test_func in test_functions:
-            try:
-                test_func()
-                passed_tests += 1
-            except Exception as e:
-                print(f"❌ {test_func.__name__} failed: {e}")
-                import traceback
-
-                traceback.print_exc()
-                print()
-
-        print("=" * 60)
-        print(f"TEST SUMMARY: {passed_tests}/{total_tests} test suites passed")
-
-        if passed_tests == total_tests:
-            print("🎉 ALL TESTS PASSED!")
-            print("\nThe refactored DataPartitionStatus demonstrates:")
-            print("1. ✅ Dynamic row and column expansion without pre-allocation")
-            print("2. ✅ Robust partition-controller interface design")
-            print("3. ✅ Self-contained state management in DataPartitionStatus")
-            print("4. ✅ Flexible consumption tracking per task")
-            print("5. ✅ Comprehensive scanning and query capabilities")
-            print("6. ✅ Advanced error handling and edge case management")
-            print("7. ✅ Backward compatibility with existing interfaces")
-            print("8. ✅ Good performance characteristics for large datasets")
-            print("\n🚀 DataPartitionStatus refactoring is ready for production!")
-        else:
-            print(f"⚠️  {total_tests - passed_tests} test suites failed.")
-            print("Please review the failures before deploying to production.")
-
-        print("=" * 60)
-
-    except Exception as e:
-        print(f"❌ Critical test failure: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
