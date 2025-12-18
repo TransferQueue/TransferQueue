@@ -271,9 +271,9 @@ class BatchMeta:
         for idx, sample in enumerate(self.samples):
             sample.add_fields(fields=fields[idx])
 
-            # Update batch-level fields cache
-            object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
-            object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
+        # Update batch-level fields cache
+        object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
+        object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
         return self
 
     def select_samples(self, sample_indices: list[int]) -> "BatchMeta":
