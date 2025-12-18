@@ -40,11 +40,10 @@ class TransferQueueRole(ExplicitEnum):
     CLIENT = "TransferQueueClient"
 
 
-# production_status enum: 0: not produced, 1: ready for consume, 2: consumed
+# production_status enum: 0: not produced, 1: ready for consume
 class ProductionStatus(ExplicitEnum):
     NOT_PRODUCED = 0
     READY_FOR_CONSUME = 1
-    CONSUMED = 2
 
 
 def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
