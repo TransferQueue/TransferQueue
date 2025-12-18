@@ -214,7 +214,7 @@ class DataPartitionStatus:
 
     # Threading lock for concurrency control; only for preventing mask operation error when expanding production_status.
     # No need to strictly lock for every read/write operation since freshness is not critical.
-    data_status_lock: Lock = Lock()
+    data_status_lock: Lock = field(default_factory=Lock)
 
     # Dynamic configuration - these are computed from the current state
     @property
