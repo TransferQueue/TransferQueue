@@ -192,12 +192,12 @@ class BatchMeta:
                 raise ValueError("All samples in BatchMeta must have the same field_names.")
             object.__setattr__(self, "_field_names", first_sample_field_names)
 
-            object.__setattr__(self, "_partition_id", [sample.partition_id for sample in self.samples])
+            object.__setattr__(self, "_partition_ids", [sample.partition_id for sample in self.samples])
 
         else:
             object.__setattr__(self, "_global_indexes", [])
             object.__setattr__(self, "_field_names", [])
-            object.__setattr__(self, "_partition_id", [])
+            object.__setattr__(self, "_partition_ids", [])
 
     @property
     def size(self) -> int:
@@ -222,8 +222,8 @@ class BatchMeta:
 
     @property
     def partition_ids(self) -> list[str]:
-        """Get partition id of this batch (assumed to be the same for all samples)"""
-        return getattr(self, "_partition_id", [])
+        """Get partition ids for all samples in this batch as a list (one per sample)"""
+        return getattr(self, "_partition_ids", [])
 
     # Extra info interface methods
     def get_extra_info(self, key: str, default: Any = None) -> Any:
@@ -430,8 +430,8 @@ class BatchMeta:
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
         """
         Create a union of this batch's fields with another batch's fields.
-        Assume both batches have the same global indices and partition_id. If fields overlap, the
-        fields in this batch will be replaced by the other batch's fields.
+        Assume both batches have the same global indices and matching partition_ids for all samples.
+         If fields overlap, the fields in this batch will be replaced by the other batch's fields.
 
         Args:
             other: Another BatchMeta to union with
