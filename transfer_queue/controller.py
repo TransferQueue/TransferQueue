@@ -881,21 +881,21 @@ class TransferQueueController:
             # Use partition's own scanning method
             ready_sample_indices = partition.scan_data_status(data_fields, task_name)
 
-            if len(ready_sample_indices) >= batch_size:
-                return ready_sample_indices[:batch_size]
+            if len(ready_sample_indices) < batch_size:
+                if time.time() - start_time > timeout:
+                    raise TimeoutError(
+                        f"Timeout waiting for sufficient data in partition {partition_id}. "
+                        f"Required: {batch_size}, Available: {len(ready_sample_indices)}"
+                    )
 
-            if time.time() - start_time > timeout:
-                raise TimeoutError(
-                    f"Timeout waiting for sufficient data in partition {partition_id}. "
-                    f"Required: {batch_size}, Available: {len(ready_sample_indices)}"
+                logger.warning(
+                    f"Insufficient data in partition {partition_id} for task {task_name}: requiring {batch_size} "
+                    f"samples with {data_fields}, but only have {len(ready_sample_indices)} samples. "
+                    f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
                 )
-
-            logger.warning(
-                f"Insufficient data in partition {partition_id} for task {task_name}: requiring {batch_size} samples "
-                f"with {data_fields}, but only have {len(ready_sample_indices)} samples. "
-                f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
-            )
-            time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
+                time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
+            else:
+                return ready_sample_indices
 
     # ==================== Metadata Generation API ====================
 
