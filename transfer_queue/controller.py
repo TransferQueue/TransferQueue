@@ -75,24 +75,28 @@ class PartitionIndexManager:
     """
     Manages the mapping relationship between partitions and global indexes,
     responsible for index allocation and reuse.
+
+    Each partition has its own independent index space starting from 0,
+    allowing for more efficient memory usage and avoiding excessive allocation.
     """
 
     def __init__(self):
         # Records the set of global_indexes used by each partition
         self.partition_to_indexes = defaultdict(set)
 
-        # Reusable global_index pool - stored using list
-        self.reusable_indexes = []
+        # Per-partition reusable index pools - partition_id -> list of reusable indexes
+        self.partition_reusable_indexes = defaultdict(list)
 
-        # Global index counter for allocating new indexes
-        self.global_index_counter = 0
+        # Per-partition index counters for allocating new indexes
+        self.partition_counters = defaultdict(int)
 
-        # Track all active indexes
-        self.allocated_indexes = set()
+        # Track all active indexes per partition
+        self.partition_allocated_indexes = defaultdict(set)
 
     def allocate_indexes(self, partition_id, count=1) -> list:
         """
         Allocate global_indexes for the specified partition.
+        Each partition has its own independent index space starting from 0.
         Prioritizes obtaining from reusable pool, allocates new indexes when insufficient.
 
         Args:
@@ -106,29 +110,32 @@ class PartitionIndexManager:
             raise ValueError(f"Number of indexes needed must larger than 0, but got {count}")
         indexes = []
 
+        # Get partition-specific reusable pool
+        reusable_pool = self.partition_reusable_indexes[partition_id]
+
         # Get indexes from reusable pool
-        if self.reusable_indexes:
+        if reusable_pool:
             # Calculate number of indexes needed from reusable pool
-            num_reuse = min(count, len(self.reusable_indexes))
+            num_reuse = min(count, len(reusable_pool))
 
             # Use slice operation to get multiple elements at once (FIFO principle)
-            indexes.extend(self.reusable_indexes[:num_reuse])
-            del self.reusable_indexes[:num_reuse]
+            indexes.extend(reusable_pool[:num_reuse])
+            del reusable_pool[:num_reuse]
 
         # If reusable pool doesn't have enough indexes, allocate new ones
         if len(indexes) < count:
-            # Ensure newly allocated indexes don't conflict with existing ones
+            # Ensure newly allocated indexes don't conflict with existing ones in this partition
             needed = count - len(indexes)
-            # Batch allocate consecutive index ranges
-            start_index = self.global_index_counter
+            # Batch allocate consecutive index ranges starting from 0 for this partition
+            start_index = self.partition_counters[partition_id]
             end_index = start_index + needed
 
             # Directly generate consecutive index list
             new_indexes = list(range(start_index, end_index))
 
             # Batch update status
-            self.allocated_indexes.update(new_indexes)
-            self.global_index_counter = end_index
+            self.partition_allocated_indexes[partition_id].update(new_indexes)
+            self.partition_counters[partition_id] = end_index
 
             indexes.extend(new_indexes)
 
@@ -137,7 +144,7 @@ class PartitionIndexManager:
 
         return indexes
 
-    def release_indexes(self, partition_id):
+    def release_indexes(self, partition_id) -> list[int]:
         """
         Release all global_indexes of the specified partition, adding them to reusable pool.
 
@@ -150,17 +157,16 @@ class PartitionIndexManager:
         if partition_id in self.partition_to_indexes:
             indexes = self.partition_to_indexes.pop(partition_id)
 
-            # Add released indexes to reusable pool
-            self.reusable_indexes.extend(indexes)
+            # Add released indexes to partition-specific reusable pool
+            self.partition_reusable_indexes[partition_id].extend(indexes)
 
-            # Remove these indexes from allocated_indexes
-            for idx in indexes:
-                self.allocated_indexes.discard(idx)
+            # Remove these indexes from partition's allocated_indexes
+            self.partition_allocated_indexes[partition_id].difference_update(indexes)
 
             return indexes
         return []
 
-    def get_indexes_for_partition(self, partition_id):
+    def get_indexes_for_partition(self, partition_id) -> set[int]:
         """
         Get all global_indexes for the specified partition.
 
