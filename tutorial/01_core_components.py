@@ -43,7 +43,7 @@ from tensordict import TensorDict  # noqa: E402
 parent_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(parent_dir))
 
-from transfer_queue import (  # noqa: E402  # noqa: E402
+from transfer_queue import (  # noqa: E402
     SimpleStorageUnit,
     TransferQueueClient,
     TransferQueueController,
@@ -66,14 +66,13 @@ def demonstrate_basic_setup():
     # Configuration
     config = OmegaConf.create(
         {
-            "global_batch_size": 8,
             "num_data_storage_units": 2,
         }
     )
 
     print("[Step 1] Creating Storage Backend (using default SimpleStorageUnit)...")
     storage_units = {}
-    for i in range(2):
+    for i in range(config["num_data_storage_units"]):
         storage_units[i] = SimpleStorageUnit.remote(storage_unit_size=100)
         print(f"  ✓ Created SimpleStorageUnit #{i}")
 

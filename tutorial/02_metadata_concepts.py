@@ -300,13 +300,12 @@ def demonstrate_real_workflow():
     # Setup TransferQueue
     config = OmegaConf.create(
         {
-            "global_batch_size": 8,
             "num_data_storage_units": 2,
         }
     )
 
     storage_units = {}
-    for i in range(2):
+    for i in range(config["num_data_storage_units"]):
         storage_units[i] = SimpleStorageUnit.remote(storage_unit_size=100)
 
     controller = TransferQueueController.remote()
