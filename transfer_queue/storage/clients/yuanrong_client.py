@@ -1,6 +1,6 @@
 import logging
 import os
-import pickle
+import struct
 from typing import Any
 
 import torch
@@ -8,6 +8,7 @@ from torch import Tensor
 
 from transfer_queue.storage.clients.base import TransferQueueStorageKVClient
 from transfer_queue.storage.clients.factory import StorageClientFactory
+from transfer_queue.utils.serial_utils import bytestr, deserialization, serialization
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
@@ -20,6 +21,62 @@ try:
     import datasystem
 except ImportError:
     YUANRONG_DATASYSTEM_IMPORTED = False
+
+
+HEADER_FMT = "<I"  # item_count
+HEADER_SIZE = struct.calcsize(HEADER_FMT)
+
+ENTRY_FMT = "<II"  # offset, length
+ENTRY_SIZE = struct.calcsize(ENTRY_FMT)
+
+
+def calc_packed_size(items: list[bytestr]):
+    return HEADER_SIZE + len(items) * ENTRY_SIZE + sum(len(x) for x in items)
+
+
+def pack_into(target: bytearray | memoryview | bytes, items: list[bytestr]):
+    """Pack multiple contiguous buffers into a single buffer.
+        ┌───────────────┐
+        │ item_count    │  uint32
+        ├───────────────┤
+        │ entries       │  N * item entries
+        ├───────────────┤
+        │ payload blob  │  N * concatenated buffers
+        └───────────────┘
+
+    Args:
+        target (bytearray | memoryview | bytes): The target buffer to pack into.
+        items (list[bytestr]): List of contiguous buffers to pack.
+    Returns:
+        None
+    """
+    mv = memoryview(target)
+    struct.pack_into(HEADER_FMT, mv, 0, len(items))
+    entry_offset = HEADER_SIZE
+    payload_offset = HEADER_SIZE + len(items) * ENTRY_SIZE
+    for item in items:
+        struct.pack_into(ENTRY_FMT, mv, entry_offset, payload_offset, len(item))
+        mv[payload_offset : payload_offset + len(item)] = item
+        entry_offset += ENTRY_SIZE
+        payload_offset += len(item)
+
+
+def unpack_from(source: bytearray | memoryview | bytes) -> list[bytestr]:
+    """Unpack multiple contiguous buffers from a single packed buffer.
+
+    Args:
+        source (bytearray | memoryview | bytes): The packed source buffer.
+
+    Returns:
+        list[bytestr]: List of unpacked contiguous buffers.
+    """
+    mv = memoryview(source)
+    item_count, _ = struct.unpack_from(HEADER_FMT, mv, 0)
+    offsets = []
+    for i in range(item_count):
+        offset, length = struct.unpack_from(ENTRY_FMT, mv, HEADER_SIZE + i * ENTRY_SIZE)
+        offsets.append((offset, length))
+    return [mv[offset : offset + length] for offset, length in offsets]
 
 
 @StorageClientFactory.register("YuanrongStorageClient")
@@ -116,7 +173,7 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
 
                 else:
                     cpu_keys.append(key)
-                    cpu_values.append(pickle.dumps(value))
+                    cpu_values.append(value)
 
             # put NPU data
             for i in range(0, len(npu_keys), NPU_DS_CLIENT_KEYS_LIMIT):
@@ -134,15 +191,14 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
             for i in range(0, len(cpu_keys), CPU_DS_CLIENT_KEYS_LIMIT):
                 batch_keys = cpu_keys[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
                 batch_values = cpu_values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
-                self._cpu_ds_client.mset(batch_keys, batch_values)
+                self.mset_zcopy(batch_keys, batch_values)
 
         else:
             #  All data goes through CPU path
-            pickled_values = [pickle.dumps(v) for v in values]
             for i in range(0, len(keys), CPU_DS_CLIENT_KEYS_LIMIT):
                 batch_keys = keys[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
-                batch_vals = pickled_values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
-                self._cpu_ds_client.mset(batch_keys, batch_vals)
+                batch_vals = values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
+                self.mset_zcopy(batch_keys, batch_vals)
 
     def put(self, keys: list[str], values: list[Any]):
         """Stores multiple key-value pairs to remote storage.
@@ -228,9 +284,9 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
             for i in range(0, len(cpu_keys), CPU_DS_CLIENT_KEYS_LIMIT):
                 batch_keys = cpu_keys[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
                 batch_indices = cpu_indices[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
-                raw_values = self._cpu_ds_client.get(batch_keys)
-                for idx, raw_val in zip(batch_indices, raw_values, strict=False):
-                    results[idx] = pickle.loads(raw_val)
+                objects = self.mget_zcopy(batch_keys)
+                for idx, obj in zip(batch_indices, objects, strict=False):
+                    results[idx] = obj
 
             return results
 
@@ -284,3 +340,29 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
             keys (List[str]): List of keys to remove.
         """
         self._batch_clear(keys)
+
+    def mset_zcopy(self, keys: list[str], objs: list[Any]):
+        """Zero-copy batch set for KVClient using pack_into.
+
+        Args:
+            keys (list[str]): List of string keys.
+            objs (list[Any]): List of objects to serialize and store.
+        """
+        items_list = [serialization(obj) for obj in objs]
+        packed_sizes = [calc_packed_size(items) for items in items_list]
+        buffers = self._cpu_ds_client.mcreate(keys, packed_sizes)
+        for target, item in zip(buffers, items_list, strict=False):
+            pack_into(target, item)
+        self._cpu_ds_client.mset(buffers)
+
+    def mget_zcopy(self, keys: list[str]) -> list[Any]:
+        """Zero-copy batch get for KVClient using unpack_from.
+
+        Args:
+            keys (list[str]): List of string keys.
+
+        Returns:
+            list[Any]: List of deserialized objects.
+        """
+        buffers = self._cpu_ds_client.mget(keys)
+        return [deserialization(unpack_from(buffer)) if buffer is not None else None for buffer in buffers]
