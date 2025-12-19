@@ -883,6 +883,7 @@ class TransferQueueController:
 
             if len(ready_sample_indices) < batch_size:
                 if time.time() - start_time > timeout:
+                    # TODO: dont't raise error here, return empty list and let caller handle it (retry or not)
                     raise TimeoutError(
                         f"Timeout waiting for sufficient data in partition {partition_id}. "
                         f"Required: {batch_size}, Available: {len(ready_sample_indices)}"
