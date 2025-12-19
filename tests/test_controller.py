@@ -283,8 +283,9 @@ class TestTransferQueueController:
                 mode="insert",
             )
         )
-        # With per-partition indexing, partition3 reuses released indexes from partition1 [0-31]
-        # and then allocates new ones [32-63] for the remaining samples
+
+        # With per-partition indexing, partition3 uses its own independent index space [0-63]
+        # separate from partition1, without reusing indexes across partitions
         part3_index_range = gbs_3 * num_n_samples_3
         assert metadata_2.global_indexes == list(range(part3_index_range))
         assert metadata_2.samples[0].partition_id == "train_1"

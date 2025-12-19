@@ -93,7 +93,7 @@ class PartitionIndexManager:
         # Track all active indexes per partition
         self.partition_allocated_indexes = defaultdict(set)
 
-    def allocate_indexes(self, partition_id, count=1) -> list:
+    def allocate_indexes(self, partition_id, count=1) -> list[int]:
         """
         Allocate global_indexes for the specified partition.
         Each partition has its own independent index space starting from 0.
@@ -107,7 +107,7 @@ class PartitionIndexManager:
             list: List of allocated global_indexes
         """
         if count <= 0:
-            raise ValueError(f"Number of indexes needed must larger than 0, but got {count}")
+            raise ValueError(f"Number of indexes needed must be larger than 0, but got {count}")
         indexes = []
 
         # Get partition-specific reusable pool
