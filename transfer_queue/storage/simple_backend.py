@@ -28,14 +28,20 @@ from ray.util import get_node_ip_address
 from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.metadata import SampleMeta
+from transfer_queue.utils.perf_utils import IntervalPerfMonitor
 from transfer_queue.utils.utils import TransferQueueRole
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket, get_free_port
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
-# ZMQ timeouts (in seconds) and retry configurations
-TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))
+# Ensure logger has a handler (for Ray Actor subprocess)
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
+TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
 
 
 class StorageUnitData:
@@ -200,7 +206,7 @@ class SimpleStorageUnit:
     def _start_process_put_get(self) -> None:
         """Create a daemon thread and start put/get process."""
         self.process_put_get_thread = Thread(
-            target=self._process_put_get, name=f"StorageUnitProcessPutGetThread-{self.zmq_server_info.id}", daemon=True
+            target=self._process_put_get, name=f"StorageUnitProcessPutGetThread-{self.storage_unit_id}", daemon=True
         )
         self.process_put_get_thread.start()
 
@@ -208,6 +214,10 @@ class SimpleStorageUnit:
         """Process put_get_socket request."""
         poller = zmq.Poller()
         poller.register(self.put_get_socket, zmq.POLLIN)
+
+        logger.info(f"[{self.storage_unit_id}]: start processing put/get requests...")
+
+        perf_monitor = IntervalPerfMonitor(caller_name=self.storage_unit_id)
 
         while True:
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
@@ -219,29 +229,32 @@ class SimpleStorageUnit:
                 request_msg = ZMQMessage.deserialize(serialized_msg)
                 operation = request_msg.request_type
                 try:
-                    logger.debug(f"[{self.zmq_server_info.id}]: receive operation: {operation}, message: {request_msg}")
+                    logger.debug(f"[{self.storage_unit_id}]: receive operation: {operation}, message: {request_msg}")
 
                     if operation == ZMQRequestType.PUT_DATA:
-                        response_msg = self._handle_put(request_msg)
+                        with perf_monitor.measure(op_type="PUT_DATA"):
+                            response_msg = self._handle_put(request_msg)
                     elif operation == ZMQRequestType.GET_DATA:
-                        response_msg = self._handle_get(request_msg)
+                        with perf_monitor.measure(op_type="GET_DATA"):
+                            response_msg = self._handle_get(request_msg)
                     elif operation == ZMQRequestType.CLEAR_DATA:
-                        response_msg = self._handle_clear(request_msg)
+                        with perf_monitor.measure(op_type="CLEAR_DATA"):
+                            response_msg = self._handle_clear(request_msg)
                     else:
                         response_msg = ZMQMessage.create(
                             request_type=ZMQRequestType.PUT_GET_OPERATION_ERROR,
-                            sender_id=self.zmq_server_info.id,
+                            sender_id=self.storage_unit_id,
                             body={
-                                "message": f"Storage unit id #{self.zmq_server_info.id} "
+                                "message": f"Storage unit id #{self.storage_unit_id} "
                                 f"receive invalid operation: {operation}."
                             },
                         )
                 except Exception as e:
                     response_msg = ZMQMessage.create(
                         request_type=ZMQRequestType.PUT_GET_ERROR,
-                        sender_id=self.zmq_server_info.id,
+                        sender_id=self.storage_unit_id,
                         body={
-                            "message": f"Storage unit id #{self.zmq_server_info.id} occur error in processing "
+                            "message": f"Storage unit id #{self.storage_unit_id} occur error in processing "
                             f"put/get/clear request, detail error message: {str(e)}."
                         },
                     )
@@ -268,17 +281,17 @@ class SimpleStorageUnit:
 
             # After put operation finish, send a message to the client
             response_msg = ZMQMessage.create(
-                request_type=ZMQRequestType.PUT_DATA_RESPONSE, sender_id=self.zmq_server_info.id, body={}
+                request_type=ZMQRequestType.PUT_DATA_RESPONSE, sender_id=self.storage_unit_id, body={}
             )
 
             return response_msg
         except Exception as e:
             return ZMQMessage.create(
                 request_type=ZMQRequestType.PUT_ERROR,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
                     "message": f"Failed to put data into storage unit id "
-                    f"#{self.zmq_server_info.id}, detail error message: {str(e)}"
+                    f"#{self.storage_unit_id}, detail error message: {str(e)}"
                 },
             )
 
@@ -300,7 +313,7 @@ class SimpleStorageUnit:
 
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.GET_DATA_RESPONSE,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
                     "data": result_data,
                 },
@@ -308,9 +321,9 @@ class SimpleStorageUnit:
         except Exception as e:
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.GET_ERROR,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
-                    "message": f"Failed to get data from storage unit id #{self.zmq_server_info.id}, "
+                    "message": f"Failed to get data from storage unit id #{self.storage_unit_id}, "
                     f"detail error message: {str(e)}"
                 },
             )
@@ -333,15 +346,15 @@ class SimpleStorageUnit:
 
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.CLEAR_DATA_RESPONSE,
-                sender_id=self.zmq_server_info.id,
-                body={"message": f"Clear data in storage unit id #{self.zmq_server_info.id} successfully."},
+                sender_id=self.storage_unit_id,
+                body={"message": f"Clear data in storage unit id #{self.storage_unit_id} successfully."},
             )
         except Exception as e:
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.CLEAR_DATA_ERROR,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
-                    "message": f"Failed to clear data in storage unit id #{self.zmq_server_info.id}, "
+                    "message": f"Failed to clear data in storage unit id #{self.storage_unit_id}, "
                     f"detail error message: {str(e)}"
                 },
             )

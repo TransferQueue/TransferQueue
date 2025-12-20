@@ -43,6 +43,12 @@ from transfer_queue.utils.zmq_utils import (
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+# Ensure logger has a handler
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
 
 class AsyncTransferQueueClient:
     """Asynchronous client for interacting with TransferQueue controller and storage systems.

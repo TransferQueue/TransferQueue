@@ -34,6 +34,12 @@ from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServer
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+# Ensure logger has a handler
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
 TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT", 200))  # seconds
 TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT", 200))  # seconds
 
@@ -173,6 +179,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             metadata: BatchMeta containing storage location information.
         """
 
+        logger.info(f"{__class__.__name__}: receive put_data request, putting {metadata.size} samples.")
+
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(
             metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
@@ -260,6 +268,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         Returns:
             TensorDict containing the retrieved data.
         """
+
+        logger.info(f"{__class__.__name__}: receive get_data request, getting {metadata.size} samples.")
 
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(

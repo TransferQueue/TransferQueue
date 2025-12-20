@@ -17,6 +17,7 @@ import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from operator import itemgetter
 from threading import Thread
 from typing import Any, Optional
 from uuid import uuid4
@@ -32,6 +33,7 @@ from transfer_queue.metadata import (
     SampleMeta,
 )
 from transfer_queue.sampler import BaseSampler, SequentialSampler
+from transfer_queue.utils.perf_utils import IntervalPerfMonitor
 from transfer_queue.utils.utils import (
     ProductionStatus,
     TransferQueueRole,
@@ -47,19 +49,25 @@ from transfer_queue.utils.zmq_utils import (
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+# Ensure logger has a handler (for Ray Actor subprocess)
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
 TQ_CONTROLLER_GET_METADATA_TIMEOUT = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_TIMEOUT", 1))
 TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL", 0.2))
 TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL = int(os.environ.get("TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL", 2))
 
-TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
-TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
+TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 1))  # Initial number of samples
+TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 1))
 
 # Expansion configuration - Unified approach using minimum expansion sizes
 TQ_SAMPLE_MIN_EXPANSION_SIZE = int(
-    os.environ.get("TQ_SAMPLE_MIN_EXPANSION_SIZE", 10)
+    os.environ.get("TQ_SAMPLE_MIN_EXPANSION_SIZE", 1)
 )  # Minimum expansion size for samples (rows)
 TQ_FIELD_MIN_EXPANSION_SIZE = int(
-    os.environ.get("TQ_FIELD_MIN_EXPANSION_SIZE", 5)
+    os.environ.get("TQ_FIELD_MIN_EXPANSION_SIZE", 1)
 )  # Minimum expansion size for fields (columns)
 
 
@@ -67,24 +75,28 @@ class PartitionIndexManager:
     """
     Manages the mapping relationship between partitions and global indexes,
     responsible for index allocation and reuse.
+
+    Each partition has its own independent index space starting from 0,
+    allowing for more efficient memory usage and avoiding excessive allocation.
     """
 
     def __init__(self):
         # Records the set of global_indexes used by each partition
         self.partition_to_indexes = defaultdict(set)
 
-        # Reusable global_index pool - stored using list
-        self.reusable_indexes = []
+        # Per-partition reusable index pools - partition_id -> list of reusable indexes
+        self.partition_reusable_indexes = defaultdict(list)
 
-        # Global index counter for allocating new indexes
-        self.global_index_counter = 0
+        # Per-partition index counters for allocating new indexes
+        self.partition_counters = defaultdict(int)
 
-        # Track all active indexes
-        self.allocated_indexes = set()
+        # Track all active indexes per partition
+        self.partition_allocated_indexes = defaultdict(set)
 
-    def allocate_indexes(self, partition_id, count=1) -> list:
+    def allocate_indexes(self, partition_id, count=1) -> list[int]:
         """
         Allocate global_indexes for the specified partition.
+        Each partition has its own independent index space starting from 0.
         Prioritizes obtaining from reusable pool, allocates new indexes when insufficient.
 
         Args:
@@ -95,32 +107,35 @@ class PartitionIndexManager:
             list: List of allocated global_indexes
         """
         if count <= 0:
-            raise ValueError(f"Number of indexes needed must larger than 0, but got {count}")
+            raise ValueError(f"Number of indexes needed must be larger than 0, but got {count}")
         indexes = []
 
+        # Get partition-specific reusable pool
+        reusable_pool = self.partition_reusable_indexes[partition_id]
+
         # Get indexes from reusable pool
-        if self.reusable_indexes:
+        if reusable_pool:
             # Calculate number of indexes needed from reusable pool
-            num_reuse = min(count, len(self.reusable_indexes))
+            num_reuse = min(count, len(reusable_pool))
 
             # Use slice operation to get multiple elements at once (FIFO principle)
-            indexes.extend(self.reusable_indexes[:num_reuse])
-            del self.reusable_indexes[:num_reuse]
+            indexes.extend(reusable_pool[:num_reuse])
+            del reusable_pool[:num_reuse]
 
         # If reusable pool doesn't have enough indexes, allocate new ones
         if len(indexes) < count:
-            # Ensure newly allocated indexes don't conflict with existing ones
+            # Ensure newly allocated indexes don't conflict with existing ones in this partition
             needed = count - len(indexes)
-            # Batch allocate consecutive index ranges
-            start_index = self.global_index_counter
+            # Batch allocate consecutive index ranges starting from 0 for this partition
+            start_index = self.partition_counters[partition_id]
             end_index = start_index + needed
 
             # Directly generate consecutive index list
             new_indexes = list(range(start_index, end_index))
 
             # Batch update status
-            self.allocated_indexes.update(new_indexes)
-            self.global_index_counter = end_index
+            self.partition_allocated_indexes[partition_id].update(new_indexes)
+            self.partition_counters[partition_id] = end_index
 
             indexes.extend(new_indexes)
 
@@ -129,7 +144,7 @@ class PartitionIndexManager:
 
         return indexes
 
-    def release_indexes(self, partition_id):
+    def release_indexes(self, partition_id) -> list[int]:
         """
         Release all global_indexes of the specified partition, adding them to reusable pool.
 
@@ -142,17 +157,16 @@ class PartitionIndexManager:
         if partition_id in self.partition_to_indexes:
             indexes = self.partition_to_indexes.pop(partition_id)
 
-            # Add released indexes to reusable pool
-            self.reusable_indexes.extend(indexes)
+            # Add released indexes to partition-specific reusable pool
+            self.partition_reusable_indexes[partition_id].extend(indexes)
 
-            # Remove these indexes from allocated_indexes
-            for idx in indexes:
-                self.allocated_indexes.discard(idx)
+            # Remove these indexes from partition's allocated_indexes
+            self.partition_allocated_indexes[partition_id].difference_update(indexes)
 
             return indexes
         return []
 
-    def get_indexes_for_partition(self, partition_id):
+    def get_indexes_for_partition(self, partition_id) -> set[int]:
         """
         Get all global_indexes for the specified partition.
 
@@ -180,11 +194,18 @@ class DataPartitionStatus:
 
     # Production status tensor - dynamically expandable
     # Values: 0 = not produced, 1 = ready for consumption
-    production_status: Optional[torch.Tensor] = torch.zeros(TQ_INIT_SAMPLE_NUM, TQ_INIT_FIELD_NUM, dtype=torch.int8)
+    production_status: Optional[torch.Tensor] = field(
+        default_factory=lambda: torch.zeros(TQ_INIT_SAMPLE_NUM, TQ_INIT_FIELD_NUM, dtype=torch.int8)
+    )
 
     # Consumption status per task - task_name -> consumption_tensor
     # Each tensor tracks which samples have been consumed by that task
     consumption_status: dict[str, torch.Tensor] = field(default_factory=dict)
+
+    # Sample metadata
+    global_indexes: set[int] = field(
+        default_factory=set
+    )  # set of global indexes that have been added to this partition
 
     # Field metadata
     field_name_mapping: dict[str, int] = field(default_factory=dict)  # field_name -> column_index
@@ -194,8 +215,8 @@ class DataPartitionStatus:
     # Dynamic configuration - these are computed from the current state
     @property
     def total_samples_num(self) -> int:
-        """Current number of samples (rows) in the partition."""
-        return self.production_status.shape[0] if self.production_status is not None else 0
+        """Current number of samples in the partition."""
+        return len(self.global_indexes)
 
     @property
     def total_fields_num(self) -> int:
@@ -222,26 +243,26 @@ class DataPartitionStatus:
         Args:
             required_samples: Minimum number of samples needed
         """
-        current_samples = self.production_status.shape[0]
-        if required_samples > current_samples:
+        current_sample_space = self.allocated_samples_num
+        if required_samples > current_sample_space:
             # Expand rows using minimum expansion size for predictable memory usage
-            expansion_needed = required_samples - current_samples
+            expansion_needed = required_samples - current_sample_space
             min_expansion = max(TQ_SAMPLE_MIN_EXPANSION_SIZE, expansion_needed)
-            new_samples = current_samples + min_expansion
+            new_samples = current_sample_space + min_expansion
             new_fields = self.production_status.shape[1]
 
             expanded_tensor = torch.zeros(new_samples, new_fields, dtype=torch.int8)
-            expanded_tensor[:current_samples, :] = self.production_status
+            expanded_tensor[:current_sample_space, :] = self.production_status
             self.production_status = expanded_tensor
 
             # Update consumption tensors for all tasks
             for task_name, consumption_tensor in self.consumption_status.items():
                 expanded_consumption = torch.zeros(new_samples, dtype=torch.int8)
-                expanded_consumption[:current_samples] = consumption_tensor
+                expanded_consumption[:current_sample_space] = consumption_tensor
                 self.consumption_status[task_name] = expanded_consumption
 
             logger.debug(
-                f"Expanded partition {self.partition_id} from {current_samples} to {new_samples} samples "
+                f"Expanded partition {self.partition_id} from {current_sample_space} to {new_samples} samples "
                 f"(added {min_expansion} samples)"
             )
 
@@ -280,8 +301,8 @@ class DataPartitionStatus:
         self,
         global_indices: list[int],
         field_names: list[str],
-        dtypes: Optional[dict[int, dict[str, Any]]] = None,
-        shapes: Optional[dict[int, dict[str, Any]]] = None,
+        dtypes: Optional[dict[int, dict[str, Any]]],
+        shapes: Optional[dict[int, dict[str, Any]]],
     ) -> bool:
         """
         Update production status for specific samples and fields.
@@ -320,7 +341,10 @@ class DataPartitionStatus:
                 self.production_status[torch.tensor(global_indices)[:, None], torch.tensor(field_indices)] = 1
 
             # Update field metadata
-            self._update_field_metadata(global_indices, field_names, dtypes, shapes)
+            self._update_field_metadata(global_indices, dtypes, shapes)
+
+            # Save these global_indexes
+            self.global_indexes.update(global_indices)
 
             return True
 
@@ -331,22 +355,34 @@ class DataPartitionStatus:
     def _update_field_metadata(
         self,
         global_indices: list[int],
-        field_names: list[str],
-        dtypes: Optional[dict[int, dict[str, Any]]] = None,
-        shapes: Optional[dict[int, dict[str, Any]]] = None,
+        dtypes: Optional[dict[int, dict[str, Any]]],
+        shapes: Optional[dict[int, dict[str, Any]]],
     ):
         """Update field dtype and shape metadata."""
-        for global_idx in global_indices:
+        if not global_indices:
+            return
+
+        assert len(global_indices) == len(dtypes), "`global_indices` and `dtypes` length mismatch."
+        assert len(global_indices) == len(shapes), "`global_indices` and `shapes` length mismatch."
+
+        dtype_value = itemgetter(*global_indices)(dtypes) if dtypes else None
+        shape_value = itemgetter(*global_indices)(shapes) if shapes else None
+
+        if not isinstance(dtype_value, tuple):
+            dtype_value = (dtype_value,)
+        if not isinstance(shape_value, tuple):
+            shape_value = (shape_value,)
+
+        for i, global_idx in enumerate(global_indices):
             if global_idx not in self.field_dtypes:
                 self.field_dtypes[global_idx] = {}
             if global_idx not in self.field_shapes:
                 self.field_shapes[global_idx] = {}
 
-            for field_name in field_names:
-                if dtypes and global_idx in dtypes and field_name in dtypes[global_idx]:
-                    self.field_dtypes[global_idx][field_name] = dtypes[global_idx][field_name]
-                if shapes and global_idx in shapes and field_name in shapes[global_idx]:
-                    self.field_shapes[global_idx][field_name] = shapes[global_idx][field_name]
+            if dtype_value is not None:
+                self.field_dtypes[global_idx].update(dtype_value[i])
+            if shape_value is not None:
+                self.field_shapes[global_idx].update(shape_value[i])
 
     # ==================== Consumption Status Interface ====================
 
@@ -363,7 +399,7 @@ class DataPartitionStatus:
         """
         if task_name not in self.consumption_status:
             if self.production_status is not None:
-                self.consumption_status[task_name] = torch.zeros(self.total_samples_num, dtype=torch.int8)
+                self.consumption_status[task_name] = torch.zeros(self.allocated_samples_num, dtype=torch.int8)
             else:
                 self.consumption_status[task_name] = torch.zeros(0, dtype=torch.int8)
 
@@ -380,6 +416,7 @@ class DataPartitionStatus:
         """
         try:
             consumption_status = self.get_consumption_status(task_name)
+
             if consumption_status.numel() > 0 and global_indices:
                 consumption_status[global_indices] = 1
         except Exception as e:
@@ -411,7 +448,7 @@ class DataPartitionStatus:
             if field_name not in self.field_name_mapping:
                 return []
 
-        row_mask = torch.ones(self.total_samples_num, dtype=torch.bool)
+        row_mask = torch.ones(self.allocated_samples_num, dtype=torch.bool)
 
         # Apply consumption filter (exclude already consumed samples)
         consumption_status = self.get_consumption_status(task_name)
@@ -457,6 +494,7 @@ class DataPartitionStatus:
             "created_at": self.created_at,
             "total_samples_num": self.total_samples_num,
             "total_fields_num": self.total_fields_num,
+            "allocated_samples_num": self.allocated_samples_num,
             "allocated_fields_num": self.allocated_fields_num,
             "registered_tasks": list(self.consumption_status.keys()),
         }
@@ -584,7 +622,7 @@ class TransferQueueController:
 
         self.partitions[partition_id] = DataPartitionStatus(partition_id=partition_id)
 
-        logger.info(f"Created partition {partition_id} with dynamic capacity")
+        logger.info(f"Created partition {partition_id}")
         return True
 
     def get_partition(self, partition_id: str) -> Optional[DataPartitionStatus]:
@@ -646,8 +684,8 @@ class TransferQueueController:
         partition_id: str,
         global_indexes: list[int],
         field_names: list[str],
-        dtypes: Optional[dict[int, dict[str, Any]]] = None,
-        shapes: Optional[dict[int, dict[str, Any]]] = None,
+        dtypes: Optional[dict[int, dict[str, Any]]],
+        shapes: Optional[dict[int, dict[str, Any]]],
     ) -> bool:
         """
         Update production status for specific samples and fields in a partition.
@@ -849,21 +887,22 @@ class TransferQueueController:
             # Use partition's own scanning method
             ready_sample_indices = partition.scan_data_status(data_fields, task_name)
 
-            if len(ready_sample_indices) >= batch_size:
-                return ready_sample_indices[:batch_size]
+            if len(ready_sample_indices) < batch_size:
+                if time.time() - start_time > timeout:
+                    # TODO: dont't raise error here, return empty list and let caller handle it (retry or not)
+                    raise TimeoutError(
+                        f"Timeout waiting for sufficient data in partition {partition_id}. "
+                        f"Required: {batch_size}, Available: {len(ready_sample_indices)}"
+                    )
 
-            if time.time() - start_time > timeout:
-                raise TimeoutError(
-                    f"Timeout waiting for sufficient data in partition {partition_id}. "
-                    f"Required: {batch_size}, Available: {len(ready_sample_indices)}"
+                logger.warning(
+                    f"Insufficient data in partition {partition_id} for task {task_name}: requiring {batch_size} "
+                    f"samples with {data_fields}, but only have {len(ready_sample_indices)} samples. "
+                    f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
                 )
-
-            logger.warning(
-                f"Insufficient data in partition {partition_id} for task {task_name}: requiring {batch_size} samples "
-                f"with {data_fields}, but only have {len(ready_sample_indices)} samples. "
-                f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
-            )
-            time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
+                time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
+            else:
+                return ready_sample_indices
 
     # ==================== Metadata Generation API ====================
 
@@ -1008,7 +1047,7 @@ class TransferQueueController:
         poller = zmq.Poller()
         poller.register(self.handshake_socket, zmq.POLLIN)
 
-        logger.info(f"Dynamic Controller {self.controller_id} started waiting for storage connections...")
+        logger.info(f"Controller {self.controller_id} started waiting for storage connections...")
 
         while True:
             socks = dict(poller.poll(TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL * 1000))
@@ -1036,23 +1075,23 @@ class TransferQueueController:
                             self._connected_storage_managers.add(storage_manager_id)
                             storage_manager_type = request_msg.body.get("storage_manager_type", "Unknown")
                             logger.info(
-                                f"Dynamic Controller {self.controller_id} received handshake from "
+                                f"Controller {self.controller_id} received handshake from "
                                 f"storage manager {storage_manager_id} (type: {storage_manager_type}). "
                                 f"Total connected: {len(self._connected_storage_managers)}"
                             )
                         else:
                             logger.debug(
-                                f"Dynamic Controller {self.controller_id} received duplicate handshake from "
+                                f"Controller {self.controller_id} received duplicate handshake from "
                                 f"storage manager {storage_manager_id}. Resending ACK."
                             )
 
                 except Exception as e:
-                    logger.error(f"Dynamic Controller {self.controller_id} error processing handshake: {e}")
+                    logger.error(f"Controller {self.controller_id} error processing handshake: {e}")
 
     def _start_process_handshake(self):
         """Start the handshake process thread."""
         self.wait_connection_thread = Thread(
-            target=self._wait_connection, name="DynamicTransferQueueControllerWaitConnectionThread", daemon=True
+            target=self._wait_connection, name="TransferQueueControllerWaitConnectionThread", daemon=True
         )
         self.wait_connection_thread.start()
 
@@ -1060,7 +1099,7 @@ class TransferQueueController:
         """Start the data status update processing thread."""
         self.process_update_data_status_thread = Thread(
             target=self._update_data_status,
-            name="DynamicTransferQueueControllerProcessUpdateDataStatusThread",
+            name="TransferQueueControllerProcessUpdateDataStatusThread",
             daemon=True,
         )
         self.process_update_data_status_thread.start()
@@ -1068,12 +1107,17 @@ class TransferQueueController:
     def _start_process_request(self):
         """Start the request processing thread."""
         self.process_request_thread = Thread(
-            target=self._process_request, name="DynamicTransferQueueControllerProcessRequestThread", daemon=True
+            target=self._process_request, name="TransferQueueControllerProcessRequestThread", daemon=True
         )
         self.process_request_thread.start()
 
     def _process_request(self):
         """Main request processing loop - adapted for partition-based operations."""
+
+        logger.info(f"[{self.controller_id}]: start processing requests...")
+
+        perf_monitor = IntervalPerfMonitor(caller_name=self.controller_id)
+
         while True:
             messages = self.request_handle_socket.recv_multipart()
             identity = messages.pop(0)
@@ -1081,88 +1125,96 @@ class TransferQueueController:
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.GET_META:
-                params = request_msg.body
+                with perf_monitor.measure(op_type="GET_META"):
+                    params = request_msg.body
 
-                metadata = self.get_metadata(
-                    data_fields=params["data_fields"],
-                    batch_size=params["batch_size"],
-                    partition_id=params["partition_id"],
-                    mode=params.get("mode", "fetch"),
-                    task_name=params.get("task_name"),
-                    sampling_config=params.get("sampling_config"),
-                )
+                    metadata = self.get_metadata(
+                        data_fields=params["data_fields"],
+                        batch_size=params["batch_size"],
+                        partition_id=params["partition_id"],
+                        mode=params.get("mode", "fetch"),
+                        task_name=params.get("task_name"),
+                        sampling_config=params.get("sampling_config"),
+                    )
 
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.GET_META_RESPONSE,
-                    sender_id=self.controller_id,
-                    receiver_id=request_msg.sender_id,
-                    body={"metadata": metadata},
-                )
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.GET_META_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"metadata": metadata},
+                    )
 
             elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
-                params = request_msg.body
-                partition_id = params["partition_id"]
+                with perf_monitor.measure(op_type="GET_CLEAR_META"):
+                    params = request_msg.body
+                    partition_id = params["partition_id"]
 
-                metadata = self.get_metadata(
-                    data_fields=[],
-                    partition_id=partition_id,
-                    mode="insert",
-                )
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.GET_CLEAR_META_RESPONSE,
-                    sender_id=self.controller_id,
-                    receiver_id=request_msg.sender_id,
-                    body={"metadata": metadata},
-                )
+                    metadata = self.get_metadata(
+                        data_fields=[],
+                        partition_id=partition_id,
+                        mode="insert",
+                    )
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.GET_CLEAR_META_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"metadata": metadata},
+                    )
             elif request_msg.request_type == ZMQRequestType.CLEAR_META:
-                params = request_msg.body
-                partition_id = params["partition_id"]
+                with perf_monitor.measure(op_type="CLEAR_META"):
+                    params = request_msg.body
+                    partition_id = params["partition_id"]
 
-                clear_success = self.clear(partition_id)
-                if clear_success:
-                    response_msg = ZMQMessage.create(
-                        request_type=ZMQRequestType.CLEAR_META_RESPONSE,
-                        sender_id=self.controller_id,
-                        receiver_id=request_msg.sender_id,
-                        body={"message": f"Clear operation completed by controller {self.controller_id}"},
-                    )
-                else:
-                    response_msg = ZMQMessage.create(
-                        request_type=ZMQRequestType.CLEAR_META_RESPONSE,
-                        sender_id=self.controller_id,
-                        receiver_id=request_msg.sender_id,
-                        body={"error": f"Clear operation failed for partition {partition_id}"},
-                    )
+                    clear_success = self.clear(partition_id)
+                    if clear_success:
+                        response_msg = ZMQMessage.create(
+                            request_type=ZMQRequestType.CLEAR_META_RESPONSE,
+                            sender_id=self.controller_id,
+                            receiver_id=request_msg.sender_id,
+                            body={"message": f"Clear operation completed by controller {self.controller_id}"},
+                        )
+                    else:
+                        response_msg = ZMQMessage.create(
+                            request_type=ZMQRequestType.CLEAR_META_RESPONSE,
+                            sender_id=self.controller_id,
+                            receiver_id=request_msg.sender_id,
+                            body={"error": f"Clear operation failed for partition {partition_id}"},
+                        )
 
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
-                # Handle consumption status checks
-                params = request_msg.body
+                with perf_monitor.measure(op_type="CHECK_CONSUMPTION"):
+                    # Handle consumption status checks
+                    params = request_msg.body
 
-                consumption_status = self.get_consumption_status(params["partition_id"], params["task_name"])
-                sample_filter = params.get("sample_filter")
+                    consumption_status = self.get_consumption_status(params["partition_id"], params["task_name"])
+                    sample_filter = params.get("sample_filter")
 
-                if consumption_status is not None and sample_filter:
-                    batch_status = consumption_status[sample_filter]
-                    consumed = torch.all(batch_status == 1).item()
-                elif consumption_status is not None:
-                    batch_status = consumption_status
-                    consumed = torch.all(batch_status == 1).item()
-                else:
-                    consumed = False
+                    if consumption_status is not None and sample_filter:
+                        batch_status = consumption_status[sample_filter]
+                        consumed = torch.all(batch_status == 1).item()
+                    elif consumption_status is not None:
+                        batch_status = consumption_status
+                        consumed = torch.all(batch_status == 1).item()
+                    else:
+                        consumed = False
 
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.CONSUMPTION_RESPONSE,
-                    sender_id=self.controller_id,
-                    receiver_id=request_msg.sender_id,
-                    body={
-                        "partition_id": params["partition_id"],
-                        "consumed": consumed,
-                    },
-                )
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.CONSUMPTION_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={
+                            "partition_id": params["partition_id"],
+                            "consumed": consumed,
+                        },
+                    )
             self.request_handle_socket.send_multipart([identity, *response_msg.serialize()])
 
     def _update_data_status(self):
         """Process data status update messages from storage units - adapted for partitions."""
+        logger.info(f"[{self.controller_id}]: start receiving update_data_status requests...")
+
+        perf_monitor = IntervalPerfMonitor(caller_name=self.controller_id)
+
         while True:
             messages = self.data_status_update_socket.recv_multipart()
             identity = messages.pop(0)
@@ -1170,32 +1222,33 @@ class TransferQueueController:
             request_msg = ZMQMessage.deserialize(serialized_msg)
 
             if request_msg.request_type == ZMQRequestType.NOTIFY_DATA_UPDATE:
-                message_data = request_msg.body
-                partition_id = message_data.get("partition_id")
+                with perf_monitor.measure(op_type="NOTIFY_DATA_UPDATE"):
+                    message_data = request_msg.body
+                    partition_id = message_data.get("partition_id")
 
-                # Update production status
-                success = self.update_production_status(
-                    partition_id=partition_id,
-                    global_indexes=message_data.get("global_indexes", []),
-                    field_names=message_data.get("fields", []),
-                    dtypes=message_data.get("dtypes", {}),
-                    shapes=message_data.get("shapes", {}),
-                )
+                    # Update production status
+                    success = self.update_production_status(
+                        partition_id=partition_id,
+                        global_indexes=message_data.get("global_indexes", []),
+                        field_names=message_data.get("fields", []),
+                        dtypes=message_data.get("dtypes", {}),
+                        shapes=message_data.get("shapes", {}),
+                    )
 
-                if success:
-                    logger.info(f"Updated production status for partition {partition_id}")
+                    if success:
+                        logger.info(f"Updated production status for partition {partition_id}")
 
-                # Send acknowledgment
-                response_msg = ZMQMessage.create(
-                    request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ACK,
-                    sender_id=self.controller_id,
-                    body={
-                        "controller_id": self.controller_id,
-                        "partition_id": partition_id,
-                        "success": success,
-                    },
-                )
-                self.data_status_update_socket.send_multipart([identity, *response_msg.serialize()])
+                    # Send acknowledgment
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.NOTIFY_DATA_UPDATE_ACK,
+                        sender_id=self.controller_id,
+                        body={
+                            "controller_id": self.controller_id,
+                            "partition_id": partition_id,
+                            "success": success,
+                        },
+                    )
+                    self.data_status_update_socket.send_multipart([identity, *response_msg.serialize()])
 
     def get_zmq_server_info(self) -> ZMQServerInfo:
         """Get ZMQ server connection information."""

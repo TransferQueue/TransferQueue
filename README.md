@@ -30,6 +30,7 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 
 <h2 id="updates">🔄 Updates</h2>
 
+ - **Dec 20, 2025**: 🔥 The official [tutorial](https://github.com/TransferQueue/TransferQueue/tree/main/tutorial) is released! Feel free to check it out.
  - **Nov 10, 2025**: We disentangle the data retrieval logic from TransferQueueController [PR#101](https://github.com/TransferQueue/TransferQueue/pull/101). Now you can implement your own `Sampler` to control how to consume the data.
  - **Nov 5, 2025**: We provide a `KVStorageManager` that simplifies the integration with KV-based storage backends [PR#96](https://github.com/TransferQueue/TransferQueue/pull/96). The first available KV-based backend is [Yuanrong](https://gitee.com/openeuler/yuanrong-datasystem).
  - **Nov 4, 2025**: Data partition capability is available in [PR#98](https://github.com/TransferQueue/TransferQueue/pull/98). Now you can define logical data partitions to manage your train/val/test datasets.
@@ -142,7 +143,9 @@ Work in progress :)
 <h2 id="quick-start">🚀 Quick Start</h2>
 
 ### Use Python package
-We will soon release the Python package on PyPI.
+```bash
+pip install TransferQueue
+```
 
 ### Build wheel package from source code
 
@@ -173,6 +176,8 @@ Follow these steps to build and install:
 > Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
 
 For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/tml8ke0zkgn6roey?singleDoc#).
+
+We also provide a [stress test report](https://www.yuque.com/haomingzi-lfse7/hlx5g0/ydbwgo5k2umaag78?singleDoc#) that demonstrates **768 concurrent clients writing 1.4 TB of data** into TransferQueue across 4 nodes. The system remains stable without any crashes or data loss, achieving 80% bandwidth.
 
 <h2 id="customize"> 🛠️ Customize TransferQueue</h2>
 
@@ -290,7 +295,7 @@ pre-commit install && pre-commit run --all-files --show-diff-on-failure --color=
 - [ ] Provide a `StreamingDataLoader` interface for disaggregated framework
 - [ ] Support load-balancing and dynamic batching
 - [ ] Support high-performance storage backends for RDMA transmission (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake), [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html)...)
-- [ ] High-performance serialization and deserialization
+- [x] High-performance serialization and deserialization
 - [ ] More documentation, examples and tutorials
 
 <h2 id="citation">📑 Citation</h2>

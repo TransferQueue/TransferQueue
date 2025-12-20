@@ -30,6 +30,12 @@ from transfer_queue.utils.utils import ProductionStatus
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
+# Ensure logger has a handler
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
 
 # TODO: Add UT for metadata operations
 @dataclass
@@ -185,9 +191,13 @@ class BatchMeta:
             if not all(sorted(sample.field_names) == first_sample_field_names for sample in self.samples):
                 raise ValueError("All samples in BatchMeta must have the same field_names.")
             object.__setattr__(self, "_field_names", first_sample_field_names)
+
+            object.__setattr__(self, "_partition_ids", [sample.partition_id for sample in self.samples])
+
         else:
             object.__setattr__(self, "_global_indexes", [])
             object.__setattr__(self, "_field_names", [])
+            object.__setattr__(self, "_partition_ids", [])
 
     @property
     def size(self) -> int:
@@ -209,6 +219,11 @@ class BatchMeta:
         """Check if all samples in this batch are ready for consumption"""
         # TODO: get ready status from controller realtime
         return getattr(self, "_is_ready", False)
+
+    @property
+    def partition_ids(self) -> list[str]:
+        """Get partition ids for all samples in this batch as a list (one per sample)"""
+        return getattr(self, "_partition_ids", [])
 
     # Extra info interface methods
     def get_extra_info(self, key: str, default: Any = None) -> Any:
@@ -256,10 +271,33 @@ class BatchMeta:
         for idx, sample in enumerate(self.samples):
             sample.add_fields(fields=fields[idx])
 
-            # Update batch-level fields cache
+        # Update batch-level fields cache
+        if self.samples:
             object.__setattr__(self, "_field_names", sorted(self.samples[0].field_names))
             object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
         return self
+
+    def select_samples(self, sample_indices: list[int]) -> "BatchMeta":
+        """
+        Select specific samples from this batch.
+        This will construct a new BatchMeta instance containing only the specified samples.
+
+        Args:
+            sample_indices (list[int]): List of sample indices to retain.
+
+        Returns:
+            BatchMeta: A new BatchMeta instance containing only the specified samples.
+        """
+
+        if any(i < 0 or i >= len(self.samples) for i in sample_indices):
+            raise ValueError(f"Sample indices must be in range [0, {len(self.samples)})")
+
+        selected_samples = [self.samples[i] for i in sample_indices]
+
+        # construct new BatchMeta instance
+        selected_batch_meta = BatchMeta(samples=selected_samples, extra_info=self.extra_info.copy())
+
+        return selected_batch_meta
 
     def select_fields(self, field_names: list[str]) -> "BatchMeta":
         """
@@ -287,7 +325,7 @@ class BatchMeta:
     def __getitem__(self, item):
         if isinstance(item, int | np.integer):
             sample_meta = self.samples[item] if self.samples else []
-            return BatchMeta(samples=[sample_meta], extra_info=self.extra_info)
+            return BatchMeta(samples=[sample_meta], extra_info=self.extra_info.copy())
         else:
             raise TypeError(f"Indexing with {type(item)} is not supported now!")
 
@@ -393,8 +431,8 @@ class BatchMeta:
     def union(self, other: "BatchMeta", validate: bool = True) -> Optional["BatchMeta"]:
         """
         Create a union of this batch's fields with another batch's fields.
-        Assume both batches have the same global indices. If fields overlap, the
-        fields in this batch will be replaced by the other batch's fields.
+        Assume both batches have the same global indices and matching partition_ids for all samples.
+         If fields overlap, the fields in this batch will be replaced by the other batch's fields.
 
         Args:
             other: Another BatchMeta to union with
@@ -415,6 +453,9 @@ class BatchMeta:
             if self_global_indexes != other_global_indexes:
                 raise ValueError("Error: Global indexes do not match for union.")
 
+            if self.partition_ids != other.partition_ids:
+                raise ValueError("Error: Partition IDs do not match for union.")
+
         # Create a mapping from global_index to SampleMeta in the other batch
         other_sample_map = {sample.global_index: sample for sample in other.samples}
 
@@ -434,15 +475,34 @@ class BatchMeta:
 
     def reorder(self, indices: list[int]):
         """
-        Reorder the SampleMeta in the BatchMeta according to the given indices.
+        Reorder the SampleMeta in the BatchMeta according to the given indices (must equal to the length of samples).
 
         The operation is performed in-place, modifying the current BatchMeta's SampleMeta order.
+
+        To select a subset of samples or repeat specific samples, please use the non-inplace method select_samples().
 
         Args:
             indices : list[int]
                 A list of integers specifying the new order of SampleMeta. Each integer
                 represents the current index of the SampleMeta in the BatchMeta.
         """
+
+        if len(indices) != self.size:
+            raise ValueError(
+                f"Attempted to reorder with indices length {len(indices)} that does not match samples length "
+                f"{self.size}. Please use non-inplace method select_samples() instead if you want to "
+                f"select a subset of samples or repeat specific samples."
+            )
+
+        if len(set(indices)) != self.size:
+            raise ValueError(
+                f"Indices={indices} contain duplicates. Please use non-inplace method "
+                f"select_samples() instead if you want to select a subset of samples or repeat specific samples."
+            )
+
+        if any(i < 0 or i >= len(self.samples) for i in indices):
+            raise ValueError(f"Reorder indices must be in the range [0, {self.size}).")
+
         # Reorder the samples
         reordered_samples = [self.samples[i] for i in indices]
         object.__setattr__(self, "samples", reordered_samples)
@@ -507,6 +567,13 @@ class BatchMeta:
         if extra_info is None:
             extra_info = {}
         return cls(samples=[], extra_info=extra_info)
+
+    def __str__(self):
+        sample_strs = ", ".join(str(sample) for sample in self.samples)
+        return (
+            f"BatchMeta(size={self.size}, field_names={self.field_names}, is_ready={self.is_ready}, "
+            f"samples=[{sample_strs}], extra_info={self.extra_info})"
+        )
 
 
 def _union_fields(fields1: dict[str, FieldMeta], fields2: dict[str, FieldMeta]) -> dict[str, FieldMeta]:

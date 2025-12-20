@@ -37,7 +37,7 @@ from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder  # 
 )
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_tensor_serialization(dtype, enable_zero_copy):
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         encoder = MsgpackEncoder()
         decoder = MsgpackDecoder(torch.Tensor)
 
@@ -51,7 +51,7 @@ def test_tensor_serialization(dtype, enable_zero_copy):
 
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_zmq_msg_serialization(enable_zero_copy):
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # construct complex msg body with nested tensor, jagged tensor, normal tensor, numpy array
@@ -134,7 +134,7 @@ def test_tensor_serialization_with_views(dtype, make_view):
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_tensordict_nested_serialization(enable_zero_copy):
     """Test serialization of deeply nested TensorDict structures."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # Create nested TensorDict - all tensors must match batch_size
@@ -179,7 +179,7 @@ def test_tensordict_nested_serialization(enable_zero_copy):
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_tensordict_with_mixed_batch_sizes(enable_zero_copy):
     """Test TensorDict with different batch size configurations."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # Test with various batch sizes
@@ -213,7 +213,7 @@ def test_tensordict_with_mixed_batch_sizes(enable_zero_copy):
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_tensordict_empty_tensor(enable_zero_copy):
     """Test TensorDict handling of empty tensor."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # Create TensorDict with some empty/zero fields
@@ -246,7 +246,7 @@ def test_tensordict_empty_tensor(enable_zero_copy):
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_tensordict_with_various_tensor_layouts(enable_zero_copy):
     """Test TensorDict with various tensor layouts (strided, jagged, etc.)."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # Create TensorDict with different layouts
@@ -280,7 +280,7 @@ def test_tensordict_with_various_tensor_layouts(enable_zero_copy):
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_tensordict_with_scalar_tensors(enable_zero_copy):
     """Test TensorDict containing scalar tensors."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         td = TensorDict(
@@ -312,7 +312,7 @@ def test_tensordict_with_scalar_tensors(enable_zero_copy):
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_zero_copy_serialization_large_tensors(enable_zero_copy):
     """Test zero-copy serialization with large tensors."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # Create large tensors - jagged tensor has 3 items, so batch_size should be 3
@@ -368,7 +368,7 @@ def test_zero_copy_serialization_large_tensors(enable_zero_copy):
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_zero_copy_serialization_dtype_preservation(enable_zero_copy):
     """Test that zero-copy preserves all tensor dtypes."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # Use only float dtypes for randn, use appropriate functions for other types
@@ -448,7 +448,7 @@ def test_serialization_memory_contiguity():
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_tensordict_boundary_batch_sizes(batch_size, enable_zero_copy):
     """Test TensorDict with boundary batch sizes."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         if batch_size == 0:
@@ -506,7 +506,7 @@ def test_serialization_with_special_values():
 @pytest.mark.parametrize("enable_zero_copy", [True, False])
 def test_nested_jagged_tensor_serialization(enable_zero_copy):
     """Test serialization of nested jagged tensors (challenging for zero-copy)."""
-    with patch("transfer_queue.utils.zmq_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
         from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
 
         # Create nested jagged structure
@@ -541,3 +541,56 @@ def test_nested_jagged_tensor_serialization(enable_zero_copy):
         # Verify individual components
         for i in range(len(outer_td["nested_jagged1"].unbind())):
             assert torch.allclose(decoded_msg.body["data"]["nested_jagged1"][i], outer_td["nested_jagged1"][i])
+
+
+@pytest.mark.parametrize("enable_zero_copy", [True, False])
+def test_single_nested_tensor_serialization(enable_zero_copy):
+    """Test serialization of nested tensor with only one element (edge case for zero-copy)."""
+    with patch("transfer_queue.utils.serial_utils.TQ_ZERO_COPY_SERIALIZATION", enable_zero_copy):
+        from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType
+
+        # Create nested tensor with only one element
+        # This is the critical edge case where a nested tensor with 1 element
+        # must be distinguished from a regular tensor during deserialization
+        single_nested = torch.nested.as_nested_tensor([torch.randn(4, 3)], layout=torch.strided)
+        # For normal tensor, expand to batch_size=1 to match the nested tensor's batch dimension
+        normal_tensor = torch.randn(1, 4, 3)
+
+        # Create TensorDict with both types
+        td = TensorDict(
+            {
+                "single_nested_tensor": single_nested,
+                "normal_tensor": normal_tensor,
+            },
+            batch_size=1,
+        )
+
+        msg = ZMQMessage(
+            request_type=ZMQRequestType.PUT_DATA,
+            sender_id="test",
+            receiver_id="test",
+            request_id="test",
+            timestamp=0.0,
+            body={"data": td},
+        )
+
+        encoded_msg = msg.serialize()
+        decoded_msg = ZMQMessage.deserialize(encoded_msg)
+
+        # Verify batch sizes
+        assert decoded_msg.body["data"].batch_size == td.batch_size
+
+        # Verify normal tensor
+        assert torch.allclose(decoded_msg.body["data"]["normal_tensor"], td["normal_tensor"])
+        assert decoded_msg.body["data"]["normal_tensor"].shape == td["normal_tensor"].shape
+
+        # Verify single nested tensor is properly reconstructed as nested
+        assert decoded_msg.body["data"]["single_nested_tensor"].is_nested
+        assert decoded_msg.body["data"]["single_nested_tensor"].layout == torch.strided
+        assert len(decoded_msg.body["data"]["single_nested_tensor"].unbind()) == 1
+        assert torch.allclose(decoded_msg.body["data"]["single_nested_tensor"][0], td["single_nested_tensor"][0])
+
+        # Ensure the nested tensor with single element is correctly distinguished from regular tensor
+        # Both should have the same data but different types
+        assert not decoded_msg.body["data"]["normal_tensor"].is_nested
+        assert decoded_msg.body["data"]["single_nested_tensor"].is_nested

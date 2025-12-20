@@ -535,6 +535,153 @@ class TestBatchMeta:
         assert selected_field.production_status == ProductionStatus.READY_FOR_CONSUME
         assert selected_field.name == "field1"
 
+    def test_batch_meta_select_samples(self):
+        """Example: Select specific samples from a batch."""
+        fields = {
+            "field1": FieldMeta(name="field1", dtype=torch.float32, shape=(2,)),
+            "field2": FieldMeta(name="field2", dtype=torch.int64, shape=(3,)),
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=2, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=3, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples, extra_info={"test_key": "test_value"})
+
+        # Select samples at indices [0, 2]
+        selected_batch = batch.select_samples([0, 2])
+
+        # Check number of samples
+        assert len(selected_batch) == 2
+        # Check global indexes
+        assert selected_batch.global_indexes == [0, 2]
+        # Check fields are preserved
+        for sample in selected_batch.samples:
+            assert "field1" in sample.fields
+            assert "field2" in sample.fields
+        # Original batch is unchanged
+        assert len(batch) == 4
+        # Extra info is preserved
+        assert selected_batch.extra_info["test_key"] == "test_value"
+
+    def test_batch_meta_select_samples_all_indices(self):
+        """Example: Select all samples using complete index list."""
+        fields = {
+            "test_field": FieldMeta(
+                name="test_field", dtype=torch.float32, shape=(2,), production_status=ProductionStatus.READY_FOR_CONSUME
+            )
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=2, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples, extra_info={"test_key": "test_value"})
+
+        # Select all samples
+        selected_batch = batch.select_samples([0, 1, 2])
+
+        # All samples are selected
+        assert len(selected_batch) == 3
+        assert selected_batch.global_indexes == [0, 1, 2]
+        # Extra info is preserved
+        assert selected_batch.extra_info["test_key"] == "test_value"
+
+    def test_batch_meta_select_samples_single_sample(self):
+        """Example: Select a single sample from batch."""
+        fields = {
+            "test_field": FieldMeta(
+                name="test_field", dtype=torch.float32, shape=(2,), production_status=ProductionStatus.READY_FOR_CONSUME
+            )
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=2, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples)
+
+        # Select only the middle sample
+        selected_batch = batch.select_samples([1])
+
+        assert len(selected_batch) == 1
+        assert selected_batch.global_indexes == [1]
+        assert selected_batch.samples[0].batch_index == 0  # New batch index
+
+    def test_batch_meta_select_samples_empty_list(self):
+        """Example: Select with empty list returns empty batch."""
+        fields = {
+            "test_field": FieldMeta(
+                name="test_field", dtype=torch.float32, shape=(2,), production_status=ProductionStatus.READY_FOR_CONSUME
+            )
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples, extra_info={"test_key": "test_value"})
+
+        # Select with empty list
+        selected_batch = batch.select_samples([])
+
+        assert len(selected_batch) == 0
+        assert selected_batch.global_indexes == []
+        # Extra info is still preserved
+        assert selected_batch.extra_info["test_key"] == "test_value"
+
+    def test_batch_meta_select_samples_reverse_order(self):
+        """Example: Select samples in reverse order."""
+        fields = {
+            "test_field": FieldMeta(
+                name="test_field", dtype=torch.float32, shape=(2,), production_status=ProductionStatus.READY_FOR_CONSUME
+            )
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=2, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples)
+
+        # Select samples in reverse order
+        selected_batch = batch.select_samples([2, 1, 0])
+
+        assert len(selected_batch) == 3
+        assert selected_batch.global_indexes == [2, 1, 0]
+        # Batch indexes are re-assigned
+        assert selected_batch.samples[0].global_index == 2
+        assert selected_batch.samples[1].global_index == 1
+        assert selected_batch.samples[2].global_index == 0
+
+    def test_batch_meta_select_samples_with_extra_info(self):
+        """Example: Select samples preserves all extra info types."""
+        fields = {
+            "test_field": FieldMeta(
+                name="test_field", dtype=torch.float32, shape=(2,), production_status=ProductionStatus.READY_FOR_CONSUME
+            )
+        }
+        samples = [
+            SampleMeta(partition_id="partition_0", global_index=0, fields=fields),
+            SampleMeta(partition_id="partition_0", global_index=1, fields=fields),
+        ]
+        batch = BatchMeta(samples=samples)
+
+        # Add various extra info types
+        batch.extra_info["tensor"] = torch.randn(3, 4)
+        batch.extra_info["string"] = "test_string"
+        batch.extra_info["number"] = 42
+        batch.extra_info["list"] = [1, 2, 3]
+
+        # Select one sample
+        selected_batch = batch.select_samples([0])
+
+        # All extra info is preserved
+        assert "tensor" in selected_batch.extra_info
+        assert selected_batch.extra_info["string"] == "test_string"
+        assert selected_batch.extra_info["number"] == 42
+        assert selected_batch.extra_info["list"] == [1, 2, 3]
+
     def test_batch_meta_extra_info_operations(self):
         """Example: Extra info management operations."""
         fields = {
