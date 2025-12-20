@@ -79,7 +79,7 @@ class RandomSamplerWithReplacement(BaseSampler):
     ) -> tuple[list[int], list[int]]:
         rng = self._states["rng"]
 
-        if ready_indexes < batch_size:
+        if len(ready_indexes) < batch_size:
             raise ValueError("Not enough ready indexes to sample from.")
 
         # Do sample
@@ -113,7 +113,7 @@ class RandomSamplerWithoutReplacement(BaseSampler):
     ) -> tuple[list[int], list[int]]:
         rng = self._states["rng"]
 
-        if ready_indexes < batch_size:
+        if len(ready_indexes) < batch_size:
             raise ValueError("Not enough ready indexes to sample from.")
 
         # Do sample
@@ -146,7 +146,7 @@ class PrioritySampler(BaseSampler):
         *args: Any,
         **kwargs: Any,
     ) -> tuple[list[int], list[int]]:
-        if ready_indexes < batch_size:
+        if len(ready_indexes) < batch_size:
             raise ValueError("Not enough ready indexes to sample from.")
 
         if priority_scores is None:
