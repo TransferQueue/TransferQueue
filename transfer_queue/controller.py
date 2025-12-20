@@ -689,7 +689,13 @@ class TransferQueueController:
         Returns:
             DataPartitionStatus object if partition exists, None otherwise
         """
-        return self.partitions.get(partition_id).to_snapshot()
+
+        partition = self._get_partition(partition_id)
+
+        if partition is None:
+            return None
+
+        return partition.to_snapshot()
 
     def list_partitions(self) -> list[str]:
         """
