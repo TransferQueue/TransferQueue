@@ -177,7 +177,7 @@ Follow these steps to build and install:
 
 For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/tml8ke0zkgn6roey?singleDoc#).
 
-We also provide a [stress test report](https://www.yuque.com/haomingzi-lfse7/hlx5g0/ydbwgo5k2umaag78?singleDoc#) that starts **768 concurrent clients writing 1.4TB data** into TransferQueue across 4 nodes. The system remains stable without any crashes or data loss.
+We also provide a [stress test report](https://www.yuque.com/haomingzi-lfse7/hlx5g0/ydbwgo5k2umaag78?singleDoc#) that starts **768 concurrent clients writing 1.4TB data** into TransferQueue across 4 nodes. The system remains stable without any crashes or data loss, achieving 80% bandwidth.
 
 <h2 id="customize"> 🛠️ Customize TransferQueue</h2>
 
