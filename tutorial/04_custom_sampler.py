@@ -79,6 +79,9 @@ class RandomSamplerWithReplacement(BaseSampler):
     ) -> tuple[list[int], list[int]]:
         rng = self._states["rng"]
 
+        if ready_indexes < batch_size:
+            raise ValueError("Not enough ready indexes to sample from.")
+
         # Do sample
         sampled_indexes = rng.choice(ready_indexes, size=batch_size, replace=False).tolist()
 
@@ -110,11 +113,11 @@ class RandomSamplerWithoutReplacement(BaseSampler):
     ) -> tuple[list[int], list[int]]:
         rng = self._states["rng"]
 
-        # Ensure we don't sample more than available
-        actual_batch_size = min(batch_size, len(ready_indexes))
+        if ready_indexes < batch_size:
+            raise ValueError("Not enough ready indexes to sample from.")
 
         # Do sample
-        sampled_indexes = rng.choice(ready_indexes, size=actual_batch_size, replace=False).tolist()
+        sampled_indexes = rng.choice(ready_indexes, size=batch_size, replace=False).tolist()
 
         # Consumed indexes are same as sampled
         consumed_indexes = sampled_indexes.copy()
@@ -143,6 +146,9 @@ class PrioritySampler(BaseSampler):
         *args: Any,
         **kwargs: Any,
     ) -> tuple[list[int], list[int]]:
+        if ready_indexes < batch_size:
+            raise ValueError("Not enough ready indexes to sample from.")
+
         if priority_scores is None:
             priority_scores = np.ones(len(ready_indexes), dtype=float)
         elif len(priority_scores) > len(ready_indexes):
@@ -163,7 +169,8 @@ class PrioritySampler(BaseSampler):
 
 def setup_transfer_queue_with_sampler(sampler):
     """Setup TransferQueue with custom sampler."""
-    ray.init()
+    if not ray.is_initialized():
+        ray.init()
 
     config = OmegaConf.create(
         {
@@ -226,7 +233,7 @@ def demonstrate_random_sampler_with_replacement():
     meta2 = client.get_meta(data_fields=["input"], batch_size=1, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta2.global_indexes}")
 
-    # Get batch 3 (should get 2 random samples with replacement - may have duplicate with previous batchs!)
+    # Get batch 3 (should get 2 random samples with replacement - may have duplicate with previous batches!)
     print("\n[Step 4] Get batch 3 (2 samples)...")
     meta3 = client.get_meta(data_fields=["input"], batch_size=2, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta3.global_indexes}")

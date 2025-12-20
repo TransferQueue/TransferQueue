@@ -56,7 +56,8 @@ os.environ["RAY_DEBUG"] = "1"
 
 def setup_transfer_queue():
     """Setup TransferQueue components."""
-    ray.init()
+    if not ray.is_initialized():
+        ray.init()
 
     config = OmegaConf.create(
         {

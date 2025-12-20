@@ -295,7 +295,8 @@ def demonstrate_real_workflow():
     print("=" * 80)
 
     # Initialize Ray
-    ray.init()
+    if not ray.is_initialized():
+        ray.init()
 
     # Setup TransferQueue
     config = OmegaConf.create(
@@ -426,6 +427,10 @@ def main():
         print("3. BatchMeta manages collections of samples with operations")
         print("4. Metadata operations: chunk, concat, union, select, reorder... You can retrieve subsets easily!")
         print("5. concat combines batches; union merges fields of same samples")
+
+        # Cleanup
+        ray.shutdown()
+        print("\n✓ Cleanup complete")
 
     except Exception as e:
         print(f"Error during tutorial: {e}")

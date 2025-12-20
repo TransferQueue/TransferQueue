@@ -61,7 +61,8 @@ def demonstrate_basic_setup():
     """
 
     # Initialize Ray
-    ray.init()
+    if not ray.is_initialized():
+        ray.init()
 
     # Configuration
     config = OmegaConf.create(
@@ -230,29 +231,37 @@ def main():
     )
     print("=" * 80)
 
-    print("Setting up TransferQueue...")
-    controller, storage_units, client = demonstrate_basic_setup()
+    try:
+        print("Setting up TransferQueue...")
+        controller, storage_units, client = demonstrate_basic_setup()
 
-    print("Demonstrating the user workflow...")
-    demonstrate_data_workflow(client)
+        print("Demonstrating the user workflow...")
+        demonstrate_data_workflow(client)
 
-    demonstrate_storage_backend_options()
+        demonstrate_storage_backend_options()
 
-    print("=" * 80)
-    print("Tutorial Complete!")
-    print("=" * 80)
-    print("Key Takeaways:")
-    print("1. TransferQueue has 3 core components:")
-    print("   - Controller: Manages data production/consumption state")
-    print("   - StorageBackend: Persists actual data")
-    print("   - Client: User-facing API (what you use)")
-    print("2. Client is the main interface users interact with")
-    print("3. You can swap out different storage backends easily")
+        print("=" * 80)
+        print("Tutorial Complete!")
+        print("=" * 80)
+        print("Key Takeaways:")
+        print("1. TransferQueue has 3 core components:")
+        print("   - Controller: Manages data production/consumption state")
+        print("   - StorageBackend: Persists actual data")
+        print("   - Client: User-facing API (what you use)")
+        print("2. Client is the main interface users interact with")
+        print("3. You can swap out different storage backends easily")
 
-    # Cleanup
-    client.close()
-    ray.shutdown()
-    print("\n✓ Cleanup complete")
+        # Cleanup
+        client.close()
+        ray.shutdown()
+        print("\n✓ Cleanup complete")
+
+    except Exception as e:
+        print(f"Error during tutorial: {e}")
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
