@@ -428,6 +428,27 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
 
 def _filter_storage_data(storage_meta_group: StorageMetaGroup, data: TensorDict) -> dict[str, Any]:
+    """Filter batch-aligned data from a TensorDict using batch indexes from a StorageMetaGroup.
+    This helper extracts a subset of items from each field in ``data`` according to the
+    batch indexes stored in ``storage_meta_group``. The same indexes are applied to every
+    field in the input ``TensorDict`` so that the returned samples remain aligned across
+    fields.
+
+    Args:
+        storage_meta_group: A :class:`StorageMetaGroup` instance that provides
+            a sequence of batch indexes via :meth:`get_batch_indexes`. Each index
+            refers to a position along the batch dimension of the tensors stored
+            in ``data``.
+        data: A :class:`tensordict.TensorDict` containing batched data fields. All
+            fields are expected to be indexable by the batch indexes returned by
+            ``storage_meta_group.get_batch_indexes()``.
+    Returns:
+        dict[str, Any]: A dictionary mapping each field name in ``data`` to a list
+            of items selected at the requested batch indexes. The order of items in
+            each list matches the order of ``storage_meta_group.get_batch_indexes()``.
+    """
+
+    # We use dict here instead of TensorDict to avoid unnecessary TensorDict overhead
     results = {}
     batch_indexes = storage_meta_group.get_batch_indexes()
 
