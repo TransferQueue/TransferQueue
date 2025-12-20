@@ -30,6 +30,7 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 
 <h2 id="updates">🔄 Updates</h2>
 
+ - **Dec 20, 2025**: 🔥 The official [tutorial](https://github.com/TransferQueue/TransferQueue/tutorial) is released! Feel free to check it out.
  - **Nov 10, 2025**: We disentangle the data retrieval logic from TransferQueueController [PR#101](https://github.com/TransferQueue/TransferQueue/pull/101). Now you can implement your own `Sampler` to control how to consume the data.
  - **Nov 5, 2025**: We provide a `KVStorageManager` that simplifies the integration with KV-based storage backends [PR#96](https://github.com/TransferQueue/TransferQueue/pull/96). The first available KV-based backend is [Yuanrong](https://gitee.com/openeuler/yuanrong-datasystem).
  - **Nov 4, 2025**: Data partition capability is available in [PR#98](https://github.com/TransferQueue/TransferQueue/pull/98). Now you can define logical data partitions to manage your train/val/test datasets.
