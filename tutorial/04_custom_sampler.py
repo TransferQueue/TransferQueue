@@ -130,9 +130,10 @@ class PrioritySampler(BaseSampler):
     Priority can be longer than ready_indexes - use partial sampling.
     """
 
-    def __init__(self, temperature: float = 1.0):
+    def __init__(
+        self,
+    ):
         super().__init__()
-        self.temperature = temperature
 
     def sample(
         self,
@@ -143,7 +144,7 @@ class PrioritySampler(BaseSampler):
         **kwargs: Any,
     ) -> tuple[list[int], list[int]]:
         if priority_scores is None:
-            priority_scores = [1.0] * len(ready_indexes)
+            priority_scores = np.ones(len(ready_indexes), dtype=float)
         elif len(priority_scores) > len(ready_indexes):
             # Priority longer than ready_indexes - use partial
             priority_scores = priority_scores[ready_indexes]
@@ -215,17 +216,17 @@ def demonstrate_random_sampler_with_replacement():
     client.put(data=data, partition_id="test")
     print("  ✓ 5 samples added")
 
-    # Get batch 1 (should get 2 random samples with replacement)
+    # Get batch 1 (should get 2 random samples)
     print("\n[Step 2] Get batch 1 (2 samples)...")
     meta1 = client.get_meta(data_fields=["input"], batch_size=2, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta1.global_indexes}")
 
-    # Get batch 2 (should get 1 random samples with replacement - may have duplicates!)
-    print("\n[Step 3] Get batch 2 (1 samples)...")
+    # Get batch 2 (should get 1 random sample with replacement - may have duplicate with previous batch!)
+    print("\n[Step 3] Get batch 2 (1 sample)...")
     meta2 = client.get_meta(data_fields=["input"], batch_size=1, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta2.global_indexes}")
 
-    # Get batch 3 (should get 2 random samples with replacement - may have duplicates!)
+    # Get batch 3 (should get 2 random samples with replacement - may have duplicate with previous batchs!)
     print("\n[Step 4] Get batch 3 (2 samples)...")
     meta3 = client.get_meta(data_fields=["input"], batch_size=2, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta3.global_indexes}")
@@ -268,12 +269,12 @@ def demonstrate_random_sampler_without_replacement():
     meta1 = client.get_meta(data_fields=["input"], batch_size=3, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta1.global_indexes}")
 
-    # Get batch 2 (should get remaining 3 samples)
+    # Get batch 2 (should randomly get 1 sample that are different from previous batch)
     print("\n[Step 3] Get batch 2 (1 samples)...")
     meta2 = client.get_meta(data_fields=["input"], batch_size=1, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta2.global_indexes}")
 
-    # Get batch 3 (should get 2 samples - all consumed)
+    # Get batch 3 (should randomly get 2 samples that are different from previous batch)
     print("\n[Step 4] Get batch 3 (2 samples)...")
     meta3 = client.get_meta(data_fields=["input"], batch_size=2, partition_id="test", task_name="demo_task")
     print(f"  ✓ Got samples: {meta3.global_indexes}")
@@ -297,7 +298,7 @@ def demonstrate_priority_sampler():
 
     print("\nSetup TransferQueue with PrioritySampler...")
 
-    sampler = PrioritySampler(temperature=1.0)
+    sampler = PrioritySampler()
     controller, storage_units, client = setup_transfer_queue_with_sampler(sampler)
 
     # Add 8 samples
@@ -317,7 +318,7 @@ def demonstrate_priority_sampler():
     # Index 2, 7, 3 have highest priority
     priority_scores = np.array([0.01, 0.01, 88, 999, 0.01, 0.01, 0.01, 10])
 
-    print("\n[Step 2] Get batch with priority (1 samples)...")
+    print("\n[Step 2] Get batch with priority (1 sample)...")
     print(f"Priority scores: {priority_scores}")
 
     # Get batch using priority sampling
@@ -367,7 +368,7 @@ def main():
         Core Interface:
         - BaseSampler.sample(ready_indexes, batch_size, *args, **kwargs)
         - Returns: (sampled_indexes, consumed_indexes)
-        - Both lists have length = batch_size
+        - sampled_indexes has length = batch_size; consumed_indexes may be empty or have a different length
 
         Key Concepts:
         - ready_indexes: Samples ready for consumption (all fields produced & has not been consumed by the task)

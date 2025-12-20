@@ -216,7 +216,7 @@ def main():
         TransferQueue Tutorial 1: Core Components Introduction
     
         This script introduces the three core components of TransferQueue:
-        1. TransferQueueController - Manages all the metadata and tracts the production and consumption states
+        1. TransferQueueController - Manages all the metadata and tracks the production and consumption states
         2. StorageBackend - Pluggable distributed storage backend that holds the actual data
         3. TransferQueueClient - Client interface for reading/writing data (user-facing API)
     

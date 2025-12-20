@@ -188,7 +188,7 @@ def demonstrate_dynamic_expansion():
         data_fields=["field1", "field2"], batch_size=5, partition_id="dynamic", task_name="dynamic_task"
     )
     print("  ✓ Added 3 more samples (total: 5)")
-    print(f"  ✓ Got BatchMeta {meta2} for newly putted data.")
+    print(f"  ✓ Got BatchMeta {meta2} for newly put data.")
     print(f"  ✓ All BatchMeta in controller is {all_meta}")
 
     # Add new field (expanding columns)
@@ -200,8 +200,8 @@ def demonstrate_dynamic_expansion():
         batch_size=2,
     )
     meta3 = client.put(data=data3, metadata=meta1)
-    print("  ✓ Added 1 sample with new field 'field3'")
-    print(f"  ✓ Got BatchMeta: {meta3} for newly putted data with new field")
+    print("  ✓ Added 2 samples with new field 'field3'")
+    print(f"  ✓ Got BatchMeta: {meta3} for newly put data with new field")
 
     print("\n[Verification]")
     print("  ✓ Rows auto-expand: Can add more samples anytime")
@@ -266,7 +266,7 @@ def main():
     print(
         textwrap.dedent(
             """
-        TransferQueue Tutorial 3: Understanding TransferQueueControllerå
+        TransferQueue Tutorial 3: Understanding TransferQueueController
 
         This script demonstrates TransferQueueController's key features:
 

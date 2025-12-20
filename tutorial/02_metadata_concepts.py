@@ -359,7 +359,7 @@ def demonstrate_real_workflow():
     print("✓ Selected 'input_ids' field only:")
     print(f"  New field names: {selected_meta.field_names}")
     print(f"  Samples still have same global indexes: {selected_meta.global_indexes}")
-    retrieved_data = client.get_data(batch_meta)
+    retrieved_data = client.get_data(selected_meta)
     print(f"  Retrieved data keys: {list(retrieved_data.keys())}")
 
     print("[Step 4] Select specific samples from the retrieved BatchMeta...")
