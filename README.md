@@ -143,7 +143,9 @@ Work in progress :)
 <h2 id="quick-start">🚀 Quick Start</h2>
 
 ### Use Python package
-We will soon release the Python package on PyPI.
+```bash
+pip install TransferQueue
+```
 
 ### Build wheel package from source code
 
@@ -174,6 +176,8 @@ Follow these steps to build and install:
 > Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
 
 For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/tml8ke0zkgn6roey?singleDoc#).
+
+We also provide a [stress test report](https://www.yuque.com/haomingzi-lfse7/hlx5g0/ydbwgo5k2umaag78?singleDoc#) that starts **768 concurrent clients writing 1.4TB data** into TransferQueue across 4 nodes. The system remains stable without any crashes or data loss.
 
 <h2 id="customize"> 🛠️ Customize TransferQueue</h2>
 
@@ -291,7 +295,7 @@ pre-commit install && pre-commit run --all-files --show-diff-on-failure --color=
 - [ ] Provide a `StreamingDataLoader` interface for disaggregated framework
 - [ ] Support load-balancing and dynamic batching
 - [ ] Support high-performance storage backends for RDMA transmission (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake), [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html)...)
-- [ ] High-performance serialization and deserialization
+- [x] High-performance serialization and deserialization
 - [ ] More documentation, examples and tutorials
 
 <h2 id="citation">📑 Citation</h2>
