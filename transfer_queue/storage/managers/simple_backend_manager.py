@@ -424,9 +424,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
 def _filter_storage_data(storage_meta_group: StorageMetaGroup, data: TensorDict) -> dict[str, Any]:
     results = {}
+    batch_indexes = storage_meta_group.get_batch_indexes()
     for fname in data.keys():
-        batch_indexes = storage_meta_group.get_batch_indexes()
-
         result = itemgetter(*batch_indexes)(data[fname])
         if not isinstance(result, tuple):
             result = (result,)
