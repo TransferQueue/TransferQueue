@@ -18,7 +18,7 @@ import os
 from dataclasses import dataclass
 from operator import itemgetter
 from threading import Thread
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 import ray
