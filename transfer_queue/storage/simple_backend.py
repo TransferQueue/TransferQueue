@@ -18,7 +18,7 @@ import os
 from dataclasses import dataclass
 from operator import itemgetter
 from threading import Thread
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 import ray
@@ -403,47 +403,6 @@ class StorageMetaGroup:
         for meta in self.sample_metas:
             all_fields.update(meta.fields.keys())
         return list(all_fields)
-
-    def get_transfer_data(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
-        """Convert metadata to transfer dictionary format.
-
-        Creates a transfer_dict structure containing indexing and field information
-        but without the actual field data. The field_data placeholder will be
-        populated by the _add_field_data() function.
-
-        Args:
-            field_names: Optional list of field names to include. If None, includes all fields.
-
-        Returns:
-            Transfer dictionary with metadata structure:
-                {
-                    "batch_indexes": [batch_idx1, batch_idx2, ...],
-                    "global_indexes": [global_idx1, global_idx2, ...],
-                    "local_indexes": [local_idx1, local_idx2, ...],
-                    "fields": ["field1", "field2", ...],
-                    "field_data": {}  # Placeholder - actual data added by _add_field_data()
-                }
-
-        Example:
-            >>> group = StorageMetaGroup("storage1")
-            >>> # Add multiple samples with different batch/global indexes and storage locations
-            >>> group.add_sample_meta(SampleMeta(batch_index=0, global_index=10, fields={"img": ...}), 4)
-            >>> group.add_sample_meta(SampleMeta(batch_index=1, global_index=11, fields={"img": ...}), 5)
-            >>> group.add_sample_meta(SampleMeta(batch_index=2, global_index=12, fields={"img": ...}), 6)
-            >>> transfer_dict = group.get_transfer_data(["img"])
-            >>> transfer_dict["local_indexes"]   # [4, 5, 6] - storage locations
-            >>> transfer_dict["batch_indexes"]   # [0, 1, 2] - original data locations
-            >>> transfer_dict["global_indexes"]  # [10, 11, 12] - global identifiers
-        """
-        if field_names is None:
-            field_names = self.get_field_names()
-        return {
-            "batch_indexes": self.get_batch_indexes(),
-            "global_indexes": self.get_global_indexes(),
-            "local_indexes": self.get_local_indexes(),
-            "fields": field_names,
-            "field_data": {},  # Placeholder for field data to be filled later
-        }
 
     @property
     def size(self) -> int:
