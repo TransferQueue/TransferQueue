@@ -224,7 +224,11 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
     async def _put_to_single_storage_unit(
-        self, local_indexes: list[int], storage_data: dict, target_storage_unit: str, socket: zmq.Socket = None
+        self,
+        local_indexes: list[int],
+        storage_data: dict[str, Any],
+        target_storage_unit: str,
+        socket: zmq.Socket = None,
     ):
         """
         Send data to a specific storage unit.
@@ -237,7 +241,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                     else NonTensorStack(*storage_data[field])
                 )
                 for field in storage_data.keys()
-            }
+            },
+            batch_size=len(local_indexes),
         )
 
         request_msg = ZMQMessage.create(
@@ -425,11 +430,16 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 def _filter_storage_data(storage_meta_group: StorageMetaGroup, data: TensorDict) -> dict[str, Any]:
     results = {}
     batch_indexes = storage_meta_group.get_batch_indexes()
+
+    if not batch_indexes:
+        return results
+
     for fname in data.keys():
         result = itemgetter(*batch_indexes)(data[fname])
         if not isinstance(result, tuple):
             result = (result,)
         results[fname] = list(result)
+
     return results
 
 
