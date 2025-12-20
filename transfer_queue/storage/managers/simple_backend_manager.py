@@ -180,7 +180,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         # send data to each storage unit
         tasks = [
-            self._put_to_single_storage_unit(get_transfer_data(meta_group, data), target_storage_unit=storage_id)
+            self._put_to_single_storage_unit(meta_group.get_local_indexes(), _filter_storage_data(meta_group, data), target_storage_unit=storage_id)
             for storage_id, meta_group in storage_meta_groups.items()
         ]
         await asyncio.gather(*tasks)
@@ -213,21 +213,19 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         )
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
-    async def _put_to_single_storage_unit(self, transfer_data: dict[str, Any], target_storage_unit=None, socket=None):
+    async def _put_to_single_storage_unit(self, local_indexes: list[int], storage_data: dict, target_storage_unit: str, socket: zmq.Socket = None):
         """
         Send data to a specific storage unit.
         """
-        local_indexes = transfer_data["local_indexes"]
-
         tensordict_data = TensorDict(
             {
                 field: (
-                    torch.nested.as_nested_tensor(transfer_data["field_data"][field])
-                    if transfer_data["field_data"][field]
-                    and all(isinstance(x, torch.Tensor) for x in transfer_data["field_data"][field])
-                    else NonTensorStack(*transfer_data["field_data"][field])
+                    torch.nested.as_nested_tensor(storage_data[field])
+                    if storage_data[field]
+                    and all(isinstance(x, torch.Tensor) for x in storage_data[field])
+                    else NonTensorStack(*storage_data[field])
                 )
-                for field in transfer_data["field_data"]
+                for field in storage_data.keys()
             }
         )
 
@@ -270,7 +268,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         # retrive data
         tasks = [
-            self._get_from_single_storage_unit(meta_group.get_transfer_data(), target_storage_unit=storage_id)
+            self._get_from_single_storage_unit(meta_group, target_storage_unit=storage_id)
             for storage_id, meta_group in storage_meta_groups.items()
         ]
 
@@ -315,10 +313,10 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         return TensorDict(tensor_data, batch_size=len(metadata))
 
     @dynamic_storage_manager_socket(socket_name="put_get_socket")
-    async def _get_from_single_storage_unit(self, index_data, target_storage_unit=None, socket=None):
-        global_indexes = index_data["global_indexes"]
-        local_indexes = index_data["local_indexes"]
-        fields = index_data["fields"]
+    async def _get_from_single_storage_unit(self, storage_meta_group: StorageMetaGroup, target_storage_unit: str, socket: zmq.Socket = None):
+        global_indexes = storage_meta_group.get_global_indexes()
+        local_indexes = storage_meta_group.get_local_indexes()
+        fields = storage_meta_group.get_field_names()
 
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.GET_DATA,
@@ -362,7 +360,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         # clear data
         tasks = [
             self._clear_single_storage_unit(
-                meta_group.get_transfer_data()["local_indexes"], target_storage_unit=storage_id
+                meta_group.get_local_indexes(), target_storage_unit=storage_id
             )
             for storage_id, meta_group in storage_meta_groups.items()
         ]
@@ -543,6 +541,18 @@ def _add_field_data(
             transfer_dict["field_data"][fname] = list(result)
 
     return transfer_dict
+
+
+def _filter_storage_data(storage_meta_group: StorageMetaGroup, data: TensorDict) -> dict[str, Any]:
+    results = {}
+    for fname in data.keys():
+        batch_indexes = storage_meta_group.get_batch_indexes()
+
+        result = itemgetter(*batch_indexes)(data[fname])
+        if not isinstance(result, tuple):
+            result = (result,)
+        results[fname] = list(result)
+    return results
 
 
 def build_storage_meta_groups(
