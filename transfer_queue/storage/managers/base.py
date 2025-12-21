@@ -443,8 +443,13 @@ class KVStorageManager(TransferQueueStorageManager):
             per_field_shapes[global_idx] = {}
 
         # For each field, extract dtype and shape for each sample
+        num_samples = len(metadata.global_indexes)
+        if num_samples == 0:
+            return
+        
         for field_name, field_data in data.items():
-            for i, data_item in enumerate(field_data):
+            for i in range(num_samples):
+                data_item = field_data[i]
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
