@@ -12,7 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .managers import AsyncSimpleStorageManager, TransferQueueStorageManager, TransferQueueStorageManagerFactory
+from .managers import (
+    AsyncSimpleStorageManager,
+    MooncakeStorageManager,
+    TransferQueueStorageManager,
+    TransferQueueStorageManagerFactory,
+    YuanrongStorageManager,
+)
 from .simple_backend import SimpleStorageUnit, StorageMetaGroup, StorageUnitData
 
 __all__ = [
@@ -22,4 +28,6 @@ __all__ = [
     "TransferQueueStorageManager",
     "TransferQueueStorageManagerFactory",
     "AsyncSimpleStorageManager",
+    "MooncakeStorageManager",
+    "YuanrongStorageManager",
 ]

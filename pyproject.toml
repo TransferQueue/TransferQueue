@@ -117,10 +117,6 @@ test = [
     "pytest-asyncio>=0.20.0",
 ]
 
-# If you need to mimic `package_dir={'': '.'}`:
-[tool.setuptools.package-dir]
-"" = "."
-
 # If you need to include specific non-Python data (like YAML files or version file):
 # This is the rough equivalent of package_data={'': ['version/*']}
 [tool.setuptools.package-data]
