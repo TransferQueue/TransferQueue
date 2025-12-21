@@ -25,7 +25,7 @@ from tensordict import NonTensorStack, TensorDict
 from torch import Tensor
 
 from transfer_queue.metadata import BatchMeta
-from transfer_queue.storage.clients.factory import StorageClientFactory
+from transfer_queue.storage.clients import StorageClientFactory
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
 
 logger = logging.getLogger(__name__)
