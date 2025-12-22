@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from contextlib import contextmanager
 from enum import Enum
@@ -20,6 +21,15 @@ from typing import Optional
 import psutil
 import ray
 import torch
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
+
+# Ensure logger has a handler
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
 
 
 class ExplicitEnum(str, Enum):
@@ -105,7 +115,6 @@ def sequential_sampler(
 def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None):
     """Prevent PyTorch from overdoing the automatic parallelism during torch.stack() operation"""
     pytorch_current_num_threads = torch.get_num_threads()
-    logical_cores = psutil.cpu_count(logical=True)
     physical_cores = psutil.cpu_count(logical=False)
 
     if target_num_threads is None:
@@ -115,21 +124,21 @@ def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None
         else:
             target_num_threads = physical_cores
 
-    if target_num_threads > logical_cores:
-        raise RuntimeError(
-            f"target_num_threads {target_num_threads} should not exceed total logical CPU cores {logical_cores}"
+    if target_num_threads > physical_cores:
+        logger.error(
+            f"target_num_threads {target_num_threads} should not exceed total "
+            f"physical CPU cores {physical_cores}. Setting to {physical_cores}."
         )
+        target_num_threads = physical_cores
 
-    if pytorch_current_num_threads <= target_num_threads:
-        # No need to change settings
-        yield
-    else:
+    logger.info(f"torch.get_num_threads() is {pytorch_current_num_threads}, setting to {target_num_threads}.")
+
+    try:
         torch.set_num_threads(target_num_threads)
-        try:
-            yield
-        finally:
-            # Restore the original number of threads
-            torch.set_num_threads(pytorch_current_num_threads)
+        yield
+    finally:
+        # Restore the original number of threads
+        torch.set_num_threads(pytorch_current_num_threads)
 
 
 def get_env_bool(env_key: str, default: bool = False) -> bool:

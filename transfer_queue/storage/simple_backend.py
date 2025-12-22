@@ -29,7 +29,7 @@ from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.metadata import SampleMeta
 from transfer_queue.utils.perf_utils import IntervalPerfMonitor
-from transfer_queue.utils.utils import TransferQueueRole
+from transfer_queue.utils.utils import TransferQueueRole, limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket, get_free_port
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ if not logger.hasHandlers():
     logger.addHandler(handler)
 
 TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
+TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 16))
 
 
 class StorageUnitData:
@@ -276,8 +277,8 @@ class SimpleStorageUnit:
         try:
             local_indexes = data_parts.body["local_indexes"]
             field_data = data_parts.body["data"]  # field_data should be a TensorDict.
-
-            self.storage_data.put_data(field_data, local_indexes)
+            with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+                self.storage_data.put_data(field_data, local_indexes)
 
             # After put operation finish, send a message to the client
             response_msg = ZMQMessage.create(
@@ -309,7 +310,8 @@ class SimpleStorageUnit:
             fields = data_parts.body["fields"]
             local_indexes = data_parts.body["local_indexes"]
 
-            result_data = self.storage_data.get_data(fields, local_indexes)
+            with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+                result_data = self.storage_data.get_data(fields, local_indexes)
 
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.GET_DATA_RESPONSE,
@@ -342,7 +344,8 @@ class SimpleStorageUnit:
         try:
             local_indexes = data_parts.body["local_indexes"]
 
-            self.storage_data.clear(local_indexes)
+            with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+                self.storage_data.clear(local_indexes)
 
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.CLEAR_DATA_RESPONSE,

@@ -43,6 +43,8 @@ if not logger.hasHandlers():
 TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT", 200))  # seconds
 TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT", 200))  # seconds
 
+TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 16))
+
 
 @TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager")
 class AsyncSimpleStorageManager(TransferQueueStorageManager):
@@ -233,17 +235,19 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         """
         Send data to a specific storage unit.
         """
-        tensordict_data = TensorDict(
-            {
-                field: (
-                    torch.nested.as_nested_tensor(storage_data[field])
-                    if storage_data[field] and all(isinstance(x, torch.Tensor) for x in storage_data[field])
-                    else NonTensorStack(*storage_data[field])
-                )
-                for field in storage_data.keys()
-            },
-            batch_size=len(local_indexes),
-        )
+
+        with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+            tensordict_data = TensorDict(
+                {
+                    field: (
+                        torch.nested.as_nested_tensor(storage_data[field])
+                        if storage_data[field] and all(isinstance(x, torch.Tensor) for x in storage_data[field])
+                        else NonTensorStack(*storage_data[field])
+                    )
+                    for field in storage_data.keys()
+                },
+                batch_size=len(local_indexes),
+            )
 
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.PUT_DATA,
@@ -312,7 +316,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         for field in metadata.field_names:
             ordered_data[field] = [merged_data[global_idx][field] for global_idx in metadata.global_indexes]
 
-        with limit_pytorch_auto_parallel_threads():
+        with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
             tensor_data = {
                 field: (
                     torch.stack(torch.nested.as_nested_tensor(v).unbind())
