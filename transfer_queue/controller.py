@@ -75,28 +75,24 @@ class PartitionIndexManager:
     """
     Manages the mapping relationship between partitions and global indexes,
     responsible for index allocation and reuse.
-
-    Each partition has its own independent index space starting from 0,
-    allowing for more efficient memory usage and avoiding excessive allocation.
     """
 
     def __init__(self):
         # Records the set of global_indexes used by each partition
         self.partition_to_indexes = defaultdict(set)
 
-        # Per-partition reusable index pools - partition_id -> list of reusable indexes
-        self.partition_reusable_indexes = defaultdict(list)
+        # Reusable global_index pool - stored using list
+        self.reusable_indexes = []
 
-        # Per-partition index counters for allocating new indexes
-        self.partition_counters = defaultdict(int)
+        # Global index counter for allocating new indexes
+        self.global_index_counter = 0
 
-        # Track all active indexes per partition
-        self.partition_allocated_indexes = defaultdict(set)
+        # Track all active indexes
+        self.allocated_indexes = set()
 
-    def allocate_indexes(self, partition_id, count=1) -> list[int]:
+    def allocate_indexes(self, partition_id, count=1) -> list:
         """
         Allocate global_indexes for the specified partition.
-        Each partition has its own independent index space starting from 0.
         Prioritizes obtaining from reusable pool, allocates new indexes when insufficient.
 
         Args:
@@ -110,32 +106,29 @@ class PartitionIndexManager:
             raise ValueError(f"Number of indexes needed must be larger than 0, but got {count}")
         indexes = []
 
-        # Get partition-specific reusable pool
-        reusable_pool = self.partition_reusable_indexes[partition_id]
-
         # Get indexes from reusable pool
-        if reusable_pool:
+        if self.reusable_indexes:
             # Calculate number of indexes needed from reusable pool
-            num_reuse = min(count, len(reusable_pool))
+            num_reuse = min(count, len(self.reusable_indexes))
 
             # Use slice operation to get multiple elements at once (FIFO principle)
-            indexes.extend(reusable_pool[:num_reuse])
-            del reusable_pool[:num_reuse]
+            indexes.extend(self.reusable_indexes[:num_reuse])
+            del self.reusable_indexes[:num_reuse]
 
         # If reusable pool doesn't have enough indexes, allocate new ones
         if len(indexes) < count:
-            # Ensure newly allocated indexes don't conflict with existing ones in this partition
+            # Ensure newly allocated indexes don't conflict with existing ones
             needed = count - len(indexes)
-            # Batch allocate consecutive index ranges starting from 0 for this partition
-            start_index = self.partition_counters[partition_id]
+            # Batch allocate consecutive index ranges
+            start_index = self.global_index_counter
             end_index = start_index + needed
 
             # Directly generate consecutive index list
             new_indexes = list(range(start_index, end_index))
 
             # Batch update status
-            self.partition_allocated_indexes[partition_id].update(new_indexes)
-            self.partition_counters[partition_id] = end_index
+            self.allocated_indexes.update(new_indexes)
+            self.global_index_counter = end_index
 
             indexes.extend(new_indexes)
 
@@ -157,11 +150,12 @@ class PartitionIndexManager:
         if partition_id in self.partition_to_indexes:
             indexes = self.partition_to_indexes.pop(partition_id)
 
-            # Add released indexes to partition-specific reusable pool
-            self.partition_reusable_indexes[partition_id].extend(indexes)
+            # Add released indexes to reusable pool
+            self.reusable_indexes.extend(indexes)
 
-            # Remove these indexes from partition's allocated_indexes
-            self.partition_allocated_indexes[partition_id].difference_update(indexes)
+            # Remove these indexes from allocated_indexes
+            for idx in indexes:
+                self.allocated_indexes.discard(idx)
 
             return indexes
         return []
@@ -194,9 +188,7 @@ class DataPartitionStatus:
 
     # Production status tensor - dynamically expandable
     # Values: 0 = not produced, 1 = ready for consumption
-    production_status: Optional[torch.Tensor] = field(
-        default_factory=lambda: torch.zeros(TQ_INIT_SAMPLE_NUM, TQ_INIT_FIELD_NUM, dtype=torch.int8)
-    )
+    production_status: Optional[torch.Tensor] = torch.zeros(TQ_INIT_SAMPLE_NUM, TQ_INIT_FIELD_NUM, dtype=torch.int8)
 
     # Consumption status per task - task_name -> consumption_tensor
     # Each tensor tracks which samples have been consumed by that task
