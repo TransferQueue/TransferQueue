@@ -112,11 +112,11 @@ def sequential_sampler(
 
 
 @contextmanager
-def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None):
+def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None, info: str = ""):
     """Prevent PyTorch from overdoing the automatic parallelism during torch.stack() operation"""
     pytorch_current_num_threads = torch.get_num_threads()
     physical_cores = psutil.cpu_count(logical=False)
-
+    pid = os.getpid()
     if target_num_threads is None:
         # auto determine target_num_threads
         if physical_cores >= 16:
@@ -131,14 +131,20 @@ def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None
         )
         target_num_threads = physical_cores
 
-    logger.info(f"torch.get_num_threads() is {pytorch_current_num_threads}, setting to {target_num_threads}.")
-
     try:
         torch.set_num_threads(target_num_threads)
+        logger.debug(
+            f"{info} (pid={pid}): torch.get_num_threads() is {pytorch_current_num_threads}, "
+            f"setting to {target_num_threads}."
+        )
         yield
     finally:
         # Restore the original number of threads
         torch.set_num_threads(pytorch_current_num_threads)
+        logger.debug(
+            f"{info} (pid={pid}): torch.get_num_threads() is {torch.get_num_threads()}, "
+            f"restoring to {pytorch_current_num_threads}."
+        )
 
 
 def get_env_bool(env_key: str, default: bool = False) -> bool:

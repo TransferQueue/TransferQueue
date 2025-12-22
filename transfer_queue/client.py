@@ -333,7 +333,9 @@ class AsyncTransferQueueClient:
             raise ValueError("metadata cannot be none or empty")
         logger.debug(f"[{self.client_id}]: Put data with data: {data}")
 
-        with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+        with limit_pytorch_auto_parallel_threads(
+            target_num_threads=TQ_NUM_THREADS, info=f"[{self.client_id}] async_put"
+        ):
             await self.storage_manager.put_data(data, metadata)
 
         logger.info(
@@ -379,7 +381,9 @@ class AsyncTransferQueueClient:
             logger.warning(f"[{self.client_id}]: Empty BatchMeta provided to get_data. Returning empty TensorDict.")
             return TensorDict({}, batch_size=0)
 
-        with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+        with limit_pytorch_auto_parallel_threads(
+            target_num_threads=TQ_NUM_THREADS, info=f"[{self.client_id}] async_get_data"
+        ):
             results = await self.storage_manager.get_data(metadata)
 
         return results

@@ -277,7 +277,9 @@ class SimpleStorageUnit:
         try:
             local_indexes = data_parts.body["local_indexes"]
             field_data = data_parts.body["data"]  # field_data should be a TensorDict.
-            with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+            with limit_pytorch_auto_parallel_threads(
+                target_num_threads=TQ_NUM_THREADS, info=f"[{self.storage_unit_id}] _handle_put"
+            ):
                 self.storage_data.put_data(field_data, local_indexes)
 
             # After put operation finish, send a message to the client
@@ -310,7 +312,9 @@ class SimpleStorageUnit:
             fields = data_parts.body["fields"]
             local_indexes = data_parts.body["local_indexes"]
 
-            with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+            with limit_pytorch_auto_parallel_threads(
+                target_num_threads=TQ_NUM_THREADS, info=f"[{self.storage_unit_id}] _handle_get"
+            ):
                 result_data = self.storage_data.get_data(fields, local_indexes)
 
             response_msg = ZMQMessage.create(
@@ -344,7 +348,9 @@ class SimpleStorageUnit:
         try:
             local_indexes = data_parts.body["local_indexes"]
 
-            with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+            with limit_pytorch_auto_parallel_threads(
+                target_num_threads=TQ_NUM_THREADS, info=f"[{self.storage_unit_id}] _handle_clear"
+            ):
                 self.storage_data.clear(local_indexes)
 
             response_msg = ZMQMessage.create(
