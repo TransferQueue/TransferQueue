@@ -76,7 +76,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             raise ValueError("Number of keys must match number of values")
 
         total_items = len(keys)
-        logger.debug(f"MooncakeStorageClient: Putting {total_items} items")
+        batch_size = 1000
+        logger.debug(f"MooncakeStorageClient: Putting {total_items} items using zero-copy batch_put_from")
         
         tensor_items = []
         non_tensor_keys = []
@@ -84,20 +85,67 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         
         for key, value in zip(keys, values, strict=True):
             if isinstance(value, torch.Tensor):
-                tensor_items.append((key, value.contiguous()))
+                tensor = value.contiguous()
+                tensor_items.append((key, tensor))
             else:
                 non_tensor_keys.append(key)
                 non_tensor_values_bytes.append(pickle.dumps(value))
         
         if tensor_items:
-            for key, tensor in tensor_items:
-                ret = self._store.put_tensor(key, tensor)
+            for i in range(0, len(tensor_items), batch_size):
+                batch_items = tensor_items[i:i + batch_size]
+                batch_keys = [item[0] for item in batch_items]
+                batch_tensors = [item[1] for item in batch_items]
+                
+                batch_values_bytes = []
+                
+                import numpy as np
+                metadata_size = 24
+                
+                for tensor in batch_tensors:
+                    dtype_enum = self._dtype_to_tensor_dtype_enum(tensor.dtype)
+                    if dtype_enum is None:
+                        raise ValueError(f"Unsupported tensor dtype: {tensor.dtype}")
+                    
+                    ndim = len(tensor.shape)
+                    if ndim > 4:
+                        raise ValueError(f"Tensor has more than 4 dimensions: {ndim}")
+                    
+                    metadata = np.zeros(6, dtype=np.int32)
+                    metadata[0] = dtype_enum
+                    metadata[1] = ndim
+                    for j in range(4):
+                        if j < ndim:
+                            metadata[2 + j] = tensor.shape[j]
+                        else:
+                            metadata[2 + j] = -1
+                    
+                    tensor_np = tensor.detach().cpu().numpy()
+                    tensor_bytes = tensor_np.tobytes()
+                    metadata_bytes = metadata.tobytes()
+                    
+                    combined_bytes = metadata_bytes + tensor_bytes
+                    batch_values_bytes.append(combined_bytes)
+                
+                ret = self._store.put_batch(batch_keys, batch_values_bytes)
                 if ret != 0:
-                    raise RuntimeError(f"put_tensor failed for key '{key}' with error code: {ret}")
-            logger.debug(f"MooncakeStorageClient: Put {len(tensor_items)} tensors via zero-copy put_tensor API")
+                    raise RuntimeError(
+                        f"put_batch failed for tensors batch {i//batch_size + 1} "
+                        f"(items {i} to {min(i+batch_size, len(tensor_items))}) with error code: {ret}"
+                    )
+                
+                if (i + 1) % (batch_size * 10) == 0 or i + batch_size >= len(tensor_items):
+                    logger.debug(
+                        f"MooncakeStorageClient: Put {min(i + batch_size, len(tensor_items))}/{len(tensor_items)} tensors "
+                        f"via put_batch API"
+                    )
+            
+            logger.debug(
+                f"MooncakeStorageClient: Put {len(tensor_items)} tensors "
+                f"via put_batch in {len(tensor_items)//batch_size + 1} batches"
+            )
         
         if non_tensor_keys:
-            batch_size = 1000
             for i in range(0, len(non_tensor_keys), batch_size):
                 batch_keys = non_tensor_keys[i:i + batch_size]
                 batch_values = non_tensor_values_bytes[i:i + batch_size]
@@ -118,9 +166,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             raise ValueError("Lengths of keys, shapes, dtypes must match")
 
         total_items = len(keys)
-        logger.debug(f"MooncakeStorageClient: Getting {total_items} items")
+        batch_size = 1000
+        logger.debug(f"MooncakeStorageClient: Getting {total_items} items using zero-copy batch_get_into")
         
-        results = []
         tensor_indices = []
         non_tensor_indices = []
         
@@ -130,17 +178,57 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             else:
                 non_tensor_indices.append(i)
         
-        tensor_results = {}
+        final_results = [None] * len(keys)
+        
         if tensor_indices:
-            for i in tensor_indices:
-                tensor = self._store.get_tensor(keys[i])
-                if tensor is None:
-                    raise RuntimeError(f"get_tensor failed for key '{keys[i]}'")
-                tensor_results[i] = tensor
-            logger.debug(f"MooncakeStorageClient: Got {len(tensor_indices)} tensors via zero-copy get_tensor API")
+            for i in range(0, len(tensor_indices), batch_size):
+                batch_indices = tensor_indices[i:i + batch_size]
+                batch_keys = [keys[j] for j in batch_indices]
+                batch_shapes = [shapes[j] for j in batch_indices]
+                batch_dtypes = [dtypes[j] for j in batch_indices]
+                
+                raw_data_list = self._store.get_batch(batch_keys)
+                if len(raw_data_list) != len(batch_keys):
+                    raise RuntimeError(
+                        f"get_batch returned {len(raw_data_list)} items, expected {len(batch_keys)} "
+                        f"for batch {i//batch_size + 1}"
+                    )
+                
+                import numpy as np
+                metadata_size = 24
+                
+                for idx, raw_data, shape, dtype in zip(
+                    batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
+                ):
+                    if not raw_data:
+                        raise RuntimeError(f"get_batch failed for key '{batch_keys[batch_indices.index(idx)]}': empty data")
+                    
+                    if len(raw_data) < metadata_size:
+                        raise RuntimeError(
+                            f"get_batch returned insufficient data for key '{batch_keys[batch_indices.index(idx)]}': "
+                            f"got {len(raw_data)} bytes, expected at least {metadata_size} bytes"
+                        )
+                    
+                    tensor_data = raw_data[metadata_size:]
+                    np_dtype = self._dtype_to_numpy(dtype)
+                    tensor_array = np.frombuffer(tensor_data, dtype=np_dtype)
+                    if shape:
+                        tensor_array = tensor_array.reshape(shape)
+                    tensor = torch.from_numpy(tensor_array).clone()
+                    final_results[idx] = tensor
+                
+                if (i + 1) % (batch_size * 10) == 0 or i + batch_size >= len(tensor_indices):
+                    logger.debug(
+                        f"MooncakeStorageClient: Got {min(i + batch_size, len(tensor_indices))}/{len(tensor_indices)} tensors "
+                        f"via get_batch API"
+                    )
+            
+            logger.debug(
+                f"MooncakeStorageClient: Got {len(tensor_indices)} tensors "
+                f"via get_batch in {len(tensor_indices)//batch_size + 1} batches"
+            )
         
         if non_tensor_indices:
-            batch_size = 1000
             for i in range(0, len(non_tensor_indices), batch_size):
                 batch_indices = non_tensor_indices[i:i + batch_size]
                 batch_keys = [keys[j] for j in batch_indices]
@@ -153,14 +241,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 for idx, raw_data in zip(batch_indices, raw_data_list, strict=True):
                     if not raw_data:
                         raise RuntimeError(f"get_batch failed for key '{keys[idx]}': empty data")
-                    results.append((idx, pickle.loads(raw_data)))
+                    final_results[idx] = pickle.loads(raw_data)
             logger.debug(f"MooncakeStorageClient: Got {len(non_tensor_indices)} non-tensors via batch API")
-        
-        final_results = [None] * len(keys)
-        for i, tensor in tensor_results.items():
-            final_results[i] = tensor
-        for i, value in results:
-            final_results[i] = value
         
         logger.debug(f"MooncakeStorageClient: Successfully got all {total_items} items")
         return final_results
@@ -178,6 +260,22 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             torch.int16: np.int16,
         }
         return dtype_map.get(dtype, np.float32)
+    
+    @staticmethod
+    def _dtype_to_tensor_dtype_enum(dtype):
+        dtype_map = {
+            torch.float32: 0,
+            torch.float64: 1,
+            torch.int8: 2,
+            torch.uint8: 3,
+            torch.int16: 4,
+            torch.int32: 5,
+            torch.int64: 6,
+            torch.bool: 7,
+            torch.float16: 8,
+            torch.bfloat16: 9,
+        }
+        return dtype_map.get(dtype)
 
     def clear(self, keys: list[str]):
         for key in keys:

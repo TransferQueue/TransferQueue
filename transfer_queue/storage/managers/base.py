@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import itertools
 import logging
 import os
@@ -432,7 +433,17 @@ class KVStorageManager(TransferQueueStorageManager):
             return
         keys = self._generate_keys(data.keys(), metadata.global_indexes)
         values = self._generate_values(data)
-        self.storage_client.put(keys=keys, values=values)
+        
+        logger.info(
+            f"[{self.storage_manager_id}]: Starting put operation: "
+            f"{len(keys)} keys, {len(values)} values, "
+            f"{len(metadata.global_indexes)} samples"
+        )
+        
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.storage_client.put, keys, values)
+        
+        logger.info(f"[{self.storage_manager_id}]: Put operation completed")
 
         per_field_dtypes = {}
         per_field_shapes = {}
@@ -447,9 +458,22 @@ class KVStorageManager(TransferQueueStorageManager):
         if num_samples == 0:
             return
         
+        data_batch_size = data.batch_size[0] if data.batch_size else 0
+        if num_samples != data_batch_size:
+            raise ValueError(
+                f"Mismatch between metadata.global_indexes length ({num_samples}) "
+                f"and data.batch_size[0] ({data_batch_size})"
+            )
+        
         for field_name, field_data in data.items():
             for i in range(num_samples):
-                data_item = field_data[i]
+                try:
+                    data_item = field_data[i]
+                except (IndexError, TypeError, KeyError) as e:
+                    raise IndexError(
+                        f"Failed to access field '{field_name}' at index {i}: {e}. "
+                        f"Field type: {type(field_data)}, num_samples: {num_samples}"
+                    )
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
