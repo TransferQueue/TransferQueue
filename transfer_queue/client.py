@@ -33,6 +33,7 @@ from transfer_queue.storage import (
     TransferQueueStorageManager,
     TransferQueueStorageManagerFactory,
 )
+from transfer_queue.utils.utils import limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -48,6 +49,8 @@ if not logger.hasHandlers():
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
     logger.addHandler(handler)
+
+TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 16))
 
 
 class AsyncTransferQueueClient:
@@ -330,7 +333,8 @@ class AsyncTransferQueueClient:
             raise ValueError("metadata cannot be none or empty")
         logger.debug(f"[{self.client_id}]: Put data with data: {data}")
 
-        await self.storage_manager.put_data(data, metadata)
+        with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+            await self.storage_manager.put_data(data, metadata)
 
         logger.info(
             f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
@@ -375,7 +379,8 @@ class AsyncTransferQueueClient:
             logger.warning(f"[{self.client_id}]: Empty BatchMeta provided to get_data. Returning empty TensorDict.")
             return TensorDict({}, batch_size=0)
 
-        results = await self.storage_manager.get_data(metadata)
+        with limit_pytorch_auto_parallel_threads(target_num_threads=TQ_NUM_THREADS):
+            results = await self.storage_manager.get_data(metadata)
 
         return results
 
