@@ -28,7 +28,6 @@ from transfer_queue.metadata import BatchMeta
 from transfer_queue.storage.managers.base import TransferQueueStorageManager
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
 from transfer_queue.storage.simple_backend import StorageMetaGroup
-from transfer_queue.utils.utils import limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
 
 logger = logging.getLogger(__name__)
@@ -233,6 +232,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         """
         Send data to a specific storage unit.
         """
+
         tensordict_data = TensorDict(
             {
                 field: (
@@ -312,21 +312,20 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         for field in metadata.field_names:
             ordered_data[field] = [merged_data[global_idx][field] for global_idx in metadata.global_indexes]
 
-        with limit_pytorch_auto_parallel_threads():
-            tensor_data = {
-                field: (
-                    torch.stack(torch.nested.as_nested_tensor(v).unbind())
-                    if v
-                    and all(isinstance(item, torch.Tensor) for item in v)
-                    and all(item.shape == v[0].shape for item in v)
-                    else (
-                        torch.nested.as_nested_tensor(v)
-                        if v and all(isinstance(item, torch.Tensor) for item in v)
-                        else NonTensorStack(*v)
-                    )
+        tensor_data = {
+            field: (
+                torch.stack(torch.nested.as_nested_tensor(v).unbind())
+                if v
+                and all(isinstance(item, torch.Tensor) for item in v)
+                and all(item.shape == v[0].shape for item in v)
+                else (
+                    torch.nested.as_nested_tensor(v)
+                    if v and all(isinstance(item, torch.Tensor) for item in v)
+                    else NonTensorStack(*v)
                 )
-                for field, v in ordered_data.items()
-            }
+            )
+            for field, v in ordered_data.items()
+        }
 
         return TensorDict(tensor_data, batch_size=len(metadata))
 
