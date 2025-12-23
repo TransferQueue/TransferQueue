@@ -95,6 +95,15 @@ class TestTransferQueueController:
         assert partition.production_status is not None
         assert partition.production_status.size(0) == gbs * num_n_samples
 
+        # Test for get production status
+        production_status = ray.get(
+            tq_controller.get_production_status.remote(
+                partition_id=partition_id,
+                data_fields=data_fields,
+            )
+        )
+        assert production_status
+
         # Total fields should match the number of fields we added
         assert partition.total_fields_num == len(data_fields)
 
@@ -116,6 +125,15 @@ class TestTransferQueueController:
 
         print(f"✓ Updated production status for partition {partition_id}")
 
+        # Test for get consumption status
+        consumption_status = ray.get(
+            tq_controller.get_consumption_status.remote(
+                partition_id=partition_id,
+                task_name="generate_sequences",
+            )
+        )
+        assert torch.equal(consumption_status, torch.zeros(gbs * num_n_samples))
+
         # Test get metadate in fetch mode
         gen_meta = ray.get(
             tq_controller.get_metadata.remote(
@@ -126,12 +144,22 @@ class TestTransferQueueController:
                 task_name="generate_sequences",
             )
         )
+
         assert gen_meta.global_indexes == list(range(gbs * num_n_samples))
         assert gen_meta.samples[0].partition_id == "train_0"
         assert gen_meta.field_names == ["prompt_ids"]
         partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         assert torch.equal(partition.consumption_status["generate_sequences"], torch.ones(gbs * num_n_samples))
         print("✓ Get metadata in fetch mode correct")
+
+        # Test for get consumption status
+        consumption_status = ray.get(
+            tq_controller.get_consumption_status.remote(
+                partition_id=partition_id,
+                task_name="generate_sequences",
+            )
+        )
+        assert torch.equal(consumption_status, torch.ones(gbs * num_n_samples))
 
         # Test get clear meta
         clear_meta = ray.get(
@@ -150,8 +178,7 @@ class TestTransferQueueController:
         partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id))
         assert partition_index_range == set()
-        assert torch.all(partition.production_status == 0)
-        assert torch.all(partition.consumption_status["generate_sequences"] == 0)
+        assert partition is None
         print("✓ Clear correct")
 
     def test_controller_with_multi_partitions(self, ray_setup):
@@ -262,8 +289,8 @@ class TestTransferQueueController:
         partition_index_range_1_after_clear = ray.get(tq_controller.get_partition_index_range.remote(partition_id_1))
 
         assert not partition_index_range_1_after_clear
-        assert torch.all(partition_1_after_clear.production_status[list(partition_index_range_1), :] == 0)
-        assert torch.all(partition_1_after_clear.consumption_status["generate_sequences"] == 0)
+        assert partition_1_after_clear is None
+        assert partition_index_range_1_after_clear == set()
 
         partition_2 = ray.get(tq_controller.get_partition_snapshot.remote(partition_id_2))
         partition_index_range_2 = ray.get(tq_controller.get_partition_index_range.remote(partition_id_2))

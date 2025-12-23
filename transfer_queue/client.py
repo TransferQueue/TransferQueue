@@ -489,26 +489,159 @@ class AsyncTransferQueueClient:
             raise
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_data_consumption_status(self, task_name: str, partition_id: str):
-        """Check if all samples for current step have been consumed.
+    async def async_check_consumption_status(
+        self,
+        task_name: str,
+        partition_id: str,
+        socket: Optional[zmq.asyncio.Socket] = None,
+    ) -> bool:
+        """Check if all samples for current partition have been consumed by a specific task.
 
         Args:
             task_name: Name of the task to check consumption for
             partition_id: Partition id to check consumption status for
+            socket: ZMQ async socket for message transmission (injected by decorator)
+
+        Returns:
+            bool: True if all samples have been consumed by the task, False otherwise
+
+        Raises:
+            RuntimeError: If communication fails or controller returns error response
+
+        Example:
+            >>> # Check if all samples have been consumed
+            >>> is_consumed = asyncio.run(client.check_data_consumption_status(
+            ...     task_name="generate_sequences",
+            ...     partition_id="train_0"
+            ... ))
+            >>> print(f"All samples consumed: {is_consumed}")
         """
-        # TODO: Implement this method to check if all samples for the current step has been consumed
-        pass
+        assert socket is not None
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CHECK_CONSUMPTION,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={
+                "partition_id": partition_id,
+                "task_name": task_name,
+            },
+        )
+
+        try:
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
+            logger.debug(
+                f"[{self.client_id}]: Client check consumption response: {response_msg} "
+                f"from controller {self._controller.id}"
+            )
+
+            if response_msg.request_type == ZMQRequestType.CONSUMPTION_RESPONSE:
+                consumed = response_msg.body.get("consumed", False)
+                return consumed
+            else:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Failed to check consumption status from controller {self._controller.id}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
+                )
+        except Exception as e:
+            raise RuntimeError(f"[{self.client_id}]: Error in check_data_consumption_status: {str(e)}") from e
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_data_production_status(self, data_fields: list[str], partition_id: str):
-        """Check if all samples for current partition are ready for consumption.
+    async def async_check_production_status(
+        self,
+        data_fields: list[str],
+        partition_id: str,
+        socket: Optional[zmq.asyncio.Socket] = None,
+    ) -> bool:
+        """Check if all samples for current partition are ready (produced) for consumption.
 
         Args:
             data_fields: Data fields to check production status for
             partition_id: Partition id to check production status for
+            socket: ZMQ async socket for message transmission (injected by decorator)
+
+        Returns:
+            bool: True if all samples have been produced and ready, False otherwise
+
+        Raises:
+            RuntimeError: If communication fails or controller returns error response
+
+        Example:
+            >>> # Check if all samples are ready for consumption
+            >>> is_ready = asyncio.run(client.check_data_production_status(
+            ...     data_fields=["input_ids", "attention_mask"],
+            ...     partition_id="train_0"
+            ... ))
+            >>> print(f"All samples ready: {is_ready}")
         """
-        # TODO: Implement this method to check if all samples for the current step is ready for consumption
-        pass
+        assert socket is not None
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CHECK_PRODUCTION,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={
+                "partition_id": partition_id,
+                "data_fields": data_fields,
+            },
+        )
+
+        try:
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
+            logger.debug(
+                f"[{self.client_id}]: Client check production response: {response_msg} "
+                f"from controller {self._controller.id}"
+            )
+
+            if response_msg.request_type == ZMQRequestType.PRODUCTION_RESPONSE:
+                produced = response_msg.body.get("produced", False)
+                return produced
+            else:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Failed to check production status from controller {self._controller.id}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
+                )
+        except Exception as e:
+            raise RuntimeError(f"[{self.client_id}]: Error in check_data_production_status: {str(e)}") from e
+
+    @dynamic_socket(socket_name="request_handle_socket")
+    async def async_get_partition_list(
+        self,
+        socket: Optional[zmq.asyncio.Socket] = None,
+    ) -> list[str]:
+        """Asynchronously fetch the list of partition ids from the controller.
+
+        Returns:
+            list[str]: List of partition ids managed by the controller
+        """
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.GET_LIST_PARTITIONS,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={},
+        )
+
+        try:
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
+            logger.debug(
+                f"[{self.client_id}]: Client get partition list response: {response_msg} "
+                f"from controller {self._controller.id}"
+            )
+
+            if response_msg.request_type == ZMQRequestType.LIST_PARTITIONS_RESPONSE:
+                partition_ids = response_msg.body.get("partition_ids", [])
+                return partition_ids
+            else:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Failed to get partition list from controller {self._controller.id}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
+                )
+        except Exception as e:
+            raise RuntimeError(f"[{self.client_id}]: Error in get_partition_list: {str(e)}") from e
 
     def close(self) -> None:
         """Close the client and cleanup resources including storage manager."""
@@ -607,6 +740,40 @@ class TransferQueueClient(AsyncTransferQueueClient):
             partition_id: The partition id to clear data for
         """
         return asyncio.run(self.async_clear(partition_id))
+
+    def check_consumption_status(self, task_name: str, partition_id: str) -> bool:
+        """Synchronously check if all samples for a partition have been consumed by a specific task.
+
+        Args:
+            task_name: Name of the task to check consumption for
+            partition_id: Partition id to check consumption status for
+
+        Returns:
+            bool: True if all samples have been consumed by the task, False otherwise
+        """
+        return asyncio.run(self.async_check_consumption_status(task_name, partition_id))
+
+    def check_production_status(self, data_fields: list[str], partition_id: str) -> bool:
+        """Synchronously check if all samples for a partition are ready (produced) for consumption.
+
+        Args:
+            data_fields: Data fields to check production status for
+            partition_id: Partition id to check production status for
+
+        Returns:
+            bool: True if all samples have been produced and ready, False otherwise
+        """
+        return asyncio.run(self.async_check_production_status(data_fields, partition_id))
+
+    def get_partition_list(
+        self,
+    ):
+        """Synchronously fetch the list of partition ids from the controller.
+
+        Returns:
+            list[str]: List of partition ids managed by the controller
+        """
+        return asyncio.run(self.async_get_partition_list())
 
 
 def process_zmq_server_info(
