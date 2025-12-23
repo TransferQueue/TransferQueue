@@ -843,8 +843,8 @@ class TransferQueueController:
 
                 if len(ready_for_consume_indexes) < batch_size:
                     if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
-                        # TODO: use_polling related logics here @ningbenzhe
-                        # if use_polling:
+                        # TODO: non_blocking related logics here @ningbenzhe
+                        # if self.non_blocking:
                         #     logger.info()
                         #     return BatchMeta.empty()
                         raise TimeoutError(
@@ -913,10 +913,9 @@ class TransferQueueController:
             partition_id: ID of the partition
             data_fields: List of required field names
             task_name: Name of the consumer task
-            batch_size: Number of samples needed
 
         Returns:
-            List of sample indices that are ready for consumption
+            List of global indices that are ready for consumption
         """
 
         partition = self._get_partition(partition_id)
