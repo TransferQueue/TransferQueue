@@ -839,49 +839,47 @@ class TransferQueueController:
             while True:
                 # ready_for_consume_indexes: samples where all required fields are produced
                 # (production status is ready) and not yet consumed
-                ready_for_consume_indexes = self.scan_data_status(partition_id, data_fields, task_name, batch_size)
+                ready_for_consume_indexes = self.scan_data_status(partition_id, data_fields, task_name)
 
                 if len(ready_for_consume_indexes) < batch_size:
                     if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
+                        # TODO: non_blocking related logics here @ningbenzhe
+                        # if self.non_blocking:
+                        #     logger.info()
+                        #     return BatchMeta.empty()
                         raise TimeoutError(
-                            f"Timeout while waiting for sufficient data. "
+                            f"Timeout while waiting for sufficient data for task {task_name}. "
                             f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}"
                         )
                     logger.warning(
-                        f"Insufficient complete groups available. Required: {batch_size}, "
-                        f"Available: {len(ready_for_consume_indexes)}. Retrying in "
-                        f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
+                        f"Insufficient data for task {task_name}. Required: {batch_size} samples with "
+                        f"fields {data_fields} in partition {partition_id}, but only have "
+                        f"{len(ready_for_consume_indexes)} samples meeting the criteria. "
+                        f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
                     )
                     time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
-                    continue
-
-                # Try sampling - if it returns empty lists, retry
-                batch_global_indexes, consumed_indexes = self.sampler(
-                    ready_for_consume_indexes,
-                    batch_size,
-                    **(sampling_config or {}),
-                )
-
-                # Check if we got valid results from the sampler
-                if len(batch_global_indexes) == batch_size:
+                else:
                     break
 
-                if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
-                    raise TimeoutError(
-                        f"Timeout while waiting for sufficient data. "
-                        f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}, "
-                        f"Sampled: {len(batch_global_indexes)}"
-                    )
-
-                logger.warning(
-                    f"Insufficient complete groups available. Required: {batch_size}, "
-                    f"Available: {len(ready_for_consume_indexes)}, "
-                    f"Sampled: {len(batch_global_indexes)}. Retrying in "
-                    f"{TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
+            if len(ready_for_consume_indexes) < batch_size:
+                raise RuntimeError(
+                    "Unexpected error: ready_for_consume_indexes has insufficient samples before sampling. "
                 )
-                time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
-            logger.debug(f"ready for consume idx: {ready_for_consume_indexes}")
-            logger.debug(f"sampled idx: {batch_global_indexes}")
+
+            batch_global_indexes, consumed_indexes = self.sampler(
+                ready_for_consume_indexes,
+                batch_size,
+                **(sampling_config or {}),
+            )
+
+            # Check if we got valid results from the sampler
+            if len(batch_global_indexes) != batch_size:
+                raise RuntimeError(
+                    f"Sampler returned insufficient samples. Please check the sampler logic. "
+                    f"Expected: {batch_size}, before sampling: {len(ready_for_consume_indexes)}, "
+                    f"after sampling: {len(batch_global_indexes)}"
+                )
+
         elif mode == "force_fetch":
             global_indexes_range = self.index_manager.get_indexes_for_partition(partition_id)
             consumer_status = self.get_consumption_status(partition_id, task_name)
@@ -906,8 +904,6 @@ class TransferQueueController:
         partition_id: str,
         data_fields: list[str],
         task_name: str,
-        batch_size: int,
-        timeout: float = TQ_CONTROLLER_GET_METADATA_TIMEOUT,
     ) -> list[int]:
         """
         Find samples that are ready for consumption in a specific partition.
@@ -917,44 +913,19 @@ class TransferQueueController:
             partition_id: ID of the partition
             data_fields: List of required field names
             task_name: Name of the consumer task
-            batch_size: Number of samples needed
-            timeout: Maximum time to wait for sufficient data
 
         Returns:
-            List of sample indices that are ready for consumption
-
-        Raises:
-            TimeoutError: If sufficient data is not available within timeout
+            List of global indices that are ready for consumption
         """
-        start_time = time.time()
 
-        while True:
-            partition = self._get_partition(partition_id)
-            if not partition:
-                if time.time() - start_time > timeout:
-                    raise TimeoutError(f"Partition {partition_id} not found")
-                time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
-                continue
+        partition = self._get_partition(partition_id)
+        if not partition:
+            return []
 
-            # Use partition's own scanning method
-            ready_sample_indices = partition.scan_data_status(data_fields, task_name)
+        # Use partition's own scanning method
+        ready_sample_indices = partition.scan_data_status(data_fields, task_name)
 
-            if len(ready_sample_indices) < batch_size:
-                if time.time() - start_time > timeout:
-                    # TODO: dont't raise error here, return empty list and let caller handle it (retry or not)
-                    raise TimeoutError(
-                        f"Timeout waiting for sufficient data in partition {partition_id}. "
-                        f"Required: {batch_size}, Available: {len(ready_sample_indices)}"
-                    )
-
-                logger.warning(
-                    f"Insufficient data in partition {partition_id} for task {task_name}: requiring {batch_size} "
-                    f"samples with {data_fields}, but only have {len(ready_sample_indices)} samples. "
-                    f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
-                )
-                time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
-            else:
-                return ready_sample_indices
+        return ready_sample_indices
 
     # ==================== Metadata Generation API ====================
 
