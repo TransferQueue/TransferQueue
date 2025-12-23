@@ -518,6 +518,7 @@ class BatchMeta:
 
         # Update cached index lists
         object.__setattr__(self, "_global_indexes", [sample.global_index for sample in self.samples])
+        object.__setattr__(self, "_partition_ids", [sample.partition_id for sample in self.samples])
 
         # Note: No need to update _size, _field_names, _is_ready, etc., as these remain unchanged after reorder
 
