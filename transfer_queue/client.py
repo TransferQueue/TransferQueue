@@ -510,7 +510,7 @@ class AsyncTransferQueueClient:
 
         Example:
             >>> # Check if all samples have been consumed
-            >>> is_consumed = asyncio.run(client.check_data_consumption_status(
+            >>> is_consumed = asyncio.run(client.async_check_consumption_status(
             ...     task_name="generate_sequences",
             ...     partition_id="train_0"
             ... ))
@@ -569,7 +569,7 @@ class AsyncTransferQueueClient:
 
         Example:
             >>> # Check if all samples are ready for consumption
-            >>> is_ready = asyncio.run(client.check_data_production_status(
+            >>> is_ready = asyncio.run(client.async_check_production_status(
             ...     data_fields=["input_ids", "attention_mask"],
             ...     partition_id="train_0"
             ... ))
@@ -612,6 +612,9 @@ class AsyncTransferQueueClient:
         socket: Optional[zmq.asyncio.Socket] = None,
     ) -> list[str]:
         """Asynchronously fetch the list of partition ids from the controller.
+
+        Args:
+            socket: ZMQ socket (injected by decorator)
 
         Returns:
             list[str]: List of partition ids managed by the controller

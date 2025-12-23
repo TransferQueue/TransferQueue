@@ -851,7 +851,7 @@ class TransferQueueController:
         sampling_config: Optional[dict[str, Any]] = None,
         *args,
         **kwargs,
-    ) -> BatchMeta | None:
+    ) -> BatchMeta:
         """
         Retrieve metadata with support for three modes.
 
@@ -903,12 +903,8 @@ class TransferQueueController:
                             f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}. "
                             f"Returning None due to polling mode."
                         )
-                        return None
+                        return BatchMeta.empty()
                     if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
-                        # TODO: non_blocking related logics here @ningbenzhe
-                        # if self.non_blocking:
-                        #     logger.info()
-                        #     return BatchMeta.empty()
                         raise TimeoutError(
                             f"Timeout while waiting for sufficient data for task {task_name}. "
                             f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}"
@@ -1081,7 +1077,7 @@ class TransferQueueController:
         global_indexes_range = list(self.index_manager.get_indexes_for_partition(partition_id))
         success = partition.clear_data(global_indexes_range, clear_consumption)
         self.index_manager.release_indexes(partition_id)
-        partition = self.partitions.pop(partition_id)
+        self.partitions.pop(partition_id)
         if success:
             logger.info(f"Cleared data for partition {partition_id}")
         return success
@@ -1307,7 +1303,7 @@ class TransferQueueController:
                     )
 
             elif request_msg.request_type == ZMQRequestType.GET_LIST_PARTITIONS:
-                with perf_monitor.measure(op_type="CHECK_PRODUCTION"):
+                with perf_monitor.measure(op_type="GET_LIST_PARTITIONS"):
                     # Handle list partitions request
                     partition_ids = self.list_partitions()
                     response_msg = ZMQMessage.create(
