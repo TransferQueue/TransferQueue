@@ -628,7 +628,9 @@ class TransferQueueController:
     - Flexible data organization through partition-based addressing
     """
 
-    def __init__(self, sampler: BaseSampler | type[BaseSampler] = SequentialSampler, polling_mode=False) -> None:
+    def __init__(
+        self, sampler: BaseSampler | type[BaseSampler] = SequentialSampler, polling_mode: bool = False
+    ) -> None:
         """Initialize the TransferQueue Controller.
 
         Args:
@@ -898,7 +900,7 @@ class TransferQueueController:
 
                 if len(ready_for_consume_indexes) < batch_size:
                     if self.polling_mode:
-                        logger.info(
+                        logger.debug(
                             f"Not enough data for task {task_name} in partition {partition_id}. "
                             f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}. "
                             f"Returning None due to polling mode."
