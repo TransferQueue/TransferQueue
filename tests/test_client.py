@@ -107,6 +107,29 @@ class MockController:
                     elif request_msg.request_type == ZMQRequestType.CLEAR_META:
                         response_body = {"message": "clear ok"}
                         response_type = ZMQRequestType.CLEAR_META_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
+                        # Mock consumption status check - all consumed
+                        response_body = {
+                            "partition_id": request_msg.body.get("partition_id"),
+                            "consumed": True,
+                        }
+                        response_type = ZMQRequestType.CONSUMPTION_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.CHECK_PRODUCTION:
+                        # Mock production status check - all produced
+                        response_body = {
+                            "partition_id": request_msg.body.get("partition_id"),
+                            "produced": True,
+                        }
+                        response_type = ZMQRequestType.PRODUCTION_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.GET_LIST_PARTITIONS:
+                        # Mock partition list
+                        response_body = {
+                            "partition_ids": ["partition_0", "partition_1", "test_partition"],
+                        }
+                        response_type = ZMQRequestType.LIST_PARTITIONS_RESPONSE
+                    else:
+                        response_body = {"error": f"Unknown request type: {request_msg.request_type}"}
+                        response_type = ZMQRequestType.CLEAR_META_RESPONSE
 
                     # Send response
                     response_msg = ZMQMessage.create(
@@ -426,3 +449,71 @@ def test_put_without_required_params(client_setup):
     # Test put without partition id (should fail)
     with pytest.raises(ValueError):
         client.put(data=test_data)
+
+
+# Test new status checking methods
+def test_check_consumption_status(client_setup):
+    """Test consumption status checking"""
+    client, _, _ = client_setup
+
+    # Test synchronous check_consumption_status
+    is_consumed = client.check_consumption_status(task_name="generate_sequences", partition_id="train_0")
+    assert is_consumed is True
+
+
+def test_check_production_status(client_setup):
+    """Test production status checking"""
+    client, _, _ = client_setup
+
+    # Test synchronous check_production_status
+    is_produced = client.check_production_status(data_fields=["prompt_ids", "attention_mask"], partition_id="train_0")
+    assert is_produced is True
+
+
+def test_get_partition_list(client_setup):
+    """Test partition list retrieval"""
+    client, _, _ = client_setup
+
+    # Test synchronous get_partition_list
+    partition_list = client.get_partition_list()
+    assert isinstance(partition_list, list)
+    assert len(partition_list) > 0
+    assert "partition_0" in partition_list
+    assert "partition_1" in partition_list
+    assert "test_partition" in partition_list
+
+
+@pytest.mark.asyncio
+async def test_async_check_consumption_status(client_setup):
+    """Test async consumption status checking"""
+    client, _, _ = client_setup
+
+    # Test async_check_consumption_status
+    is_consumed = await client.async_check_consumption_status(task_name="generate_sequences", partition_id="train_0")
+    assert is_consumed is True
+
+
+@pytest.mark.asyncio
+async def test_async_check_production_status(client_setup):
+    """Test async production status checking"""
+    client, _, _ = client_setup
+
+    # Test async_check_production_status
+    is_produced = await client.async_check_production_status(
+        data_fields=["prompt_ids", "attention_mask"], partition_id="train_0"
+    )
+    assert is_produced is True
+
+
+@pytest.mark.asyncio
+async def test_async_get_partition_list(client_setup):
+    """Test async partition list retrieval"""
+    client, _, _ = client_setup
+
+    # Test async_get_partition_list
+    partition_list = await client.async_get_partition_list()
+    assert isinstance(partition_list, list)
+    assert len(partition_list) > 0
+    assert "partition_0" in partition_list
+    assert "partition_1" in partition_list
+    assert "test_partition" in partition_list

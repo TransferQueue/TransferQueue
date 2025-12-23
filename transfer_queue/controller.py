@@ -396,6 +396,7 @@ class DataPartitionStatus:
         Returns:
             Consumption status tensor for the specified task
         """
+
         if task_name not in self.consumption_status:
             if self.production_status is not None:
                 self.consumption_status[task_name] = torch.zeros(self.allocated_samples_num, dtype=torch.int8)
@@ -424,6 +425,38 @@ class DataPartitionStatus:
                 f"Target global_indices {global_indices}, but current consumption_status has "
                 f"shape {consumption_status.shape}"
             )
+
+    def get_production_status_for_fields(self, field_names: list[str]) -> bool:
+        """
+        Check if all samples for specified fields are fully produced and ready.
+
+        Args:
+            field_names: List of field names to check production status for
+
+        Returns:
+            bool: True if all samples have been produced for all specified fields, False otherwise
+        """
+        if self.production_status is None or field_names is None or len(field_names) == 0:
+            return False
+
+        # Check if all requested fields are registered
+        for field_name in field_names:
+            if field_name not in self.field_name_mapping:
+                return False
+
+        # Create column mask for requested fields
+        col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
+        field_indices = [self.field_name_mapping[field] for field in field_names]
+        if field_indices:
+            col_mask[field_indices] = True
+
+        # Get production status for requested fields
+        relevant_status = self.production_status[:, col_mask]
+
+        # Check if all samples have all requested fields produced (all values are 1)
+        all_fields_produced = torch.all(relevant_status == 1).item()
+
+        return all_fields_produced
 
     # ==================== Data Scanning and Query Methods ====================
 
@@ -595,7 +628,9 @@ class TransferQueueController:
     - Flexible data organization through partition-based addressing
     """
 
-    def __init__(self, sampler: BaseSampler | type[BaseSampler] = SequentialSampler) -> None:
+    def __init__(
+        self, sampler: BaseSampler | type[BaseSampler] = SequentialSampler, polling_mode: bool = False
+    ) -> None:
         """Initialize the TransferQueue Controller.
 
         Args:
@@ -605,6 +640,10 @@ class TransferQueueController:
                     - Defaults to SequentialSampler for simple sequential sampling
                     - Example: sampler=GRPOGroupNSampler() (instance)
                     - Example: sampler=GRPOGroupNSampler (class)
+            polling_mode: Whether to use polling mode for TransferQueue controller.
+                    - If False, the controller will raise an error when no enough data is available.
+                    - If True, the controller will return an empty BatchMeta when no enough data is available.
+                               The user side is responsible for handling this empty case (retrying later).
         """
         if isinstance(sampler, BaseSampler):
             self.sampler = sampler
@@ -616,6 +655,7 @@ class TransferQueueController:
             )
 
         self.controller_id = f"TQ_CONTROLLER_{uuid4().hex[:8]}"
+        self.polling_mode = polling_mode
 
         # Initialize ZMQ sockets for communication
         self._init_zmq_socket()
@@ -786,6 +826,23 @@ class TransferQueueController:
 
         return partition.get_consumption_status(task_name)
 
+    def get_production_status(self, partition_id: str, data_fields: list[str]) -> bool:
+        """
+        Check if all samples for specified fields are fully produced in a partition.
+
+        Args:
+            partition_id: ID of the partition
+            data_fields: List of field names to check production status for
+
+        Returns:
+            bool: True if all samples have been produced for all specified fields, False otherwise
+        """
+        partition = self._get_partition(partition_id)
+        if not partition:
+            return False
+
+        return partition.get_production_status_for_fields(data_fields)
+
     def get_metadata(
         self,
         data_fields: list[str],
@@ -842,11 +899,14 @@ class TransferQueueController:
                 ready_for_consume_indexes = self.scan_data_status(partition_id, data_fields, task_name)
 
                 if len(ready_for_consume_indexes) < batch_size:
+                    if self.polling_mode:
+                        logger.debug(
+                            f"Not enough data for task {task_name} in partition {partition_id}. "
+                            f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}. "
+                            f"Returning None due to polling mode."
+                        )
+                        return BatchMeta.empty()
                     if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
-                        # TODO: non_blocking related logics here @ningbenzhe
-                        # if self.non_blocking:
-                        #     logger.info()
-                        #     return BatchMeta.empty()
                         raise TimeoutError(
                             f"Timeout while waiting for sufficient data for task {task_name}. "
                             f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}"
@@ -860,11 +920,6 @@ class TransferQueueController:
                     time.sleep(TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL)
                 else:
                     break
-
-            if len(ready_for_consume_indexes) < batch_size:
-                raise RuntimeError(
-                    "Unexpected error: ready_for_consume_indexes has insufficient samples before sampling. "
-                )
 
             batch_global_indexes, consumed_indexes = self.sampler(
                 ready_for_consume_indexes,
@@ -1024,6 +1079,7 @@ class TransferQueueController:
         global_indexes_range = list(self.index_manager.get_indexes_for_partition(partition_id))
         success = partition.clear_data(global_indexes_range, clear_consumption)
         self.index_manager.release_indexes(partition_id)
+        self.partitions.pop(partition_id)
         if success:
             logger.info(f"Cleared data for partition {partition_id}")
         return success
@@ -1230,6 +1286,35 @@ class TransferQueueController:
                             "consumed": consumed,
                         },
                     )
+
+            elif request_msg.request_type == ZMQRequestType.CHECK_PRODUCTION:
+                with perf_monitor.measure(op_type="CHECK_PRODUCTION"):
+                    # Handle production status checks
+                    params = request_msg.body
+
+                    produced = self.get_production_status(params["partition_id"], params["data_fields"])
+
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.PRODUCTION_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={
+                            "partition_id": params["partition_id"],
+                            "produced": produced,
+                        },
+                    )
+
+            elif request_msg.request_type == ZMQRequestType.GET_LIST_PARTITIONS:
+                with perf_monitor.measure(op_type="GET_LIST_PARTITIONS"):
+                    # Handle list partitions request
+                    partition_ids = self.list_partitions()
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.LIST_PARTITIONS_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"partition_ids": partition_ids},
+                    )
+
             self.request_handle_socket.send_multipart([identity, *response_msg.serialize()])
 
     def _update_data_status(self):
