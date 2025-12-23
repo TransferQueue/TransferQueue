@@ -851,7 +851,7 @@ class TransferQueueController:
         sampling_config: Optional[dict[str, Any]] = None,
         *args,
         **kwargs,
-    ) -> BatchMeta:
+    ) -> BatchMeta | None:
         """
         Retrieve metadata with support for three modes.
 
@@ -898,7 +898,12 @@ class TransferQueueController:
 
                 if len(ready_for_consume_indexes) < batch_size:
                     if self.use_polling:
-                        return BatchMeta.empty()
+                        logger.info(
+                            f"Not enough data for task {task_name} in partition {partition_id}. "
+                            f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}. "
+                            f"Returning None due to polling mode."
+                        )
+                        return None
                     if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
                         # TODO: non_blocking related logics here @ningbenzhe
                         # if self.non_blocking:
