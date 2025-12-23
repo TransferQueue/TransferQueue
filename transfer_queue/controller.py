@@ -628,7 +628,7 @@ class TransferQueueController:
     - Flexible data organization through partition-based addressing
     """
 
-    def __init__(self, sampler: BaseSampler | type[BaseSampler] = SequentialSampler, use_polling=False) -> None:
+    def __init__(self, sampler: BaseSampler | type[BaseSampler] = SequentialSampler, polling_mode=False) -> None:
         """Initialize the TransferQueue Controller.
 
         Args:
@@ -638,7 +638,7 @@ class TransferQueueController:
                     - Defaults to SequentialSampler for simple sequential sampling
                     - Example: sampler=GRPOGroupNSampler() (instance)
                     - Example: sampler=GRPOGroupNSampler (class)
-            use_polling: Whether to use polling mode for TransferQueue controller.
+            polling_mode: Whether to use polling mode for TransferQueue controller.
                     - If False, the controller will raise an error when no enough data is available.
                     - If True, the controller will return an empty BatchMeta when no enough data is available.
                                The user side is responsible for handling this empty case (retrying later).
@@ -653,7 +653,7 @@ class TransferQueueController:
             )
 
         self.controller_id = f"TQ_CONTROLLER_{uuid4().hex[:8]}"
-        self.use_polling = use_polling
+        self.polling_mode = polling_mode
 
         # Initialize ZMQ sockets for communication
         self._init_zmq_socket()
@@ -897,7 +897,7 @@ class TransferQueueController:
                 ready_for_consume_indexes = self.scan_data_status(partition_id, data_fields, task_name)
 
                 if len(ready_for_consume_indexes) < batch_size:
-                    if self.use_polling:
+                    if self.polling_mode:
                         logger.info(
                             f"Not enough data for task {task_name} in partition {partition_id}. "
                             f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}. "
