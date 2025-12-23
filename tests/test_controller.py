@@ -91,7 +91,7 @@ class TestTransferQueueController:
             )
         )
         assert success
-        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         assert partition.production_status is not None
         assert partition.production_status.size(0) == gbs * num_n_samples
 
@@ -129,7 +129,7 @@ class TestTransferQueueController:
         assert gen_meta.global_indexes == list(range(gbs * num_n_samples))
         assert gen_meta.samples[0].partition_id == "train_0"
         assert gen_meta.field_names == ["prompt_ids"]
-        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         assert torch.equal(partition.consumption_status["generate_sequences"], torch.ones(gbs * num_n_samples))
         print("✓ Get metadata in fetch mode correct")
 
@@ -147,7 +147,7 @@ class TestTransferQueueController:
 
         # Test clear
         ray.get(tq_controller.clear.remote(partition_id))
-        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id))
         assert partition_index_range == set()
         assert torch.all(partition.production_status == 0)
@@ -258,14 +258,14 @@ class TestTransferQueueController:
         partition_index_range_1 = ray.get(tq_controller.get_partition_index_range.remote(partition_id_1))
         assert partition_index_range_1
         ray.get(tq_controller.clear.remote(partition_id_1))
-        partition_1_after_clear = ray.get(tq_controller.get_partition.remote(partition_id_1))
+        partition_1_after_clear = ray.get(tq_controller.get_partition_snapshot.remote(partition_id_1))
         partition_index_range_1_after_clear = ray.get(tq_controller.get_partition_index_range.remote(partition_id_1))
 
         assert not partition_index_range_1_after_clear
         assert torch.all(partition_1_after_clear.production_status[list(partition_index_range_1), :] == 0)
         assert torch.all(partition_1_after_clear.consumption_status["generate_sequences"] == 0)
 
-        partition_2 = ray.get(tq_controller.get_partition.remote(partition_id_2))
+        partition_2 = ray.get(tq_controller.get_partition_snapshot.remote(partition_id_2))
         partition_index_range_2 = ray.get(tq_controller.get_partition_index_range.remote(partition_id_2))
         assert partition_index_range_2 == set([32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47])
         assert torch.all(

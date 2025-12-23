@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from operator import itemgetter
-from threading import Thread
+from threading import Lock, Thread
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -204,6 +205,10 @@ class DataPartitionStatus:
     field_dtypes: dict[int, dict[str, Any]] = field(default_factory=dict)  # global_idx -> {field: dtype}
     field_shapes: dict[int, dict[str, Any]] = field(default_factory=dict)  # global_idx -> {field: shape}
 
+    # Threading lock for concurrency control; only for preventing mask operation error when expanding production_status.
+    # No need to strictly lock for every read/write operation since freshness is not critical.
+    data_status_lock: Lock = field(default_factory=Lock)
+
     # Dynamic configuration - these are computed from the current state
     @property
     def total_samples_num(self) -> int:
@@ -315,7 +320,8 @@ class DataPartitionStatus:
             required_samples = max_sample_idx + 1
 
             # Ensure we have enough rows
-            self.ensure_samples_capacity(required_samples)
+            with self.data_status_lock:
+                self.ensure_samples_capacity(required_samples)
 
             # Register new fields if needed
             new_fields = [field for field in field_names if field not in self.field_name_mapping]
@@ -325,7 +331,8 @@ class DataPartitionStatus:
                     self.field_name_mapping[field] = len(self.field_name_mapping)
 
                 required_fields = len(self.field_name_mapping)
-                self.ensure_fields_capacity(required_fields)
+                with self.data_status_lock:
+                    self.ensure_fields_capacity(required_fields)
 
             # Update production status
             if self.production_status is not None and global_indices and field_names:
@@ -440,22 +447,23 @@ class DataPartitionStatus:
             if field_name not in self.field_name_mapping:
                 return []
 
-        row_mask = torch.ones(self.allocated_samples_num, dtype=torch.bool)
+        with self.data_status_lock:
+            row_mask = torch.ones(self.allocated_samples_num, dtype=torch.bool)
 
-        # Apply consumption filter (exclude already consumed samples)
-        consumption_status = self.get_consumption_status(task_name)
-        if consumption_status is not None:
-            unconsumed_mask = consumption_status == 0
-            row_mask &= unconsumed_mask
+            # Apply consumption filter (exclude already consumed samples)
+            consumption_status = self.get_consumption_status(task_name)
+            if consumption_status is not None:
+                unconsumed_mask = consumption_status == 0
+                row_mask &= unconsumed_mask
 
-        # Create column mask for requested fields
-        col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
-        field_indices = [self.field_name_mapping[field] for field in field_names]
-        if field_indices:
-            col_mask[field_indices] = True
+            # Create column mask for requested fields
+            col_mask = torch.zeros(self.allocated_fields_num, dtype=torch.bool)
+            field_indices = [self.field_name_mapping[field] for field in field_names]
+            if field_indices:
+                col_mask[field_indices] = True
 
-        # Filter production status by masks
-        relevant_status = self.production_status[row_mask][:, col_mask]
+            # Filter production status by masks
+            relevant_status = self.production_status[row_mask][:, col_mask]
 
         # Check if all required fields are ready for each sample
         all_fields_ready = torch.all(relevant_status, dim=1)
@@ -519,6 +527,40 @@ class DataPartitionStatus:
         stats["consumption_statistics"] = consumption_stats
 
         return stats
+
+    # ==================== Serialization ====================
+
+    def to_snapshot(self):
+        """
+        Get a snapshot of partition status information.
+
+        Returns:
+            DataPartitionStatus object without threading.Lock()
+        """
+
+        def _perform_copy():
+            cls = self.__class__
+            snapshot = cls.__new__(cls)
+
+            for name, value in self.__dict__.items():
+                if name == "data_status_lock":
+                    continue
+
+                if isinstance(value, torch.Tensor):
+                    new_val = value.clone().detach()
+                else:
+                    new_val = copy.deepcopy(value)
+
+                setattr(snapshot, name, new_val)
+            return snapshot
+
+        lock_obj = getattr(self, "data_status_lock", None)
+
+        if lock_obj:
+            with lock_obj:
+                return _perform_copy()
+        else:
+            return _perform_copy()
 
     def clear_data(self, global_indexes_range: list[int], clear_consumption: bool = True) -> bool:
         """Clear all production and optionally consumption data."""
@@ -617,7 +659,7 @@ class TransferQueueController:
         logger.info(f"Created partition {partition_id}")
         return True
 
-    def get_partition(self, partition_id: str) -> Optional[DataPartitionStatus]:
+    def _get_partition(self, partition_id: str) -> Optional[DataPartitionStatus]:
         """
         Get partition status information.
 
@@ -628,6 +670,24 @@ class TransferQueueController:
             DataPartitionStatus object if partition exists, None otherwise
         """
         return self.partitions.get(partition_id)
+
+    def get_partition_snapshot(self, partition_id: str) -> Optional[DataPartitionStatus]:
+        """
+        Get a copy of partition status information, without threading.Lock().
+
+        Args:
+            partition_id: ID of the partition to retrieve
+
+        Returns:
+            DataPartitionStatus object if partition exists, None otherwise
+        """
+
+        partition = self._get_partition(partition_id)
+
+        if partition is None:
+            return None
+
+        return partition.to_snapshot()
 
     def list_partitions(self) -> list[str]:
         """
@@ -693,7 +753,7 @@ class TransferQueueController:
         Returns:
             True if update was successful, False otherwise
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             logger.error(f"Partition {partition_id} not found")
             return False
@@ -720,7 +780,7 @@ class TransferQueueController:
         Returns:
             Consumption status tensor if partition exists, None otherwise
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             return None
 
@@ -869,7 +929,7 @@ class TransferQueueController:
         start_time = time.time()
 
         while True:
-            partition = self.get_partition(partition_id)
+            partition = self._get_partition(partition_id)
             if not partition:
                 if time.time() - start_time > timeout:
                     raise TimeoutError(f"Partition {partition_id} not found")
@@ -923,7 +983,7 @@ class TransferQueueController:
         Raises:
             ValueError: If partition doesn't exist or invalid mode
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             raise ValueError(f"Partition {partition_id} not found")
 
@@ -986,7 +1046,7 @@ class TransferQueueController:
         Returns:
             True if cleared successfully, False otherwise
         """
-        partition = self.get_partition(partition_id)
+        partition = self._get_partition(partition_id)
         if not partition:
             raise ValueError(f"Partition {partition_id} not found")
 
