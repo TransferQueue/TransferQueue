@@ -284,11 +284,11 @@ class DataPartitionStatus:
                 self.consumption_status[task_name] = expanded_consumption
 
             logger.debug(
-                f"[{self.controller_id}]: Expanded partition {self.partition_id} from {current_sample_space} "
+                f"Expanded partition {self.partition_id} from {current_sample_space} "
                 f"to {new_samples} samples (added {min_expansion} samples)"
             )
 
-    def ensure_fields_capacity(self, required_fields: int) -> bool:
+    def ensure_fields_capacity(self, required_fields: int):
         """
         Ensure the production status tensor has enough columns for the required fields.
         Dynamically expands if needed using unified minimum expansion size.
@@ -313,7 +313,7 @@ class DataPartitionStatus:
             self.production_status = expanded_tensor
 
             logger.debug(
-                f"[{self.controller_id}]: Expanded partition {self.partition_id} from {current_fields} "
+                f"Expanded partition {self.partition_id} from {current_fields} "
                 f"to {new_fields} fields (added {min_expansion} fields)"
             )
 
