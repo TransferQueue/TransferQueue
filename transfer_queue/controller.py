@@ -18,6 +18,7 @@ import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from itertools import groupby
 from operator import itemgetter
 from threading import Lock, Thread
 from typing import Any, Optional
@@ -595,20 +596,21 @@ class DataPartitionStatus:
         else:
             return _perform_copy()
 
-    def clear_data(self, global_indexes_range: list[int], clear_consumption: bool = True) -> bool:
-        """Clear all production and optionally consumption data."""
+    def clear_data(self, global_indexes: list[int], clear_consumption: bool = True):
+        """Clear all production and optionally consumption data for given global_indexes."""
         try:
             if self.production_status is not None:
-                self.production_status[global_indexes_range, :] = 0
+                self.production_status[global_indexes, :] = 0
 
             if clear_consumption:
                 for consumption_tensor in self.consumption_status.values():
-                    consumption_tensor[global_indexes_range] = 0
+                    consumption_tensor[global_indexes] = 0
 
-            return True
         except Exception as e:
-            logger.error(f"Error clearing data for partition {self.partition_id}: {e}")
-            return False
+            logger.error(
+                f"Error clearing data for partition {self.partition_id}: {e}. "
+                f"Try to clear global_indexes: {global_indexes}"
+            )
 
 
 @ray.remote(num_cpus=1)
@@ -1061,28 +1063,66 @@ class TransferQueueController:
 
         return BatchMeta(samples=samples)
 
-    def clear(self, partition_id: str, clear_consumption: bool = True) -> bool:
+    def clear_partition(self, partition_id: str, clear_consumption: bool = True):
         """
-        Clear data for a specific partition.
+        Clear data for a specific partition (delect the whole partition).
 
         Args:
             partition_id: ID of the partition to clear
             clear_consumption: Whether to also clear consumption status
-
-        Returns:
-            True if cleared successfully, False otherwise
         """
+
+        logger.debug(f"Cleared data for partition {partition_id}")
+
         partition = self._get_partition(partition_id)
         if not partition:
             raise ValueError(f"Partition {partition_id} not found")
 
         global_indexes_range = list(self.index_manager.get_indexes_for_partition(partition_id))
-        success = partition.clear_data(global_indexes_range, clear_consumption)
+        partition.clear_data(global_indexes_range, clear_consumption)
         self.index_manager.release_indexes(partition_id)
         self.partitions.pop(partition_id)
-        if success:
-            logger.info(f"Cleared data for partition {partition_id}")
-        return success
+
+    def clear_meta(self, global_indexes: list[int], partition_ids: list[str], clear_consumption: bool = True):
+        """
+        Clear meta for individual samples (preserving the partition).
+
+        Args:
+            global_indexes: global_indexes to clear
+            partition_ids: IDs of the partitions to clear
+            clear_consumption: Whether to also clear consumption status
+        """
+
+        logger.debug(
+            f"{self.controller_id}: Clear meta with global_indexes {global_indexes} in partition {partition_ids}"
+        )
+
+        if global_indexes is None or partition_ids is None:
+            raise ValueError("global_indexes and partition_ids cannot be None ")
+
+        if len(global_indexes) != len(partition_ids):
+            raise ValueError(
+                f"global_indexes and partition_ids must have the same length, "
+                f"got {len(global_indexes)} and {len(partition_ids)}"
+            )
+
+        combined = list(zip(partition_ids, global_indexes, strict=False))
+        combined.sort(key=itemgetter(0))
+
+        for partition_id, group in groupby(combined, key=itemgetter(0)):
+            partition = self._get_partition(partition_id)
+            if not partition:
+                raise ValueError(f"Partition {partition_id} not found")
+
+            global_indexes_to_clear = set([idx for _, idx in group])
+            if not global_indexes_to_clear.issubset(partition.global_indexes):
+                raise ValueError(
+                    f"Some global_indexes to clear do not exist in partition {partition_id}. "
+                    f"Target: {global_indexes_to_clear}, Existing: {partition.global_indexes}"
+                )
+
+            partition.clear_data(global_indexes_to_clear, clear_consumption)
+            self.index_manager.release_indexes(partition_id)
 
     def _init_zmq_socket(self):
         """Initialize ZMQ sockets for communication."""
@@ -1126,7 +1166,7 @@ class TransferQueueController:
         poller = zmq.Poller()
         poller.register(self.handshake_socket, zmq.POLLIN)
 
-        logger.info(f"Controller {self.controller_id} started waiting for storage connections...")
+        logger.debug(f"Controller {self.controller_id} started waiting for storage connections...")
 
         while True:
             socks = dict(poller.poll(TQ_CONTROLLER_CONNECTION_CHECK_INTERVAL * 1000))
@@ -1153,7 +1193,7 @@ class TransferQueueController:
                         if storage_manager_id not in self._connected_storage_managers:
                             self._connected_storage_managers.add(storage_manager_id)
                             storage_manager_type = request_msg.body.get("storage_manager_type", "Unknown")
-                            logger.info(
+                            logger.debug(
                                 f"Controller {self.controller_id} received handshake from "
                                 f"storage manager {storage_manager_id} (type: {storage_manager_type}). "
                                 f"Total connected: {len(self._connected_storage_managers)}"
@@ -1223,8 +1263,8 @@ class TransferQueueController:
                         body={"metadata": metadata},
                     )
 
-            elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
-                with perf_monitor.measure(op_type="GET_CLEAR_META"):
+            elif request_msg.request_type == ZMQRequestType.GET_PARTITION_META:
+                with perf_monitor.measure(op_type="GET_PARTITION_META"):
                     params = request_msg.body
                     partition_id = params["partition_id"]
 
@@ -1234,7 +1274,7 @@ class TransferQueueController:
                         mode="insert",
                     )
                     response_msg = ZMQMessage.create(
-                        request_type=ZMQRequestType.GET_CLEAR_META_RESPONSE,
+                        request_type=ZMQRequestType.GET_PARTITION_META_RESPONSE,
                         sender_id=self.controller_id,
                         receiver_id=request_msg.sender_id,
                         body={"metadata": metadata},
@@ -1242,23 +1282,30 @@ class TransferQueueController:
             elif request_msg.request_type == ZMQRequestType.CLEAR_META:
                 with perf_monitor.measure(op_type="CLEAR_META"):
                     params = request_msg.body
+                    global_indexes = params["global_indexes"]
+                    partition_ids = params["partition_ids"]
+
+                    self.clear_meta(global_indexes, partition_ids)
+
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.CLEAR_META_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"message": f"Clear samples operation completed by controller {self.controller_id}"},
+                    )
+
+            elif request_msg.request_type == ZMQRequestType.CLEAR_PARTITION:
+                with perf_monitor.measure(op_type="CLEAR_PARTITION"):
+                    params = request_msg.body
                     partition_id = params["partition_id"]
 
-                    clear_success = self.clear(partition_id)
-                    if clear_success:
-                        response_msg = ZMQMessage.create(
-                            request_type=ZMQRequestType.CLEAR_META_RESPONSE,
-                            sender_id=self.controller_id,
-                            receiver_id=request_msg.sender_id,
-                            body={"message": f"Clear operation completed by controller {self.controller_id}"},
-                        )
-                    else:
-                        response_msg = ZMQMessage.create(
-                            request_type=ZMQRequestType.CLEAR_META_RESPONSE,
-                            sender_id=self.controller_id,
-                            receiver_id=request_msg.sender_id,
-                            body={"error": f"Clear operation failed for partition {partition_id}"},
-                        )
+                    self.clear_partition(partition_id)
+                    response_msg = ZMQMessage.create(
+                        request_type=ZMQRequestType.CLEAR_PARTITION_RESPONSE,
+                        sender_id=self.controller_id,
+                        receiver_id=request_msg.sender_id,
+                        body={"message": f"Clear partition operation completed by controller {self.controller_id}"},
+                    )
 
             elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
                 with perf_monitor.measure(op_type="CHECK_CONSUMPTION"):

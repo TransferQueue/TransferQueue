@@ -388,8 +388,8 @@ class AsyncTransferQueueClient:
 
         return results
 
-    async def async_clear(self, partition_id: str):
-        """Asynchronously clear data from all storage units and controller metadata.
+    async def async_clear_partition(self, partition_id: str):
+        """Asynchronously clear partition from all storage units and controller.
 
         Args:
             partition_id: The partition id to clear data for
@@ -407,10 +407,10 @@ class AsyncTransferQueueClient:
             if not self._controller:
                 raise RuntimeError("No controller registered")
 
-            metadata = await self._get_clear_meta(partition_id)
+            metadata = await self._get_partition_meta(partition_id)
 
             # Clear the controller metadata
-            await self._clear_controller(partition_id)
+            await self._clear_partition_in_controller(partition_id)
 
             # Clear storage unit data
             await self.storage_manager.clear_data(metadata)
@@ -419,9 +419,64 @@ class AsyncTransferQueueClient:
         except Exception as e:
             raise RuntimeError(f"Error in clear operation: {str(e)}") from e
 
+    async def async_clear_samples(self, metadata: BatchMeta):
+        """Asynchronously clear samples from all storage units and controller.
+
+        Args:
+            metadata: The BatchMeta of the corresponding data to be clear
+
+        Raises:
+            RuntimeError: If clear operation fails
+        """
+        try:
+            if not hasattr(self, "storage_manager") or self.storage_manager is None:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Storage manager not initialized. "
+                    "Call initialize_storage_manager() before performing storage operations."
+                )
+
+            if not self._controller:
+                raise RuntimeError("No controller registered")
+
+            # Clear the controller metadata
+            await self._clear_meta_in_controller(metadata)
+
+            # Clear storage unit data
+            await self.storage_manager.clear_data(metadata)
+
+            logger.debug(f"[{self.client_id}]: Clear operation for batch {metadata} completed.")
+        except Exception as e:
+            raise RuntimeError(f"Error in clear_samples operation: {str(e)}") from e
+
     @dynamic_socket(socket_name="request_handle_socket")
-    async def _get_clear_meta(self, partition_id: str, socket=None) -> BatchMeta:
-        """Get metadata required for clear operation from controller.
+    async def _clear_meta_in_controller(self, metadata: BatchMeta, socket=None):
+        """Clear metadata from controller.
+
+        Args:
+            metadata: The BatchMeta of the corresponding data to be clear
+            socket: ZMQ socket (injected by decorator)
+
+        Raises:
+            RuntimeError: If clear operation fails
+        """
+
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CLEAR_META,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={"global_indexes": metadata.global_indexes, "partition_ids": metadata.partition_ids},
+        )
+
+        await socket.send_multipart(request_msg.serialize())
+        response_serialized = await socket.recv_multipart()
+        response_msg = ZMQMessage.deserialize(response_serialized)
+
+        if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
+            raise RuntimeError("Failed to clear controller.")
+
+    @dynamic_socket(socket_name="request_handle_socket")
+    async def _get_partition_meta(self, partition_id: str, socket=None) -> BatchMeta:
+        """Get metadata required for the whole partition from controller.
 
         Args:
             partition_id: Partition id to get clear metadata for
@@ -434,7 +489,7 @@ class AsyncTransferQueueClient:
             RuntimeError: If controller returns error response
         """
         request_msg = ZMQMessage.create(
-            request_type=ZMQRequestType.GET_CLEAR_META,
+            request_type=ZMQRequestType.GET_PARTITION_META,
             sender_id=self.client_id,
             receiver_id=self._controller.id,
             body={"partition_id": partition_id},
@@ -444,15 +499,13 @@ class AsyncTransferQueueClient:
         response_serialized = await socket.recv_multipart()
         response_msg = ZMQMessage.deserialize(response_serialized)
 
-        if response_msg.request_type != ZMQRequestType.GET_CLEAR_META_RESPONSE:
-            raise RuntimeError(
-                f"Failed to get metadata for clear operation: {response_msg.body.get('message', 'Unknown error')}"
-            )
+        if response_msg.request_type != ZMQRequestType.GET_PARTITION_META_RESPONSE:
+            raise RuntimeError("Failed to get metadata for clear operation.")
 
         return response_msg.body["metadata"]
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def _clear_controller(self, partition_id, socket=None):
+    async def _clear_partition_in_controller(self, partition_id, socket=None):
         """Clear metadata from controller.
 
         Args:
@@ -462,31 +515,20 @@ class AsyncTransferQueueClient:
         Raises:
             RuntimeError: If clear operation fails
         """
-        try:
-            request_msg = ZMQMessage.create(
-                request_type=ZMQRequestType.CLEAR_META,
-                sender_id=self.client_id,
-                receiver_id=self._controller.id,
-                body={"partition_id": partition_id},
-            )
 
-            await socket.send_multipart(request_msg.serialize())
-            response_serialized = await socket.recv_multipart()
-            response_msg = ZMQMessage.deserialize(response_serialized)
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CLEAR_PARTITION,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={"partition_id": partition_id},
+        )
 
-            if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
-                raise RuntimeError(
-                    f"Failed to clear controller {self._controller.id}: "
-                    f"{response_msg.body.get('message', 'Unknown error')}"
-                )
+        await socket.send_multipart(request_msg.serialize())
+        response_serialized = await socket.recv_multipart()
+        response_msg = ZMQMessage.deserialize(response_serialized)
 
-            logger.info(
-                f"[{self.client_id}]: Successfully clear controller {self._controller.id} for partition_id "
-                f"{partition_id}"
-            )
-        except Exception as e:
-            logger.error(f"[{self.client_id}]: Error clearing controller {self._controller.id}: {str(e)}")
-            raise
+        if response_msg.request_type != ZMQRequestType.CLEAR_PARTITION_RESPONSE:
+            raise RuntimeError(f"Failed to clear partition {partition_id} in controller.")
 
     @dynamic_socket(socket_name="request_handle_socket")
     async def async_check_consumption_status(
@@ -736,13 +778,21 @@ class TransferQueueClient(AsyncTransferQueueClient):
         """
         return asyncio.run(self.async_get_data(metadata))
 
-    def clear(self, partition_id: str):
+    def clear_partition(self, partition_id: str):
         """Synchronously clear data from storage units and controller metadata.
 
         Args:
             partition_id: The partition id to clear data for
         """
-        return asyncio.run(self.async_clear(partition_id))
+        return asyncio.run(self.async_clear_partition(partition_id))
+
+    def clear_samples(self, metadata: BatchMeta):
+        """Synchronously clear samples from storage units and controller metadata.
+
+        Args:
+            metadata: The BatchMeta of the corresponding data to be clear
+        """
+        return asyncio.run(self.async_clear_samples(metadata))
 
     def check_consumption_status(self, task_name: str, partition_id: str) -> bool:
         """Synchronously check if all samples for a partition have been consumed by a specific task.
