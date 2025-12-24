@@ -1080,7 +1080,7 @@ class TransferQueueController:
             clear_consumption: Whether to also clear consumption status
         """
 
-        logger.debug(f"[{self.controller_id}]: Clearing metadata in partition {partition_id}")
+        logger.debug(f"[{self.controller_id}]: clearing metadata in partition {partition_id}")
 
         partition = self._get_partition(partition_id)
         if not partition:
@@ -1377,7 +1377,7 @@ class TransferQueueController:
 
     def _update_data_status(self):
         """Process data status update messages from storage units - adapted for partitions."""
-        logger.debug(f"[{self.controller_id}]: Start receiving update_data_status requests...")
+        logger.debug(f"[{self.controller_id}]: start receiving update_data_status requests...")
 
         perf_monitor = IntervalPerfMonitor(caller_name=self.controller_id)
 
