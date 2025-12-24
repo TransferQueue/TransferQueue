@@ -635,7 +635,7 @@ class DataPartitionStatus:
         except Exception as e:
             logger.error(
                 f"Error clearing data for partition {self.partition_id}: {e}. "
-                f"Try to clear global_indexes: {indexes_to_release}"
+                f"Attempted to clear global_indexes: {indexes_to_release}"
             )
 
 
@@ -1132,7 +1132,7 @@ class TransferQueueController:
                 f"got {len(global_indexes)} and {len(partition_ids)}"
             )
 
-        combined = list(zip(partition_ids, global_indexes, strict=False))
+        combined = list(zip(partition_ids, global_indexes, strict=True))
         combined.sort(key=itemgetter(0))
 
         for partition_id, group in groupby(combined, key=itemgetter(0)):

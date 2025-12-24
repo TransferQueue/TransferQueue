@@ -435,6 +435,10 @@ class AsyncTransferQueueClient:
                     "Call initialize_storage_manager() before performing storage operations."
                 )
 
+            if metadata.size == 0:
+                logger.warning(f"[{self.client_id}]: Empty BatchMeta provided to clear_samples. No action taken.")
+                return
+
             if not self._controller:
                 raise RuntimeError("No controller registered")
 
@@ -479,7 +483,7 @@ class AsyncTransferQueueClient:
         """Get metadata required for the whole partition from controller.
 
         Args:
-            partition_id: Partition id to get clear metadata for
+            partition_id: Partition id to get partition metadata for
             socket: ZMQ socket (injected by decorator)
 
         Returns:
