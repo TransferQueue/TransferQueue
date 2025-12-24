@@ -101,12 +101,16 @@ class MockController:
                     if request_msg.request_type == ZMQRequestType.GET_META:
                         response_body = self._mock_batch_meta(request_msg.body)
                         response_type = ZMQRequestType.GET_META_RESPONSE
-                    elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
-                        response_body = self._mock_batch_meta(request_msg.body)
-                        response_type = ZMQRequestType.GET_CLEAR_META_RESPONSE
                     elif request_msg.request_type == ZMQRequestType.CLEAR_META:
-                        response_body = {"message": "clear ok"}
+                        response_body = {"message": "clear meta ok"}
                         response_type = ZMQRequestType.CLEAR_META_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.CLEAR_PARTITION:
+                        response_body = {"message": "clear partition ok"}
+                        response_type = ZMQRequestType.CLEAR_PARTITION_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.GET_PARTITION_META:
+                        # Mock partition metadata response
+                        response_body = {"metadata": self._mock_batch_meta(request_msg.body)}
+                        response_type = ZMQRequestType.GET_PARTITION_META_RESPONSE
                     elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
                         # Mock consumption status check - all consumed
                         response_body = {
@@ -375,14 +379,6 @@ def test_get_meta(client_setup):
     assert len(metadata.global_indexes) == 10
 
 
-def test_clear_operation(client_setup):
-    """Test clear operation"""
-    client, _, _ = client_setup
-
-    # Test clear operation
-    client.clear(partition_id="0")
-
-
 # Test with single controller and multiple storage units
 def test_single_controller_multiple_storages():
     """Test client with single controller and multiple storage units"""
@@ -517,3 +513,72 @@ async def test_async_get_partition_list(client_setup):
     assert "partition_0" in partition_list
     assert "partition_1" in partition_list
     assert "test_partition" in partition_list
+
+
+# Test clear methods
+@pytest.mark.asyncio
+async def test_async_clear_partition(client_setup):
+    """Test async clear partition operation"""
+    client, _, _ = client_setup
+
+    # Test async_clear_partition
+    await client.async_clear_partition(partition_id="test_partition")
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+@pytest.mark.asyncio
+async def test_async_clear_samples(client_setup):
+    """Test async clear samples operation"""
+    client, _, _ = client_setup
+
+    # First get metadata to create a BatchMeta object
+    metadata = await client.async_get_meta(data_fields=["tokens", "labels"], batch_size=2, partition_id="0")
+
+    # Test async_clear_samples
+    await client.async_clear_samples(metadata=metadata)
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+def test_clear_partition(client_setup):
+    """Test synchronous clear partition operation"""
+    client, _, _ = client_setup
+
+    # Test synchronous clear_partition
+    client.clear_partition(partition_id="test_partition")
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+def test_clear_samples(client_setup):
+    """Test synchronous clear samples operation"""
+    client, _, _ = client_setup
+
+    # First get metadata to create a BatchMeta object
+    metadata = client.get_meta(data_fields=["tokens", "labels"], batch_size=2, partition_id="0")
+
+    # Test synchronous clear_samples
+    client.clear_samples(metadata=metadata)
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+@pytest.mark.asyncio
+async def test_async_clear_samples_with_empty_metadata(client_setup):
+    """Test async_clear_samples with empty BatchMeta"""
+    client, _, _ = client_setup
+
+    # Create empty BatchMeta
+    metadata = BatchMeta(samples=[])
+
+    # The clear operation should complete without raising an exception
+    # because the mock storage manager is configured to handle this
+    await client.async_clear_samples(metadata=metadata)
+
+    # If no exception is raised, the test passes
+    assert True
