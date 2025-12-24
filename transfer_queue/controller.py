@@ -139,7 +139,7 @@ class PartitionIndexManager:
 
         return indexes
 
-    def release_indexes(self, partition_id) -> list[int]:
+    def release_partition(self, partition_id) -> list[int]:
         """
         Release all global_indexes of the specified partition, adding them to reusable pool.
 
@@ -159,8 +159,40 @@ class PartitionIndexManager:
             for idx in indexes:
                 self.allocated_indexes.discard(idx)
 
-            return indexes
+            return list(indexes)
         return []
+
+    def release_indexes(self, partition_id: str, indexes_to_release: list[int]) -> list[int]:
+        """
+        Release specific global_indexes for a partition, adding them to reusable pool.
+
+        Args:
+            partition_id: Partition ID
+            indexes_to_release: List of specific indexes to release
+
+        Returns:
+            list: List of actually released global_indexes
+        """
+        if partition_id not in self.partition_to_indexes:
+            return []
+
+        released = []
+        partition_indexes = self.partition_to_indexes[partition_id]
+
+        if not set(indexes_to_release).issubset(partition_indexes):
+            raise ValueError("Some indexes to release do not belong to the specified partition.")
+
+        partition_indexes.difference_update(indexes_to_release)
+        self.reusable_indexes.extend(indexes_to_release)
+        self.allocated_indexes.difference_update(indexes_to_release)
+
+        released.extend(indexes_to_release)
+
+        # If partition has no more indexes, remove it from the mapping
+        if not partition_indexes:
+            self.partition_to_indexes.pop(partition_id, None)
+
+        return released
 
     def get_indexes_for_partition(self, partition_id) -> set[int]:
         """
@@ -596,20 +628,22 @@ class DataPartitionStatus:
         else:
             return _perform_copy()
 
-    def clear_data(self, global_indexes: list[int], clear_consumption: bool = True):
+    def clear_data(self, indexes_to_release: list[int], clear_consumption: bool = True):
         """Clear all production and optionally consumption data for given global_indexes."""
         try:
             if self.production_status is not None:
-                self.production_status[global_indexes, :] = 0
+                self.production_status[indexes_to_release, :] = 0
 
             if clear_consumption:
                 for consumption_tensor in self.consumption_status.values():
-                    consumption_tensor[global_indexes] = 0
+                    consumption_tensor[indexes_to_release] = 0
+
+            self.global_indexes.difference_update(indexes_to_release)
 
         except Exception as e:
             logger.error(
                 f"Error clearing data for partition {self.partition_id}: {e}. "
-                f"Try to clear global_indexes: {global_indexes}"
+                f"Try to clear global_indexes: {indexes_to_release}"
             )
 
 
@@ -1080,7 +1114,7 @@ class TransferQueueController:
 
         global_indexes_range = list(self.index_manager.get_indexes_for_partition(partition_id))
         partition.clear_data(global_indexes_range, clear_consumption)
-        self.index_manager.release_indexes(partition_id)
+        self.index_manager.release_partition(partition_id)
         self.partitions.pop(partition_id)
 
     def clear_meta(self, global_indexes: list[int], partition_ids: list[str], clear_consumption: bool = True):
@@ -1114,15 +1148,18 @@ class TransferQueueController:
             if not partition:
                 raise ValueError(f"Partition {partition_id} not found")
 
-            global_indexes_to_clear = set([idx for _, idx in group])
-            if not global_indexes_to_clear.issubset(partition.global_indexes):
+            global_indexes_to_clear = [idx for _, idx in group]
+            if not set(global_indexes_to_clear).issubset(partition.global_indexes):
                 raise ValueError(
                     f"Some global_indexes to clear do not exist in partition {partition_id}. "
                     f"Target: {global_indexes_to_clear}, Existing: {partition.global_indexes}"
                 )
 
+            # Clear data from partition
             partition.clear_data(global_indexes_to_clear, clear_consumption)
-            self.index_manager.release_indexes(partition_id)
+
+            # Release the specific indexes from index manager
+            self.index_manager.release_indexes(partition_id, global_indexes_to_clear)
 
     def _init_zmq_socket(self):
         """Initialize ZMQ sockets for communication."""

@@ -173,13 +173,13 @@ class TestTransferQueueController:
         assert [sample.fields for sample in clear_meta.samples] == [{}] * (gbs * num_n_samples)
         print("✓ Clear metadata correct")
 
-        # Test clear
-        ray.get(tq_controller.clear.remote(partition_id))
+        # Test clear_partition
+        ray.get(tq_controller.clear_partition.remote(partition_id))
         partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id))
         assert partition_index_range == set()
         assert partition is None
-        print("✓ Clear correct")
+        print("✓ Clear partition correct")
 
     def test_controller_with_multi_partitions(self, ray_setup):
         gbs_1 = 8
@@ -284,7 +284,7 @@ class TestTransferQueueController:
         # Clear partition 1
         partition_index_range_1 = ray.get(tq_controller.get_partition_index_range.remote(partition_id_1))
         assert partition_index_range_1
-        ray.get(tq_controller.clear.remote(partition_id_1))
+        ray.get(tq_controller.clear_partition.remote(partition_id_1))
         partition_1_after_clear = ray.get(tq_controller.get_partition_snapshot.remote(partition_id_1))
         partition_index_range_1_after_clear = ray.get(tq_controller.get_partition_index_range.remote(partition_id_1))
 
@@ -320,3 +320,64 @@ class TestTransferQueueController:
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id_3))
         assert partition_index_range == set(list(range(32)) + list(range(48, 80)))
         print("✓ Correctly assign partition_3")
+
+    def test_controller_clear_meta(self, ray_setup):
+        """Test clear_meta functionality for individual samples"""
+        gbs = 4
+        num_n_samples = 2
+        partition_id = "test_clear_meta"
+
+        tq_controller = TransferQueueController.remote()
+
+        # Create metadata in insert mode
+        data_fields = ["prompt_ids", "attention_mask"]
+        metadata = ray.get(
+            tq_controller.get_metadata.remote(
+                data_fields=data_fields,
+                batch_size=gbs * num_n_samples,
+                partition_id=partition_id,
+                mode="insert",
+            )
+        )
+
+        assert metadata.global_indexes == list(range(gbs * num_n_samples))
+
+        # Update production status
+        dtypes = {k: {"prompt_ids": "torch.int64", "attention_mask": "torch.bool"} for k in metadata.global_indexes}
+        shapes = {k: {"prompt_ids": (32,), "attention_mask": (32,)} for k in metadata.global_indexes}
+        success = ray.get(
+            tq_controller.update_production_status.remote(
+                partition_id=partition_id,
+                global_indexes=metadata.global_indexes,
+                field_names=metadata.field_names,
+                dtypes=dtypes,
+                shapes=shapes,
+            )
+        )
+        assert success
+
+        # Get partition snapshot before clear
+        partition_before = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
+        assert partition_before is not None
+        assert len(partition_before.global_indexes) == gbs * num_n_samples
+        assert set(partition_before.global_indexes) == set(range(gbs * num_n_samples))
+
+        # Test clear_meta - clear first 4 samples (indexes 0-3)
+        global_indexes_to_clear = [0, 1, 2, 3, 6]
+        partition_ids_to_clear = [partition_id] * len(global_indexes_to_clear)
+
+        ray.get(
+            tq_controller.clear_meta.remote(
+                global_indexes=global_indexes_to_clear,
+                partition_ids=partition_ids_to_clear,
+            )
+        )
+
+        # Check that only the cleared samples are affected
+        partition_after = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
+        assert partition_after is not None
+
+        # Verify production status is cleared for the specified indexes
+        assert set(partition_after.global_indexes) == set([4, 5, 7])
+
+        print("✓ Clear meta correct")
