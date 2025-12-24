@@ -389,7 +389,7 @@ class AsyncTransferQueueClient:
         return results
 
     async def async_clear_partition(self, partition_id: str):
-        """Asynchronously clear partition from all storage units and controller.
+        """Asynchronously clear the whole partition from all storage units and the controller.
 
         Args:
             partition_id: The partition id to clear data for
@@ -420,7 +420,7 @@ class AsyncTransferQueueClient:
             raise RuntimeError(f"Error in clear operation: {str(e)}") from e
 
     async def async_clear_samples(self, metadata: BatchMeta):
-        """Asynchronously clear samples from all storage units and controller.
+        """Asynchronously clear specific samples from all storage units and the controller.
 
         Args:
             metadata: The BatchMeta of the corresponding data to be cleared
@@ -450,7 +450,7 @@ class AsyncTransferQueueClient:
 
     @dynamic_socket(socket_name="request_handle_socket")
     async def _clear_meta_in_controller(self, metadata: BatchMeta, socket=None):
-        """Clear metadata from controller.
+        """Clear metadata in the controller.
 
         Args:
             metadata: The BatchMeta of the corresponding data to be cleared
@@ -506,7 +506,7 @@ class AsyncTransferQueueClient:
 
     @dynamic_socket(socket_name="request_handle_socket")
     async def _clear_partition_in_controller(self, partition_id, socket=None):
-        """Clear metadata from controller.
+        """Clear the whole partition in the controller.
 
         Args:
             partition_id: Partition id to clear metadata for
@@ -779,7 +779,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
         return asyncio.run(self.async_get_data(metadata))
 
     def clear_partition(self, partition_id: str):
-        """Synchronously clear data from storage units and controller metadata.
+        """Synchronously clear the whole partition from storage units and controller.
 
         Args:
             partition_id: The partition id to clear data for
@@ -787,7 +787,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
         return asyncio.run(self.async_clear_partition(partition_id))
 
     def clear_samples(self, metadata: BatchMeta):
-        """Synchronously clear samples from storage units and controller metadata.
+        """Synchronously clear specific samples from storage units and controller metadata.
 
         Args:
             metadata: The BatchMeta of the corresponding data to be cleared
