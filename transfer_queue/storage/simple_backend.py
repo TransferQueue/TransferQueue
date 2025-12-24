@@ -42,7 +42,7 @@ if not logger.hasHandlers():
     logger.addHandler(handler)
 
 TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
-TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 16))
+TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 8))
 
 
 class StorageUnitData:

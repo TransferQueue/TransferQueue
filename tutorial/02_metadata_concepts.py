@@ -380,7 +380,7 @@ def demonstrate_real_workflow():
         print(f"  Chunk {i}: Retrieved chunk data: {chunk_data}")
 
     # Cleanup
-    client.clear(partition_id=partition_id)
+    client.clear_partition(partition_id=partition_id)
     client.close()
     ray.shutdown()
     print("✓ Partition cleared and resources cleaned up")

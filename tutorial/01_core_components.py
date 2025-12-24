@@ -174,8 +174,8 @@ def demonstrate_data_workflow(client):
     print("  ✓ Data matches original!")
 
     # Step 5: Clear
-    print("[Step 5] Clearing partition...")
-    client.clear(partition_id=partition_id)
+    print("[Step 5] Clearing partition... (you may also use clear_samples() to clear specific samples)")
+    client.clear_partition(partition_id=partition_id)
     print("  ✓ Partition cleared")
 
 

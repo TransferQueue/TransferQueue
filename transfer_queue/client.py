@@ -50,7 +50,7 @@ if not logger.hasHandlers():
     handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
     logger.addHandler(handler)
 
-TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 16))
+TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 8))
 
 
 class AsyncTransferQueueClient:
