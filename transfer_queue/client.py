@@ -129,7 +129,7 @@ class AsyncTransferQueueClient:
 
                 try:
                     sock.connect(address)
-                    logger.info(
+                    logger.debug(
                         f"[{self.client_id}]: Connected to Controller {server_info.id} at {address} "
                         f"with identity {identity.decode()}"
                     )
@@ -237,8 +237,7 @@ class AsyncTransferQueueClient:
             response_serialized = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(response_serialized)
             logger.debug(
-                f"[{self.client_id}]: Client get datameta response: {response_msg} "
-                f"from controller {self._controller.id}"
+                f"[{self.client_id}]: Client get_meta response: {response_msg} from controller {self._controller.id}"
             )
 
             if response_msg.request_type == ZMQRequestType.GET_META_RESPONSE:
@@ -331,14 +330,13 @@ class AsyncTransferQueueClient:
 
         if not metadata or metadata.size == 0:
             raise ValueError("metadata cannot be none or empty")
-        logger.debug(f"[{self.client_id}]: Put data with data: {data}")
 
         with limit_pytorch_auto_parallel_threads(
             target_num_threads=TQ_NUM_THREADS, info=f"[{self.client_id}] async_put"
         ):
             await self.storage_manager.put_data(data, metadata)
 
-        logger.info(
+        logger.debug(
             f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
         )
 
@@ -385,6 +383,8 @@ class AsyncTransferQueueClient:
             target_num_threads=TQ_NUM_THREADS, info=f"[{self.client_id}] async_get_data"
         ):
             results = await self.storage_manager.get_data(metadata)
+
+        logger.debug(f"[{self.client_id}]: get_data with {metadata.size} samples successfully.")
 
         return results
 

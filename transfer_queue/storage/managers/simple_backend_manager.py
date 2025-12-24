@@ -142,7 +142,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                     # Timeouts to avoid indefinite await on recv/send
                     sock.setsockopt(zmq.RCVTIMEO, TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT * 1000)
                     sock.setsockopt(zmq.SNDTIMEO, TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT * 1000)
-                    logger.info(
+                    logger.debug(
                         f"[{self.storage_manager_id}]: Connected to StorageUnit {server_info.id} at {address} "
                         f"with identity {identity.decode()}"
                     )
@@ -178,7 +178,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             metadata: BatchMeta containing storage location information.
         """
 
-        logger.info(f"{__class__.__name__}: receive put_data request, putting {metadata.size} samples.")
+        logger.debug(f"[{self.storage_manager_id}]: receive put_data request, putting {metadata.size} samples.")
 
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(
@@ -277,7 +277,7 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             TensorDict containing the retrieved data.
         """
 
-        logger.info(f"{__class__.__name__}: receive get_data request, getting {metadata.size} samples.")
+        logger.debug(f"[{self.storage_manager_id}]: receive get_data request, getting {metadata.size} samples.")
 
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(
@@ -347,10 +347,6 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             await socket.send_multipart(request_msg.serialize())
             messages = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(messages)
-            logger.info(
-                f"[{self.storage_manager_id}]: get data response from storage unit "
-                f"{target_storage_unit}: {response_msg}"
-            )
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:
                 # Return data and index information from this storage unit
@@ -370,6 +366,8 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         Args:
             metadata: BatchMeta that contains metadata for data clearing.
         """
+
+        logger.debug(f"[{self.storage_manager_id}]: receive clear_data request, clearing {metadata.size} samples.")
 
         # group samples by storage unit
         storage_meta_groups = build_storage_meta_groups(
@@ -408,7 +406,6 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                     f"{response_msg.body.get('message', 'Unknown error')}"
                 )
 
-            logger.info(f"[{self.storage_manager_id}]: Successfully clear storage unit {target_storage_unit}")
         except Exception as e:
             logger.error(f"[{self.storage_manager_id}]: Error clearing storage unit {target_storage_unit}: {str(e)}")
             raise
