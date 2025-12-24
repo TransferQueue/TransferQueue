@@ -284,8 +284,8 @@ class DataPartitionStatus:
                 self.consumption_status[task_name] = expanded_consumption
 
             logger.debug(
-                f"Expanded partition {self.partition_id} from {current_sample_space} to {new_samples} samples "
-                f"(added {min_expansion} samples)"
+                f"[{self.controller_id}]: Expanded partition {self.partition_id} from {current_sample_space} "
+                f"to {new_samples} samples (added {min_expansion} samples)"
             )
 
     def ensure_fields_capacity(self, required_fields: int) -> bool:
@@ -313,8 +313,8 @@ class DataPartitionStatus:
             self.production_status = expanded_tensor
 
             logger.debug(
-                f"Expanded partition {self.partition_id} from {current_fields} to {new_fields} fields "
-                f"(added {min_expansion} fields)"
+                f"[{self.controller_id}]: Expanded partition {self.partition_id} from {current_fields} "
+                f"to {new_fields} fields (added {min_expansion} fields)"
             )
 
     # ==================== Production Status Interface ====================
@@ -766,22 +766,6 @@ class TransferQueueController:
         """
         return list(self.partitions.keys())
 
-    def delete_partition(self, partition_id: str) -> bool:
-        """
-        Delete a partition and all its data.
-
-        Args:
-            partition_id: ID of the partition to delete
-
-        Returns:
-            True if partition was deleted, False if it didn't exist
-        """
-        if partition_id in self.partitions:
-            del self.partitions[partition_id]
-            logger.info(f"Deleted partition {partition_id}")
-            return True
-        return False
-
     # ==================== Partition Index Management API ====================
 
     def get_partition_index_range(self, partition: DataPartitionStatus) -> set:
@@ -829,8 +813,8 @@ class TransferQueueController:
         success = partition.update_production_status(global_indexes, field_names, dtypes, shapes)
         if success:
             logger.debug(
-                f"Updated production status for partition {partition_id}: samples={global_indexes}, "
-                f"fields={field_names}"
+                f"[{self.controller_id}]: Updated production status for partition {partition_id}: "
+                f"samples={global_indexes}, fields={field_names}"
             )
         return success
 
@@ -929,9 +913,9 @@ class TransferQueueController:
                 if len(ready_for_consume_indexes) < batch_size:
                     if self.polling_mode:
                         logger.debug(
-                            f"Not enough data for task {task_name} in partition {partition_id}. "
-                            f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}. "
-                            f"Returning None due to polling mode."
+                            f"[{self.controller_id}]: Not enough data for task {task_name} in partition {partition_id}."
+                            f" Required: {batch_size}, Available: {len(ready_for_consume_indexes)}."
+                            f" Returning None due to polling mode."
                         )
                         return BatchMeta.empty()
                     if time.time() - start_time > TQ_CONTROLLER_GET_METADATA_TIMEOUT:
@@ -940,8 +924,8 @@ class TransferQueueController:
                             f"Required: {batch_size}, Available: {len(ready_for_consume_indexes)}"
                         )
                     logger.warning(
-                        f"Insufficient data for task {task_name}. Required: {batch_size} samples with "
-                        f"fields {data_fields} in partition {partition_id}, but only have "
+                        f"[{self.controller_id}]: Insufficient data for task {task_name}. Required: {batch_size} "
+                        f"samples with fields {data_fields} in partition {partition_id}, but only have "
                         f"{len(ready_for_consume_indexes)} samples meeting the criteria. "
                         f"Retrying in {TQ_CONTROLLER_GET_METADATA_CHECK_INTERVAL}s..."
                     )
@@ -977,8 +961,6 @@ class TransferQueueController:
         if mode == "fetch" and consumed_indexes:
             partition = self.partitions[partition_id]
             partition.mark_consumed(task_name, consumed_indexes)
-
-        logger.debug(f"get_metadata: {metadata}")
 
         return metadata
 
@@ -1098,7 +1080,7 @@ class TransferQueueController:
             clear_consumption: Whether to also clear consumption status
         """
 
-        logger.debug(f"Clearing data for partition {partition_id}")
+        logger.debug(f"[{self.controller_id}]: Clearing metadata in partition {partition_id}")
 
         partition = self._get_partition(partition_id)
         if not partition:
@@ -1120,7 +1102,7 @@ class TransferQueueController:
         """
 
         logger.debug(
-            f"{self.controller_id}: Clearing meta with global_indexes {global_indexes} in partition {partition_ids}"
+            f"[{self.controller_id}]: Clearing meta with global_indexes {global_indexes} in partition {partition_ids}"
         )
 
         if global_indexes is None or partition_ids is None:
@@ -1223,18 +1205,18 @@ class TransferQueueController:
                             self._connected_storage_managers.add(storage_manager_id)
                             storage_manager_type = request_msg.body.get("storage_manager_type", "Unknown")
                             logger.debug(
-                                f"Controller {self.controller_id} received handshake from "
+                                f"[{self.controller_id}]: received handshake from "
                                 f"storage manager {storage_manager_id} (type: {storage_manager_type}). "
                                 f"Total connected: {len(self._connected_storage_managers)}"
                             )
                         else:
                             logger.debug(
-                                f"Controller {self.controller_id} received duplicate handshake from "
+                                f"[{self.controller_id}]: received duplicate handshake from "
                                 f"storage manager {storage_manager_id}. Resending ACK."
                             )
 
                 except Exception as e:
-                    logger.error(f"Controller {self.controller_id} error processing handshake: {e}")
+                    logger.error(f"[{self.controller_id}]: error processing handshake: {e}")
 
     def _start_process_handshake(self):
         """Start the handshake process thread."""
@@ -1395,7 +1377,7 @@ class TransferQueueController:
 
     def _update_data_status(self):
         """Process data status update messages from storage units - adapted for partitions."""
-        logger.info(f"[{self.controller_id}]: start receiving update_data_status requests...")
+        logger.debug(f"[{self.controller_id}]: Start receiving update_data_status requests...")
 
         perf_monitor = IntervalPerfMonitor(caller_name=self.controller_id)
 
@@ -1420,7 +1402,7 @@ class TransferQueueController:
                     )
 
                     if success:
-                        logger.info(f"Updated production status for partition {partition_id}")
+                        logger.debug(f"[{self.controller_id}]: Updated production status for partition {partition_id}")
 
                     # Send acknowledgment
                     response_msg = ZMQMessage.create(

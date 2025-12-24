@@ -197,7 +197,7 @@ def serialization(obj: Any) -> list[bytestr]:
         through pickle.
     """
 
-    logger.info(f"Serializing an obj with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
+    logger.debug(f"Serializing an obj with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
 
     if TQ_ZERO_COPY_SERIALIZATION:
         pickled_bytes, tensors = _internal_rpc_pickler.serialize(obj)
@@ -219,7 +219,7 @@ def serialization(obj: Any) -> list[bytestr]:
 def deserialization(data: list[bytestr] | bytestr) -> Any:
     """Deserialize any object from serialized data."""
 
-    logger.info(f"Deserializing an obj with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
+    logger.debug(f"Deserializing an obj with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
 
     if TQ_ZERO_COPY_SERIALIZATION:
         if isinstance(data, list):
