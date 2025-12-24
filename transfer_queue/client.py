@@ -415,7 +415,7 @@ class AsyncTransferQueueClient:
             # Clear storage unit data
             await self.storage_manager.clear_data(metadata)
 
-            logger.info(f"[{self.client_id}]: Clear operation for partition_id {partition_id} completed.")
+            logger.debug(f"[{self.client_id}]: Clear operation for partition_id {partition_id} completed.")
         except Exception as e:
             raise RuntimeError(f"Error in clear operation: {str(e)}") from e
 
@@ -423,7 +423,7 @@ class AsyncTransferQueueClient:
         """Asynchronously clear samples from all storage units and controller.
 
         Args:
-            metadata: The BatchMeta of the corresponding data to be clear
+            metadata: The BatchMeta of the corresponding data to be cleared
 
         Raises:
             RuntimeError: If clear operation fails
@@ -453,7 +453,7 @@ class AsyncTransferQueueClient:
         """Clear metadata from controller.
 
         Args:
-            metadata: The BatchMeta of the corresponding data to be clear
+            metadata: The BatchMeta of the corresponding data to be cleared
             socket: ZMQ socket (injected by decorator)
 
         Raises:
@@ -472,7 +472,7 @@ class AsyncTransferQueueClient:
         response_msg = ZMQMessage.deserialize(response_serialized)
 
         if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
-            raise RuntimeError("Failed to clear controller.")
+            raise RuntimeError("Failed to clear samples metadata in controller.")
 
     @dynamic_socket(socket_name="request_handle_socket")
     async def _get_partition_meta(self, partition_id: str, socket=None) -> BatchMeta:
@@ -790,7 +790,7 @@ class TransferQueueClient(AsyncTransferQueueClient):
         """Synchronously clear samples from storage units and controller metadata.
 
         Args:
-            metadata: The BatchMeta of the corresponding data to be clear
+            metadata: The BatchMeta of the corresponding data to be cleared
         """
         return asyncio.run(self.async_clear_samples(metadata))
 

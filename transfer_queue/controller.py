@@ -162,21 +162,17 @@ class PartitionIndexManager:
             return list(indexes)
         return []
 
-    def release_indexes(self, partition_id: str, indexes_to_release: list[int]) -> list[int]:
+    def release_indexes(self, partition_id: str, indexes_to_release: list[int]):
         """
         Release specific global_indexes for a partition, adding them to reusable pool.
 
         Args:
             partition_id: Partition ID
             indexes_to_release: List of specific indexes to release
-
-        Returns:
-            list: List of actually released global_indexes
         """
         if partition_id not in self.partition_to_indexes:
             return []
 
-        released = []
         partition_indexes = self.partition_to_indexes[partition_id]
 
         if not set(indexes_to_release).issubset(partition_indexes):
@@ -186,13 +182,9 @@ class PartitionIndexManager:
         self.reusable_indexes.extend(indexes_to_release)
         self.allocated_indexes.difference_update(indexes_to_release)
 
-        released.extend(indexes_to_release)
-
         # If partition has no more indexes, remove it from the mapping
         if not partition_indexes:
             self.partition_to_indexes.pop(partition_id, None)
-
-        return released
 
     def get_indexes_for_partition(self, partition_id) -> set[int]:
         """
@@ -1099,14 +1091,14 @@ class TransferQueueController:
 
     def clear_partition(self, partition_id: str, clear_consumption: bool = True):
         """
-        Clear data for a specific partition (delect the whole partition).
+        Clear data for a specific partition (delete the whole partition).
 
         Args:
             partition_id: ID of the partition to clear
             clear_consumption: Whether to also clear consumption status
         """
 
-        logger.debug(f"Cleared data for partition {partition_id}")
+        logger.debug(f"Clearing data for partition {partition_id}")
 
         partition = self._get_partition(partition_id)
         if not partition:
@@ -1128,11 +1120,11 @@ class TransferQueueController:
         """
 
         logger.debug(
-            f"{self.controller_id}: Clear meta with global_indexes {global_indexes} in partition {partition_ids}"
+            f"{self.controller_id}: Clearing meta with global_indexes {global_indexes} in partition {partition_ids}"
         )
 
         if global_indexes is None or partition_ids is None:
-            raise ValueError("global_indexes and partition_ids cannot be None ")
+            raise ValueError("global_indexes and partition_ids cannot be None")
 
         if len(global_indexes) != len(partition_ids):
             raise ValueError(
