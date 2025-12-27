@@ -159,7 +159,9 @@ class StorageUnitData:
         import gc
 
         # 手动触发GC，回收无引用的对象
-        gc.collect()
+        gc.collect()  # 无用；torch自行管理内存
+
+        torch._C._emptyCache()  # 依然无法清空
 
 
 @ray.remote(num_cpus=1)
