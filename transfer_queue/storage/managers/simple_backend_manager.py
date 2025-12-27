@@ -284,6 +284,24 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
         )
 
+        import os
+        import subprocess
+
+        pid = os.getpid()
+        print(f"主控{pid=}中的get进程开始，请看主控进程的内存占用")
+        output_file = os.path.expanduser("~/vmmap_main_before_get.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            result = subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        await asyncio.sleep(5)
+
         # retrive data
         tasks = [
             self._get_from_single_storage_unit(meta_group, target_storage_unit=storage_id)
@@ -291,6 +309,24 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         ]
 
         results = await asyncio.gather(*tasks)
+
+        import time
+
+        time.sleep(5)
+
+        print(f"主控{pid=}中的get进程结束，请看主控进程的内存占用")
+        output_file = os.path.expanduser("~/vmmap_main_after_get.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            result = subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        await asyncio.sleep(5)
 
         # post-process data segments to generate a batch of data
         merged_data: dict[int, dict[str, torch.Tensor]] = {}
@@ -346,6 +382,13 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         try:
             await socket.send_multipart(request_msg.serialize())
             messages = await socket.recv_multipart()
+
+            import os
+
+            pid = os.getpid()
+            print(f"主控{pid=}中的get from single_controller进程开始sleep。请把这块改得巨大，以便在命令行vmmap")
+            await asyncio.sleep(2)
+
             response_msg = ZMQMessage.deserialize(messages)
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:

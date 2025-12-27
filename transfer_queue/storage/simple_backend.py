@@ -44,6 +44,8 @@ if not logger.hasHandlers():
 TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
 TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 8))
 
+import time
+
 
 class StorageUnitData:
     """Storage unit for managing 2D data structure (samples × fields).
@@ -153,6 +155,11 @@ class StorageUnitData:
         for f in self.field_data:
             for idx in local_indexes:
                 self.field_data[f][idx] = None
+        print(f"尝试清空{local_indexes=}")
+        import gc
+
+        # 手动触发GC，回收无引用的对象
+        gc.collect()
 
 
 @ray.remote(num_cpus=1)
@@ -190,6 +197,9 @@ class SimpleStorageUnit:
             ip=get_node_ip_address(),
             ports={"put_get_socket": get_free_port()},
         )
+
+        print(f"{self.storage_unit_id}: 进程号是 {os.getpid()}")
+        time.sleep(10)
         self._init_zmq_socket()
         self._start_process_put_get()
 
@@ -260,9 +270,41 @@ class SimpleStorageUnit:
                         },
                     )
 
-                self.put_get_socket.send_multipart(
-                    [identity, *response_msg.serialize()], copy=(operation != ZMQRequestType.GET_DATA)
-                )
+                if operation == ZMQRequestType.GET_DATA:
+                    import os
+                    import subprocess
+
+                    pid = os.getpid()
+                    print(f"{self.storage_unit_id}: 进程号是 {os.getpid()}，准备开始发送序列化")
+                    output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_before_get_data_serial.txt")
+                    with open(output_file, "w", encoding="utf-8") as f:
+                        # 命令拆分为列表（避免Shell解析，更安全）
+                        result = subprocess.run(
+                            ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                            check=True,
+                            stdout=f,  # 将标准输出重定向到文件
+                            stderr=subprocess.PIPE,
+                            text=True,
+                        )
+                    tobesent = [identity, *response_msg.serialize()]
+
+                    print(f"{self.storage_unit_id}: 进程号是 {os.getpid()}，准备开始发送序列化")
+                    output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_after_get_data_serial.txt")
+                    with open(output_file, "w", encoding="utf-8") as f:
+                        # 命令拆分为列表（避免Shell解析，更安全）
+                        result = subprocess.run(
+                            ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                            check=True,
+                            stdout=f,  # 将标准输出重定向到文件
+                            stderr=subprocess.PIPE,
+                            text=True,
+                        )
+
+                    print(f"{self.storage_unit_id}: 进程号是 {os.getpid()}，序列化结束")
+                    time.sleep(20)
+                else:
+                    tobesent = [identity, *response_msg.serialize()]
+                self.put_get_socket.send_multipart(tobesent, copy=(operation != ZMQRequestType.GET_DATA))
 
     def _handle_put(self, data_parts: ZMQMessage) -> ZMQMessage:
         """
@@ -346,6 +388,22 @@ class SimpleStorageUnit:
             Clear data success response ZMQMessage.
         """
         try:
+            import os
+            import subprocess
+
+            pid = os.getpid()
+            print(f"{self.storage_unit_id}: 进程号是 {os.getpid()}，准备开始clear")
+            output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_before_clear_data.txt")
+            with open(output_file, "w", encoding="utf-8") as f:
+                # 命令拆分为列表（避免Shell解析，更安全）
+                result = subprocess.run(
+                    ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                    check=True,
+                    stdout=f,  # 将标准输出重定向到文件
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+
             local_indexes = data_parts.body["local_indexes"]
 
             with limit_pytorch_auto_parallel_threads(
@@ -366,6 +424,18 @@ class SimpleStorageUnit:
                     "message": f"Failed to clear data in storage unit id #{self.storage_unit_id}, "
                     f"detail error message: {str(e)}"
                 },
+            )
+
+        print(f"{self.storage_unit_id}: 进程号是 {os.getpid()}，clear结束")
+        output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_after_clear_data.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            result = subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
             )
         return response_msg
 
