@@ -245,7 +245,7 @@ def demonstrate_random_sampler_with_replacement():
     print(f"  ✓ All sampled: {all_sampled}")
 
     # Cleanup
-    client.clear(partition_id="test")
+    client.clear_partition(partition_id="test")
     client.close()
     ray.shutdown()
 
@@ -293,7 +293,7 @@ def demonstrate_random_sampler_without_replacement():
     print(f"  ✓ Batch 3: {meta3.global_indexes} (none left)")
 
     # Cleanup
-    client.clear(partition_id="test")
+    client.clear_partition(partition_id="test")
     client.close()
     ray.shutdown()
 
@@ -357,7 +357,7 @@ def demonstrate_priority_sampler():
     print(f"  ✓ Batch 2 high-priority indices: {[i for i in meta2.global_indexes if priority_scores[i] >= 0.1]}")
 
     # Cleanup
-    client.clear(partition_id="test")
+    client.clear_partition(partition_id="test")
     client.close()
     ray.shutdown()
 

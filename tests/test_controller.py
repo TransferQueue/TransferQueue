@@ -91,9 +91,18 @@ class TestTransferQueueController:
             )
         )
         assert success
-        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         assert partition.production_status is not None
         assert partition.production_status.size(0) == gbs * num_n_samples
+
+        # Test for get production status
+        production_status = ray.get(
+            tq_controller.get_production_status.remote(
+                partition_id=partition_id,
+                data_fields=data_fields,
+            )
+        )
+        assert production_status
 
         # Total fields should match the number of fields we added
         assert partition.total_fields_num == len(data_fields)
@@ -116,6 +125,15 @@ class TestTransferQueueController:
 
         print(f"✓ Updated production status for partition {partition_id}")
 
+        # Test for get consumption status
+        consumption_status = ray.get(
+            tq_controller.get_consumption_status.remote(
+                partition_id=partition_id,
+                task_name="generate_sequences",
+            )
+        )
+        assert torch.equal(consumption_status, torch.zeros(gbs * num_n_samples))
+
         # Test get metadate in fetch mode
         gen_meta = ray.get(
             tq_controller.get_metadata.remote(
@@ -126,12 +144,22 @@ class TestTransferQueueController:
                 task_name="generate_sequences",
             )
         )
+
         assert gen_meta.global_indexes == list(range(gbs * num_n_samples))
         assert gen_meta.samples[0].partition_id == "train_0"
         assert gen_meta.field_names == ["prompt_ids"]
-        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         assert torch.equal(partition.consumption_status["generate_sequences"], torch.ones(gbs * num_n_samples))
         print("✓ Get metadata in fetch mode correct")
+
+        # Test for get consumption status
+        consumption_status = ray.get(
+            tq_controller.get_consumption_status.remote(
+                partition_id=partition_id,
+                task_name="generate_sequences",
+            )
+        )
+        assert torch.equal(consumption_status, torch.ones(gbs * num_n_samples))
 
         # Test get clear meta
         clear_meta = ray.get(
@@ -145,14 +173,13 @@ class TestTransferQueueController:
         assert [sample.fields for sample in clear_meta.samples] == [{}] * (gbs * num_n_samples)
         print("✓ Clear metadata correct")
 
-        # Test clear
-        ray.get(tq_controller.clear.remote(partition_id))
-        partition = ray.get(tq_controller.get_partition.remote(partition_id))
+        # Test clear_partition
+        ray.get(tq_controller.clear_partition.remote(partition_id))
+        partition = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id))
         assert partition_index_range == set()
-        assert torch.all(partition.production_status == 0)
-        assert torch.all(partition.consumption_status["generate_sequences"] == 0)
-        print("✓ Clear correct")
+        assert partition is None
+        print("✓ Clear partition correct")
 
     def test_controller_with_multi_partitions(self, ray_setup):
         gbs_1 = 8
@@ -227,9 +254,9 @@ class TestTransferQueueController:
             )
         )
 
-        # With per-partition independent indexing, partition2 starts from 0
+        part1_index_range = gbs_1 * num_n_samples_1
         part2_index_range = gbs_2 * num_n_samples_2
-        assert val_metadata.global_indexes == list(range(part2_index_range))
+        assert val_metadata.global_indexes == list(range(part1_index_range, part2_index_range + part1_index_range))
         assert val_metadata.samples[0].partition_id == "val_0"
         assert sum([int(sample.fields.get("prompt_ids").production_status) for sample in val_metadata.samples]) == int(
             ProductionStatus.NOT_PRODUCED
@@ -238,7 +265,7 @@ class TestTransferQueueController:
             [int(sample.fields.get("attention_mask").production_status) for sample in val_metadata.samples]
         ) == int(ProductionStatus.NOT_PRODUCED)
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id_2))
-        assert partition_index_range == set(range(part2_index_range))
+        assert partition_index_range == set(range(part1_index_range, part2_index_range + part1_index_range))
 
         # Update production status
         dtypes = {k: {"prompt_ids": "torch.int64", "attention_mask": "torch.bool"} for k in val_metadata.global_indexes}
@@ -257,18 +284,17 @@ class TestTransferQueueController:
         # Clear partition 1
         partition_index_range_1 = ray.get(tq_controller.get_partition_index_range.remote(partition_id_1))
         assert partition_index_range_1
-        ray.get(tq_controller.clear.remote(partition_id_1))
-        partition_1_after_clear = ray.get(tq_controller.get_partition.remote(partition_id_1))
+        ray.get(tq_controller.clear_partition.remote(partition_id_1))
+        partition_1_after_clear = ray.get(tq_controller.get_partition_snapshot.remote(partition_id_1))
         partition_index_range_1_after_clear = ray.get(tq_controller.get_partition_index_range.remote(partition_id_1))
 
         assert not partition_index_range_1_after_clear
-        assert torch.all(partition_1_after_clear.production_status[list(partition_index_range_1), :] == 0)
-        assert torch.all(partition_1_after_clear.consumption_status["generate_sequences"] == 0)
+        assert partition_1_after_clear is None
+        assert partition_index_range_1_after_clear == set()
 
-        partition_2 = ray.get(tq_controller.get_partition.remote(partition_id_2))
+        partition_2 = ray.get(tq_controller.get_partition_snapshot.remote(partition_id_2))
         partition_index_range_2 = ray.get(tq_controller.get_partition_index_range.remote(partition_id_2))
-        # With per-partition indexing, partition2 uses indexes [0-15]
-        assert partition_index_range_2 == set(range(part2_index_range))
+        assert partition_index_range_2 == set([32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47])
         assert torch.all(
             partition_2.production_status[list(partition_index_range_2), : len(val_metadata.field_names)] == 1
         )
@@ -283,11 +309,7 @@ class TestTransferQueueController:
                 mode="insert",
             )
         )
-
-        # With per-partition indexing, partition3 uses its own independent index space [0-63]
-        # separate from partition1, without reusing indexes across partitions
-        part3_index_range = gbs_3 * num_n_samples_3
-        assert metadata_2.global_indexes == list(range(part3_index_range))
+        assert metadata_2.global_indexes == list(range(32)) + list(range(48, 80))
         assert metadata_2.samples[0].partition_id == "train_1"
         assert sum([int(sample.fields.get("prompt_ids").production_status) for sample in metadata_2.samples]) == int(
             ProductionStatus.NOT_PRODUCED
@@ -296,5 +318,66 @@ class TestTransferQueueController:
             [int(sample.fields.get("attention_mask").production_status) for sample in metadata_2.samples]
         ) == int(ProductionStatus.NOT_PRODUCED)
         partition_index_range = ray.get(tq_controller.get_partition_index_range.remote(partition_id_3))
-        assert partition_index_range == set(range(part3_index_range))
+        assert partition_index_range == set(list(range(32)) + list(range(48, 80)))
         print("✓ Correctly assign partition_3")
+
+    def test_controller_clear_meta(self, ray_setup):
+        """Test clear_meta functionality for individual samples"""
+        gbs = 4
+        num_n_samples = 2
+        partition_id = "test_clear_meta"
+
+        tq_controller = TransferQueueController.remote()
+
+        # Create metadata in insert mode
+        data_fields = ["prompt_ids", "attention_mask"]
+        metadata = ray.get(
+            tq_controller.get_metadata.remote(
+                data_fields=data_fields,
+                batch_size=gbs * num_n_samples,
+                partition_id=partition_id,
+                mode="insert",
+            )
+        )
+
+        assert metadata.global_indexes == list(range(gbs * num_n_samples))
+
+        # Update production status
+        dtypes = {k: {"prompt_ids": "torch.int64", "attention_mask": "torch.bool"} for k in metadata.global_indexes}
+        shapes = {k: {"prompt_ids": (32,), "attention_mask": (32,)} for k in metadata.global_indexes}
+        success = ray.get(
+            tq_controller.update_production_status.remote(
+                partition_id=partition_id,
+                global_indexes=metadata.global_indexes,
+                field_names=metadata.field_names,
+                dtypes=dtypes,
+                shapes=shapes,
+            )
+        )
+        assert success
+
+        # Get partition snapshot before clear
+        partition_before = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
+        assert partition_before is not None
+        assert len(partition_before.global_indexes) == gbs * num_n_samples
+        assert set(partition_before.global_indexes) == set(range(gbs * num_n_samples))
+
+        # Test clear_meta - clear first 4 samples (indexes 0-3)
+        global_indexes_to_clear = [0, 1, 2, 3, 6]
+        partition_ids_to_clear = [partition_id] * len(global_indexes_to_clear)
+
+        ray.get(
+            tq_controller.clear_meta.remote(
+                global_indexes=global_indexes_to_clear,
+                partition_ids=partition_ids_to_clear,
+            )
+        )
+
+        # Check that only the cleared samples are affected
+        partition_after = ray.get(tq_controller.get_partition_snapshot.remote(partition_id))
+        assert partition_after is not None
+
+        # Verify production status is cleared for the specified indexes
+        assert set(partition_after.global_indexes) == set([4, 5, 7])
+
+        print("✓ Clear meta correct")

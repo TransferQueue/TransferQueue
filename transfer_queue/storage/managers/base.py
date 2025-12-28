@@ -443,8 +443,20 @@ class KVStorageManager(TransferQueueStorageManager):
             per_field_shapes[global_idx] = {}
 
         # For each field, extract dtype and shape for each sample
+        expected_size = metadata.size
+        if data.batch_size[0] != expected_size:
+            raise ValueError(
+                f"Data batch_size ({data.batch_size[0]}) does not match metadata size ({expected_size})"
+            )
+        
         for field_name, field_data in data.items():
-            for i, data_item in enumerate(field_data):
+            field_data_list = list(field_data)
+            if len(field_data_list) != expected_size:
+                raise ValueError(
+                    f"Field '{field_name}' has {len(field_data_list)} samples, "
+                    f"but expected {expected_size} samples (metadata.size)"
+                )
+            for i, data_item in enumerate(field_data_list):
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None

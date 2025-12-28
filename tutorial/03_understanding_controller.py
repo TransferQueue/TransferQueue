@@ -145,8 +145,8 @@ def demonstrate_partition_isolation():
     print("  ✓ Data isolation: 'train' and 'val' partitions are completely independent")
 
     # Cleanup
-    client.clear(partition_id="train")
-    client.clear(partition_id="val")
+    client.clear_partition(partition_id="train")
+    client.clear_partition(partition_id="val")
     client.close()
     ray.shutdown()
 
@@ -209,7 +209,7 @@ def demonstrate_dynamic_expansion():
     print("  ✓ Columns auto-expand: Can add new fields anytime")
 
     # Cleanup
-    client.clear(partition_id="dynamic")
+    client.clear_partition(partition_id="dynamic")
     client.close()
     ray.shutdown()
 
@@ -256,7 +256,7 @@ def demonstrate_default_consumption_sample_strategy():
     print("  ✓ Third get (Task B): samples 0,1")
 
     # Cleanup
-    client.clear(partition_id="sampling")
+    client.clear_partition(partition_id="sampling")
     client.close()
     ray.shutdown()
 
