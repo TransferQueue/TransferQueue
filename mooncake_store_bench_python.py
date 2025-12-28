@@ -703,9 +703,26 @@ def run_benchmark(args):
         print(f"Pre-populating data for GET benchmark...")
         prepopulate_keys = []
         
+        # Calculate minimum keys needed based on test duration and expected throughput
+        # Assume GET throughput is at least 5 GB/s, ensure we have enough data for the test duration
+        expected_get_throughput_gbps = 5.0  # Conservative estimate: 5 GB/s
+        test_duration_seconds = args.duration
+        value_size_bytes = args.value_size
+        
+        # Calculate minimum data size needed: throughput * duration * 1.5 (safety margin)
+        min_data_size_bytes = expected_get_throughput_gbps * (1024**3) * test_duration_seconds * 1.5
+        min_keys_needed = int(min_data_size_bytes / value_size_bytes)
+        
+        # Use the larger of num_keys and calculated minimum
+        actual_num_keys = max(num_keys, min_keys_needed)
+        
+        if actual_num_keys > num_keys:
+            print(f"  Adjusted num_keys from {num_keys} to {actual_num_keys} to ensure sufficient data for {test_duration_seconds}s test")
+            print(f"  Expected data size: {actual_num_keys * value_size_bytes / (1024**3):.2f} GB")
+        
         # Use value pool to avoid repeated random data generation overhead
         value_pool = []
-        pool_size = max(num_keys, 10)
+        pool_size = max(actual_num_keys, 10)
         for i in range(pool_size):
             value_pool.append(generate_random_data_fast(args.value_size))
         
@@ -715,7 +732,7 @@ def run_benchmark(args):
         all_values = []
         
         for i in range(args.threads):
-            for j in range(num_keys):
+            for j in range(actual_num_keys):
                 key = f"{key_prefix}_t{i}_k{j}"
                 value = value_pool[j % pool_size]
                 all_keys.append(key)
