@@ -45,6 +45,7 @@ TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_M
 
 TQ_SLEEP = int(os.environ.get("TQ_SLEEP", 5))  # seconds
 
+
 @TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager")
 class AsyncSimpleStorageManager(TransferQueueStorageManager):
     """Asynchronous storage manager that handles multiple storage units.
@@ -206,11 +207,29 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         await asyncio.sleep(5)
 
         # send data to each storage unit
-        tasks = [
-            self._put_to_single_storage_unit(
-                meta_group.get_local_indexes(), _filter_storage_data(meta_group, data), target_storage_unit=storage_id
+
+        data_to_be_put = [
+            _filter_storage_data(meta_group, data) for storage_id, meta_group in storage_meta_groups.items()
+        ]
+        local_idx = [meta_group.get_local_indexes() for storage_id, meta_group in storage_meta_groups.items()]
+        storage_id = [storage_id for storage_id, meta_group in storage_meta_groups.items()]
+
+        pid = os.getpid()
+        print(f"主控{pid=}中的put进程完成所有的filter_storage_data，请看主控进程的内存占用")
+        output_file = os.path.expanduser("~/vmmap_main_before_put_after_filter_storage_data.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            result = subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
             )
-            for storage_id, meta_group in storage_meta_groups.items()
+
+        tasks = [
+            self._put_to_single_storage_unit(local_idx[i], data_to_be_put[i], target_storage_unit=storage_id[i])
+            for i in range(len(data_to_be_put))
         ]
         await asyncio.gather(*tasks)
 
@@ -229,7 +248,6 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
                 stderr=subprocess.PIPE,
                 text=True,
             )
-
 
         # Gather per-field dtype and shape information for each field
         # global_indexes, local_indexes, and field_data correspond one-to-one
@@ -282,6 +300,14 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             batch_size=len(local_indexes),
         )
 
+        import os
+
+        pid = os.getpid()
+        print(
+            f"主控{pid=}中的put from single_controller进程完成tensordict构建。请export TQ_SLEEP=30，以便在命令行vmmap"
+        )
+        await asyncio.sleep(TQ_SLEEP)
+
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.PUT_DATA,
             sender_id=self.storage_manager_id,
@@ -293,11 +319,13 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             data = request_msg.serialize()
 
             import os
-            pid = os.getpid()
-            print(f"主控{pid=}中的put from single_controller进程完成序列化开始sleep。请export TQ_SLEEP=30，"
-                  f"以便在命令行vmmap")
-            await asyncio.sleep(TQ_SLEEP)
 
+            pid = os.getpid()
+            print(
+                f"主控{pid=}中的put from single_controller进程完成序列化开始sleep。请export TQ_SLEEP=30，"
+                f"以便在命令行vmmap"
+            )
+            await asyncio.sleep(TQ_SLEEP)
 
             await socket.send_multipart(data, copy=False)
             messages = await socket.recv_multipart()
@@ -431,11 +459,19 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             import os
 
             pid = os.getpid()
-            print(f"主控{pid=}中的get from single_controller进程收到response开始sleep。请export TQ_SLEEP=30， "
-                  f"以便在命令行vmmap")
+            print(
+                f"主控{pid=}中的get from single_controller进程收到response开始sleep。请export TQ_SLEEP=30， "
+                f"以便在命令行vmmap"
+            )
             await asyncio.sleep(TQ_SLEEP)
 
             response_msg = ZMQMessage.deserialize(messages)
+
+            pid = os.getpid()
+            print(
+                f"主控{pid=}中的get from single_controller反序列化后开始sleep。请export TQ_SLEEP=30， 以便在命令行vmmap"
+            )
+            await asyncio.sleep(TQ_SLEEP)
 
             if response_msg.request_type == ZMQRequestType.GET_DATA_RESPONSE:
                 # Return data and index information from this storage unit

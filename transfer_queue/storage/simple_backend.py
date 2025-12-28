@@ -85,6 +85,22 @@ class StorageUnitData:
         """
         result: dict[str, list] = {}
 
+        import os
+        import subprocess
+
+        pid = os.getpid()
+        uuid = uuid4().hex[:8]
+        output_file = os.path.expanduser(f"~/vmmap_{uuid}_StorageUnitData在get之前.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
         for field in fields:
             # Validate field name
             if field not in self.field_data:
@@ -111,7 +127,21 @@ class StorageUnitData:
 
         # Explicit batch size for stability
         batch_size = 0 if not fields or not local_indexes else len(local_indexes)
-        return TensorDict(result, batch_size=batch_size)
+
+        data_to_return = TensorDict(result, batch_size=batch_size)
+
+        output_file = os.path.expanduser(f"~/vmmap_{uuid}_StorageUnitData在get之后.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        return data_to_return
 
     def put_data(self, field_data: TensorDict[str, Any], local_indexes: list[int]) -> None:
         """
@@ -134,7 +164,10 @@ class StorageUnitData:
                         f"storage_size: {self.storage_size}"
                     )
 
-                self.field_data[f][idx] = values[i]
+                if isinstance(values[i], torch.Tensor):
+                    self.field_data[f][idx] = values[i]  # .clone()
+                else:
+                    self.field_data[f][idx] = values[i]
 
     def clear(self, local_indexes: list[int]) -> None:
         """
@@ -323,6 +356,8 @@ class SimpleStorageUnit:
                 target_num_threads=TQ_NUM_THREADS, info=f"[{self.storage_unit_id}] _handle_put"
             ):
                 self.storage_data.put_data(field_data, local_indexes)
+
+            # del field_data
 
             # After put operation finish, send a message to the client
             response_msg = ZMQMessage.create(

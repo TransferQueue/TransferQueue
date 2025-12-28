@@ -146,7 +146,7 @@ def demonstrate_data_workflow(client):
     print("[Step 2] Requesting data metadata...")
     batch_meta = client.get_meta(
         data_fields=["input_ids"],
-        batch_size=4,
+        batch_size=4,  # 4是corner case，每个su拿一条；
         partition_id=partition_id,
         task_name="tutorial_task",
     )
