@@ -77,7 +77,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             raise ValueError("Number of keys must match number of values")
 
         total_items = len(keys)
-        initial_batch_size = 1000
+        initial_batch_size = 200
         logger.debug(f"MooncakeStorageClient: Putting {total_items} items using zero-copy batch_put_from")
         
         tensor_items = []
@@ -200,7 +200,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             raise ValueError("Lengths of keys, shapes, dtypes must match")
 
         total_items = len(keys)
-        initial_batch_size = 1000
+        initial_batch_size = 200
         logger.debug(f"MooncakeStorageClient: Getting {total_items} items using zero-copy batch_get_into")
         
         tensor_indices = []
