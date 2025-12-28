@@ -254,7 +254,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             total_get_batch_time += time.time() - get_batch_start
             
             if len(batch_results) != len(batch_keys):
-                        raise RuntimeError(
+                raise RuntimeError(
                     f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
                 )
             
@@ -263,7 +263,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 total_get_batch_bytes += len(raw_bytes)
                 if dtype == torch.bfloat16:
                     tensors[i + j] = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
-                        else:
+                else:
                     tensors[i + j] = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
             total_frombuffer_time += time.time() - frombuffer_start
 
