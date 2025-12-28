@@ -345,13 +345,13 @@ def worker_get_verify(store, thread_id, key_prefix, value_size, num_keys, batch_
             # Read keys sequentially without repetition until all keys are read
             for j in range(batch_size):
                 if key_index >= len(thread_keys):
-                    # All keys have been read once, shuffle and restart to avoid cache
-                    random.shuffle(thread_keys)
-                    key_index = 0
+                    # All keys have been read once, stop to avoid repetition
+                    break
                 batch_keys.append(thread_keys[key_index])
                 key_index += 1
             
             if not batch_keys:
+                # All keys have been read, exit loop
                 break
             
             if batch_size == 1:
