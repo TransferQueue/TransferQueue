@@ -246,6 +246,11 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         dtype_groups = {}
         empty_tensors = {}
         
+        # Statistics for optimization analysis
+        shape_counter = {}  # Count occurrences of each shape
+        one_d_tensors = 0  # Count 1D tensors that can skip view
+        skip_view_count = 0  # Count tensors that can skip view (1D with matching num_elements)
+        
         for idx, raw_data, shape, dtype in zip(
             batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
         ):
@@ -280,10 +285,22 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     break
                 continue
             
+            # Statistics: count shape occurrences
+            shape_tuple = tuple(shape) if shape else tuple()
+            shape_counter[shape_tuple] = shape_counter.get(shape_tuple, 0) + 1
+            
+            # Statistics: check if 1D tensor that can skip view
+            is_1d = shape and len(shape) == 1
+            if is_1d:
+                one_d_tensors += 1
+                # Check if shape matches frombuffer result (can skip view)
+                if shape[0] == num_elements:
+                    skip_view_count += 1
+            
             # Group by dtype for batch processing
             if dtype not in dtype_groups:
                 dtype_groups[dtype] = []
-            dtype_groups[dtype].append((idx, tensor_data, shape, num_elements))
+            dtype_groups[dtype].append((idx, tensor_data, shape, num_elements, is_1d and shape[0] == num_elements))
         
         validate_group_time = time.time() - validate_group_start
         
@@ -297,7 +314,12 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 'empty_tensor_time': 0.0,
                 'other_overhead': tensor_convert_time - validate_group_time,
                 'total_tensors': 0,
-                'num_frombuffer_calls': 0
+                'num_frombuffer_calls': 0,
+                'shape_distribution': {},
+                'one_d_tensors': 0,
+                'skip_view_count': 0,
+                'skipped_view_count': 0,
+                'num_unique_shapes': 0
             }
             return {
                 'batch_idx': batch_idx,
@@ -315,11 +337,12 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         frombuffer_time = 0.0
         view_time = 0.0
         slice_time = 0.0
+        skipped_view_count = 0  # Count tensors that skipped view
         
         for dtype, items in dtype_groups.items():
             element_size = dtype_element_sizes[dtype]
             # Process all tensors of the same dtype together
-            for idx, tensor_data, shape, num_elements in items:
+            for idx, tensor_data, shape, num_elements, can_skip_view in items:
                 # Performance monitoring: torch.frombuffer time
                 frombuffer_start = time.time()
                 tensor = torch.frombuffer(tensor_data, dtype=dtype)
@@ -333,10 +356,15 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     slice_time += time.time() - slice_start
                 
                 # Performance monitoring: view time
+                # Skip view if tensor is 1D and shape matches frombuffer result
                 if shape:
-                    view_start = time.time()
-                    tensor = tensor.view(shape)
-                    view_time += time.time() - view_start
+                    if can_skip_view:
+                        # 1D tensor with matching shape, skip view
+                        skipped_view_count += 1
+                    else:
+                        view_start = time.time()
+                        tensor = tensor.view(shape)
+                        view_time += time.time() - view_start
                 
                 batch_results[idx] = tensor
         
@@ -359,7 +387,12 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             'empty_tensor_time': empty_tensor_time,
             'other_overhead': other_overhead,
             'total_tensors': len(batch_results),
-            'num_frombuffer_calls': sum(len(items) for items in dtype_groups.values())
+            'num_frombuffer_calls': sum(len(items) for items in dtype_groups.values()),
+            'shape_distribution': shape_counter,
+            'one_d_tensors': one_d_tensors,
+            'skip_view_count': skip_view_count,
+            'skipped_view_count': skipped_view_count,
+            'num_unique_shapes': len(shape_counter)
         }
         
         if failed_count > 0:
@@ -428,6 +461,13 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             total_tensor_count = 0
             total_frombuffer_calls = 0
             
+            # Aggregate shape distribution statistics
+            aggregated_shape_distribution = {}
+            total_one_d_tensors = 0
+            total_skip_view_count = 0
+            total_skipped_view_count = 0
+            total_unique_shapes = set()
+            
             # Prepare all batches
             batches = []
             i = 0
@@ -478,6 +518,15 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             total_other_overhead += details.get('other_overhead', 0.0)
                             total_tensor_count += details.get('total_tensors', 0)
                             total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
+                            
+                            # Aggregate shape statistics
+                            shape_dist = details.get('shape_distribution', {})
+                            for shape_tuple, count in shape_dist.items():
+                                aggregated_shape_distribution[shape_tuple] = aggregated_shape_distribution.get(shape_tuple, 0) + count
+                            total_one_d_tensors += details.get('one_d_tensors', 0)
+                            total_skip_view_count += details.get('skip_view_count', 0)
+                            total_skipped_view_count += details.get('skipped_view_count', 0)
+                            total_unique_shapes.update(shape_dist.keys())
                         else:
                             # Need retry with smaller batch size
                             retry_batches.append(batch_info)
@@ -513,6 +562,15 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             total_other_overhead += details.get('other_overhead', 0.0)
                             total_tensor_count += details.get('total_tensors', 0)
                             total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
+                            
+                            # Aggregate shape statistics
+                            shape_dist = details.get('shape_distribution', {})
+                            for shape_tuple, count in shape_dist.items():
+                                aggregated_shape_distribution[shape_tuple] = aggregated_shape_distribution.get(shape_tuple, 0) + count
+                            total_one_d_tensors += details.get('one_d_tensors', 0)
+                            total_skip_view_count += details.get('skip_view_count', 0)
+                            total_skipped_view_count += details.get('skipped_view_count', 0)
+                            total_unique_shapes.update(shape_dist.keys())
                         else:
                             raise RuntimeError(f"Failed to process batch {batch_info[0]} even with batch_size=1")
                     break
@@ -571,6 +629,15 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                                 total_other_overhead += details.get('other_overhead', 0.0)
                                 total_tensor_count += details.get('total_tensors', 0)
                                 total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
+                                
+                                # Aggregate shape statistics
+                                shape_dist = details.get('shape_distribution', {})
+                                for shape_tuple, count in shape_dist.items():
+                                    aggregated_shape_distribution[shape_tuple] = aggregated_shape_distribution.get(shape_tuple, 0) + count
+                                total_one_d_tensors += details.get('one_d_tensors', 0)
+                                total_skip_view_count += details.get('skip_view_count', 0)
+                                total_skipped_view_count += details.get('skipped_view_count', 0)
+                                total_unique_shapes.update(shape_dist.keys())
                             else:
                                 retry_batches.append(batch_info)
                         except Exception as e:
@@ -596,15 +663,29 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 f"get_batch throughput: {get_batch_throughput_gbps:.2f} Gb/s, "
                 f"get_batch data: {total_get_batch_bytes / (1024**3):.2f} GB"
             )
+            # Calculate shape distribution statistics
+            top_shapes = sorted(aggregated_shape_distribution.items(), key=lambda x: x[1], reverse=True)[:10]
+            shape_distribution_str = ", ".join([f"{shape}: {count}" for shape, count in top_shapes])
+            
+            skip_view_ratio = (total_skipped_view_count / total_frombuffer_calls * 100) if total_frombuffer_calls > 0 else 0
+            one_d_ratio = (total_one_d_tensors / total_frombuffer_calls * 100) if total_frombuffer_calls > 0 else 0
+            
             logger.warning(
                 f"MooncakeStorageClient: Tensor conversion breakdown (max time: {max_tensor_convert_time:.8f}s, "
                 f"{max_tensor_convert_time/get_elapsed*100:.1f}%): "
                 f"validate_group: {total_validate_group_time:.8f}s, "
                 f"frombuffer: {total_frombuffer_time:.8f}s (avg: {avg_frombuffer_time*1000:.3f}ms/call, {total_frombuffer_calls} calls), "
-                f"view: {total_view_time:.8f}s (avg: {avg_view_time*1000:.3f}ms/call), "
+                f"view: {total_view_time:.8f}s (avg: {avg_view_time*1000:.3f}ms/call, {total_frombuffer_calls - total_skipped_view_count} calls), "
                 f"slice: {total_slice_time:.8f}s, "
                 f"empty_tensor: {total_empty_tensor_time:.8f}s, "
                 f"other_overhead: {total_other_overhead:.8f}s"
+            )
+            logger.warning(
+                f"MooncakeStorageClient: Shape distribution analysis: "
+                f"unique shapes: {len(total_unique_shapes)}, "
+                f"1D tensors: {total_one_d_tensors} ({one_d_ratio:.1f}%), "
+                f"skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%), "
+                f"top shapes: {shape_distribution_str}"
             )
         
         non_tensor_get_batch_time = 0.0
