@@ -334,16 +334,19 @@ def worker_get_verify(store, thread_id, key_prefix, value_size, num_keys, batch_
         print(f"Thread {thread_id}: No keys found in verification_data for this thread")
         return 0
     
+    # Shuffle keys to avoid cache interference
+    random.shuffle(thread_keys)
     key_index = 0
     
     while running:
         try:
             batch_keys = []
             
-            # Read keys from verification_data in order
+            # Read keys sequentially without repetition until all keys are read
             for j in range(batch_size):
                 if key_index >= len(thread_keys):
-                    # Wrap around to read all keys multiple times
+                    # All keys have been read once, shuffle and restart to avoid cache
+                    random.shuffle(thread_keys)
                     key_index = 0
                 batch_keys.append(thread_keys[key_index])
                 key_index += 1
