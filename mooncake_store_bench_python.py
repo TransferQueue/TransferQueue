@@ -686,10 +686,17 @@ def run_benchmark(args):
     elif args.operation == "get":
         print(f"Pre-populating data for GET benchmark...")
         prepopulate_keys = []
+        
+        # Use value pool to avoid repeated random data generation overhead
+        value_pool = []
+        pool_size = max(num_keys, 10)
+        for i in range(pool_size):
+            value_pool.append(generate_random_data_fast(args.value_size))
+        
         for i in range(args.threads):
             for j in range(num_keys):
                 key = f"{key_prefix}_t{i}_k{j}"
-                value = generate_random_data(args.value_size)
+                value = value_pool[j % pool_size]
                 ret = store.put(key, value)
                 if ret == 0:
                     prepopulate_keys.append(key)
