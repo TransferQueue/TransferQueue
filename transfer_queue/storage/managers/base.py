@@ -27,6 +27,7 @@ from torch import Tensor
 
 from transfer_queue.metadata import BatchMeta
 from transfer_queue.storage.clients import StorageClientFactory
+from transfer_queue.utils.utils import limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
 
 logger = logging.getLogger(__name__)
@@ -384,18 +385,19 @@ class KVStorageManager(TransferQueueStorageManager):
         # Stack or nest tensors per field
         # TODO: These codes about data merging will serve as a general function
         merged_data = {}
-        for field, data_list in grouped_data.items():
-            if all(isinstance(item, torch.Tensor) for item in data_list):
-                try:
-                    merged_data[field] = torch.stack(data_list)
-                except RuntimeError:
+        with limit_pytorch_auto_parallel_threads():
+            for field, data_list in grouped_data.items():
+                if all(isinstance(item, torch.Tensor) for item in data_list):
                     try:
-                        # Fallback to nested tensor if shapes are irregular
-                        merged_data[field] = torch.nested.as_nested_tensor(data_list)
-                    except Exception:
-                        merged_data[field] = NonTensorStack(*data_list)
-            else:
-                merged_data[field] = NonTensorStack(*data_list)
+                        merged_data[field] = torch.stack(data_list)
+                    except RuntimeError:
+                        try:
+                            # Fallback to nested tensor if shapes are irregular
+                            merged_data[field] = torch.nested.as_nested_tensor(data_list)
+                        except Exception:
+                            merged_data[field] = NonTensorStack(*data_list)
+                else:
+                    merged_data[field] = NonTensorStack(*data_list)
 
         return TensorDict(merged_data, batch_size=len(global_indexes))
 
