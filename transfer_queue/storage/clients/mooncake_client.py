@@ -142,8 +142,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     def _batch_get_tensors(
         self, keys: list[str], shapes: list, dtypes: list
     ) -> list[Tensor]:
-        import numpy as np
-        
         all_bytes = []
         
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
@@ -155,29 +153,12 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 )
             all_bytes.extend(batch_results)
 
-        dtype_map = {
-            torch.float32: np.float32,
-            torch.float64: np.float64,
-            torch.int32: np.int32,
-            torch.int64: np.int64,
-            torch.uint8: np.uint8,
-            torch.int8: np.int8,
-            torch.int16: np.int16,
-            torch.float16: np.float16,
-            torch.bfloat16: np.int16,
-        }
-
         tensors = [None] * len(keys)
         for i, (raw_bytes, shape, dtype) in enumerate(zip(all_bytes, shapes, dtypes, strict=True)):
-            np_dtype = dtype_map.get(dtype, np.float32)
-            arr = np.frombuffer(raw_bytes, dtype=np_dtype)
             if dtype == torch.bfloat16:
-                tensor = torch.empty(shape, dtype=torch.int16)
-                tensor.view(-1).copy_(torch.from_numpy(arr))
-                tensor = tensor.view(torch.bfloat16)
+                tensor = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
             else:
-                tensor = torch.empty(shape, dtype=dtype)
-                tensor.view(-1).copy_(torch.from_numpy(arr))
+                tensor = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
             tensors[i] = tensor
 
         return tensors
