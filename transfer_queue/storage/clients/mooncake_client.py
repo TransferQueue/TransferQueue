@@ -83,31 +83,20 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             self._batch_put_bytes(non_tensor_keys, non_tensor_values)
 
     def _batch_put_tensors(self, keys: list[str], tensors: list[Tensor]):
-        buffer_ptrs = []
-        sizes = []
-        try:
-            for tensor in tensors:
-                ptr = tensor.data_ptr()
-                size = tensor.numel() * tensor.element_size()
-                ret = self._store.register_buffer(ptr, size)
-                if ret != 0:
-                    raise RuntimeError(f"register_buffer failed with error code: {ret}")
-                buffer_ptrs.append(ptr)
-                sizes.append(size)
+        values_bytes = []
+        for tensor in tensors:
+            t = tensor.detach().cpu()
+            if t.dtype == torch.bfloat16:
+                t = t.view(torch.int16)
+            tensor_bytes = t.numpy().tobytes()
+            values_bytes.append(tensor_bytes)
 
-            for i in range(0, len(keys), BATCH_SIZE_LIMIT):
-                batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
-                batch_ptrs = buffer_ptrs[i:i + BATCH_SIZE_LIMIT]
-                batch_sizes = sizes[i:i + BATCH_SIZE_LIMIT]
-                results = self._store.batch_put_from(batch_keys, batch_ptrs, batch_sizes)
-                for j, ret in enumerate(results):
-                    if ret != 0:
-                        raise RuntimeError(
-                            f"batch_put_from failed for key '{batch_keys[j]}' with error code: {ret}"
-                        )
-        finally:
-            for ptr in buffer_ptrs:
-                self._store.unregister_buffer(ptr)
+        for i in range(0, len(keys), BATCH_SIZE_LIMIT):
+            batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
+            batch_values = values_bytes[i:i + BATCH_SIZE_LIMIT]
+            ret = self._store.put_batch(batch_keys, batch_values)
+            if ret != 0:
+                raise RuntimeError(f"put_batch failed with error code: {ret}")
 
     def _batch_put_bytes(self, keys: list[str], values: list[bytes]):
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
@@ -153,35 +142,39 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     def _batch_get_tensors(
         self, keys: list[str], shapes: list, dtypes: list
     ) -> list[Tensor]:
+        import numpy as np
+        
         tensors = []
-        buffer_ptrs = []
-        sizes = []
+        all_bytes = []
+        
+        for i in range(0, len(keys), BATCH_SIZE_LIMIT):
+            batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
+            batch_results = self._store.get_batch(batch_keys)
+            if len(batch_results) != len(batch_keys):
+                raise RuntimeError(
+                    f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
+                )
+            all_bytes.extend(batch_results)
 
-        try:
-            for shape, dtype in zip(shapes, dtypes, strict=True):
-                tensor = torch.empty(shape, dtype=dtype)
-                tensors.append(tensor)
-                ptr = tensor.data_ptr()
-                size = tensor.numel() * tensor.element_size()
-                ret = self._store.register_buffer(ptr, size)
-                if ret != 0:
-                    raise RuntimeError(f"register_buffer failed with error code: {ret}")
-                buffer_ptrs.append(ptr)
-                sizes.append(size)
+        dtype_map = {
+            torch.float32: np.float32,
+            torch.float64: np.float64,
+            torch.int32: np.int32,
+            torch.int64: np.int64,
+            torch.uint8: np.uint8,
+            torch.int8: np.int8,
+            torch.int16: np.int16,
+            torch.float16: np.float16,
+            torch.bfloat16: np.int16,
+        }
 
-            for i in range(0, len(keys), BATCH_SIZE_LIMIT):
-                batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
-                batch_ptrs = buffer_ptrs[i:i + BATCH_SIZE_LIMIT]
-                batch_sizes = sizes[i:i + BATCH_SIZE_LIMIT]
-                results = self._store.batch_get_into(batch_keys, batch_ptrs, batch_sizes)
-                for j, bytes_read in enumerate(results):
-                    if bytes_read < 0:
-                        raise RuntimeError(
-                            f"batch_get_into failed for key '{batch_keys[j]}' with error code: {bytes_read}"
-                        )
-        finally:
-            for ptr in buffer_ptrs:
-                self._store.unregister_buffer(ptr)
+        for raw_bytes, shape, dtype in zip(all_bytes, shapes, dtypes, strict=True):
+            np_dtype = dtype_map.get(dtype, np.float32)
+            arr = np.frombuffer(raw_bytes, dtype=np_dtype).reshape(shape)
+            tensor = torch.from_numpy(arr.copy())
+            if dtype == torch.bfloat16:
+                tensor = tensor.view(torch.bfloat16)
+            tensors.append(tensor)
 
         return tensors
 
