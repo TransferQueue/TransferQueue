@@ -287,7 +287,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             raise ValueError("Lengths of keys, shapes, dtypes must match")
 
         total_items = len(keys)
-        initial_batch_size = 500
+        initial_batch_size = 1000  # Increase batch size to reduce number of batches
         logger.debug(f"MooncakeStorageClient: Getting {total_items} items using zero-copy batch_get_into")
         
         classify_start_time = time.time()
@@ -307,7 +307,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             get_start_time = time.time()
             batch_size = initial_batch_size
             total_get_batch_time = 0.0
-            total_tensor_convert_time = 0.0
+            max_tensor_convert_time = 0.0  # Track max instead of sum for parallel processing
+            total_tensor_convert_time_sum = 0.0  # Sum for reference
             
             # Prepare all batches
             batches = []
@@ -323,7 +324,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 batch_idx += 1
             
             # Process batches in parallel with adaptive retry
-            max_workers = min(8, len(batches))  # Limit concurrent batches
+            max_workers = min(16, len(batches))  # Increase concurrent batches for better parallelism
             retry_batches = []
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -344,7 +345,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                                 for idx, tensor in result['results'].items():
                                     final_results[idx] = tensor
                             total_get_batch_time += result['get_batch_time']
-                            total_tensor_convert_time += result['tensor_convert_time']
+                            total_tensor_convert_time_sum += result['tensor_convert_time']
+                            max_tensor_convert_time = max(max_tensor_convert_time, result['tensor_convert_time'])
                         else:
                             # Need retry with smaller batch size
                             retry_batches.append(batch_info)
@@ -365,7 +367,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                                 for idx, tensor in result['results'].items():
                                     final_results[idx] = tensor
                             total_get_batch_time += result['get_batch_time']
-                            total_tensor_convert_time += result['tensor_convert_time']
+                            total_tensor_convert_time_sum += result['tensor_convert_time']
+                            max_tensor_convert_time = max(max_tensor_convert_time, result['tensor_convert_time'])
                         else:
                             raise RuntimeError(f"Failed to process batch {batch_info[0]} even with batch_size=1")
                     break
@@ -409,7 +412,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                                     for idx, tensor in result['results'].items():
                                         final_results[idx] = tensor
                                 total_get_batch_time += result['get_batch_time']
-                                total_tensor_convert_time += result['tensor_convert_time']
+                                total_tensor_convert_time_sum += result['tensor_convert_time']
+                                max_tensor_convert_time = max(max_tensor_convert_time, result['tensor_convert_time'])
                             else:
                                 retry_batches.append(batch_info)
                         except Exception as e:
@@ -418,11 +422,14 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             
             get_end_time = time.time()
             get_elapsed = get_end_time - get_start_time
+            # For parallel processing, use max_tensor_convert_time instead of sum
+            # total_tensor_convert_time_sum is the sum of all batches (for reference)
             logger.warning(
                 f"MooncakeStorageClient: Got {len(tensor_indices)} tensors "
                 f"via get_batch (parallel), total time: {get_elapsed:.8f}s, "
                 f"get_batch time: {total_get_batch_time:.8f}s ({total_get_batch_time/get_elapsed*100:.1f}%), "
-                f"tensor convert time: {total_tensor_convert_time:.8f}s ({total_tensor_convert_time/get_elapsed*100:.1f}%)"
+                f"tensor convert time (max): {max_tensor_convert_time:.8f}s ({max_tensor_convert_time/get_elapsed*100:.1f}%), "
+                f"tensor convert time (sum): {total_tensor_convert_time_sum:.8f}s"
             )
         
         non_tensor_get_batch_time = 0.0
