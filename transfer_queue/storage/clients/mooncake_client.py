@@ -85,14 +85,16 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     def _batch_put_tensors(self, keys: list[str], tensors: list[Tensor]):
         buffer_ptrs = []
         sizes = []
-        for tensor in tensors:
-            ptr = tensor.data_ptr()
-            size = tensor.numel() * tensor.element_size()
-            buffer_ptrs.append(ptr)
-            sizes.append(size)
-            self._store.register_buffer(ptr, size)
-
         try:
+            for tensor in tensors:
+                ptr = tensor.data_ptr()
+                size = tensor.numel() * tensor.element_size()
+                ret = self._store.register_buffer(ptr, size)
+                if ret != 0:
+                    raise RuntimeError(f"register_buffer failed with error code: {ret}")
+                buffer_ptrs.append(ptr)
+                sizes.append(size)
+
             for i in range(0, len(keys), BATCH_SIZE_LIMIT):
                 batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
                 batch_ptrs = buffer_ptrs[i:i + BATCH_SIZE_LIMIT]
@@ -155,16 +157,18 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         buffer_ptrs = []
         sizes = []
 
-        for shape, dtype in zip(shapes, dtypes, strict=True):
-            tensor = torch.empty(shape, dtype=dtype)
-            tensors.append(tensor)
-            ptr = tensor.data_ptr()
-            size = tensor.numel() * tensor.element_size()
-            buffer_ptrs.append(ptr)
-            sizes.append(size)
-            self._store.register_buffer(ptr, size)
-
         try:
+            for shape, dtype in zip(shapes, dtypes, strict=True):
+                tensor = torch.empty(shape, dtype=dtype)
+                tensors.append(tensor)
+                ptr = tensor.data_ptr()
+                size = tensor.numel() * tensor.element_size()
+                ret = self._store.register_buffer(ptr, size)
+                if ret != 0:
+                    raise RuntimeError(f"register_buffer failed with error code: {ret}")
+                buffer_ptrs.append(ptr)
+                sizes.append(size)
+
             for i in range(0, len(keys), BATCH_SIZE_LIMIT):
                 batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
                 batch_ptrs = buffer_ptrs[i:i + BATCH_SIZE_LIMIT]
