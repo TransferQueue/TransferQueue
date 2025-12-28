@@ -467,6 +467,17 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             total_tensor_convert_time_sum += result['tensor_convert_time']
                             max_tensor_convert_time = max(max_tensor_convert_time, result['tensor_convert_time'])
                             total_get_batch_bytes += result.get('get_batch_bytes', 0)
+                            
+                            # Aggregate detailed timing
+                            details = result.get('tensor_convert_details', {})
+                            total_validate_group_time += details.get('validate_group_time', 0.0)
+                            total_frombuffer_time += details.get('frombuffer_time', 0.0)
+                            total_view_time += details.get('view_time', 0.0)
+                            total_slice_time += details.get('slice_time', 0.0)
+                            total_empty_tensor_time += details.get('empty_tensor_time', 0.0)
+                            total_other_overhead += details.get('other_overhead', 0.0)
+                            total_tensor_count += details.get('total_tensors', 0)
+                            total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
                         else:
                             # Need retry with smaller batch size
                             retry_batches.append(batch_info)
