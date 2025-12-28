@@ -396,21 +396,34 @@ def worker_get_verify(store, thread_id, key_prefix, value_size, num_keys, batch_
     return verification_errors
 
 
-def worker_get(store, thread_id, key_prefix, value_size, num_keys, batch_size):
+def worker_get(store, thread_id, key_prefix, value_size, num_keys, batch_size, available_keys):
     global total_operations, total_bytes, running
     
     operation_count = 0
     bytes_transferred = 0
-    key_counter = 0
+    
+    # Get keys for this thread and shuffle to avoid cache interference
+    thread_keys = [key for key in available_keys if key.startswith(f"{key_prefix}_t{thread_id}_")]
+    if not thread_keys:
+        print(f"Thread {thread_id}: No keys available for this thread")
+        return
+    
+    # Shuffle keys to avoid cache interference
+    random.shuffle(thread_keys)
+    key_index = 0
     
     while running:
         try:
             batch_keys = []
             
+            # Read keys sequentially without repetition until all keys are read
             for j in range(batch_size):
-                key = f"{key_prefix}_t{thread_id}_k{key_counter % num_keys}"
-                batch_keys.append(key)
-                key_counter += 1
+                if key_index >= len(thread_keys):
+                    # All keys have been read once, shuffle and restart to avoid cache
+                    random.shuffle(thread_keys)
+                    key_index = 0
+                batch_keys.append(thread_keys[key_index])
+                key_index += 1
             
             if not batch_keys:
                 break
@@ -741,7 +754,7 @@ def run_benchmark(args):
         for i in range(args.threads):
             worker = threading.Thread(
                 target=worker_get,
-                args=(store, i, key_prefix, args.value_size, num_keys, args.batch_size)
+                args=(store, i, key_prefix, args.value_size, num_keys, args.batch_size, prepopulate_keys)
             )
             worker.start()
             workers.append(worker)
