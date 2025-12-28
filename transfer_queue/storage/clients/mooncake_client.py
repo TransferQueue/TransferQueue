@@ -251,6 +251,11 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         one_d_tensors = 0  # Count 1D tensors that can skip view
         skip_view_count = 0  # Count tensors that can skip view (1D with matching num_elements)
         
+        # Optimization: Track if all shapes are the same during first pass
+        first_shape = None
+        first_num_elements = None
+        all_shapes_match = True
+        
         for idx, raw_data, shape, dtype in zip(
             batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
         ):
@@ -289,6 +294,14 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             shape_tuple = tuple(shape) if shape else tuple()
             shape_counter[shape_tuple] = shape_counter.get(shape_tuple, 0) + 1
             
+            # Optimization: Check if all shapes match during first pass
+            if first_shape is None:
+                first_shape = shape_tuple
+                first_num_elements = num_elements
+            else:
+                if shape_tuple != first_shape or num_elements != first_num_elements:
+                    all_shapes_match = False
+            
             # Statistics: check if 1D tensor that can skip view
             is_1d = shape and len(shape) == 1
             if is_1d:
@@ -304,26 +317,14 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         
         validate_group_time = time.time() - validate_group_start
         
-        # Optimization: Check if all tensors have the same shape (common case)
+        # Optimization: Use shape matching result from first pass (already computed during grouping)
         all_same_shape = False
         common_shape = None
         common_num_elements = None
-        if dtype_groups:
-            # Check if all tensors in all dtype groups have the same shape
-            all_shapes = []
-            all_num_elements = []
-            for dtype, items in dtype_groups.items():
-                for _, _, shape, num_elements, _ in items:
-                    all_shapes.append(tuple(shape) if shape else tuple())
-                    all_num_elements.append(num_elements)
-            
-            if all_shapes:
-                unique_shapes = set(all_shapes)
-                unique_num_elements = set(all_num_elements)
-                if len(unique_shapes) == 1 and len(unique_num_elements) == 1:
-                    all_same_shape = True
-                    common_shape = all_shapes[0]
-                    common_num_elements = all_num_elements[0]
+        if all_shapes_match and first_shape is not None:
+            all_same_shape = True
+            common_shape = first_shape
+            common_num_elements = first_num_elements
         
         if failed_count > 0:
             tensor_convert_time = time.time() - tensor_convert_start
@@ -704,16 +705,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             avg_frombuffer_time = total_frombuffer_time / total_frombuffer_calls if total_frombuffer_calls > 0 else 0
             avg_view_time = total_view_time / total_frombuffer_calls if total_frombuffer_calls > 0 else 0
             
-            # For parallel processing, use max times instead of sum
-            # Sum times are provided for reference (they exceed total time due to parallelism)
-            logger.warning(
-                f"MooncakeStorageClient: Got {len(tensor_indices)} tensors "
-                f"via get_batch (parallel), total time: {get_elapsed:.8f}s, "
-                f"get_batch time (max): {max_get_batch_time:.8f}s ({max_get_batch_time/get_elapsed*100:.1f}%), "
-                f"get_batch time (sum): {total_get_batch_time_sum:.8f}s, "
-                f"get_batch throughput: {get_batch_throughput_gbps:.2f} Gb/s, "
-                f"get_batch data: {total_get_batch_bytes / (1024**3):.2f} GB"
-            )
             # Calculate shape distribution statistics
             top_shapes = sorted(aggregated_shape_distribution.items(), key=lambda x: x[1], reverse=True)[:10]
             shape_distribution_str = ", ".join([f"{shape}: {count}" for shape, count in top_shapes])
@@ -721,23 +712,54 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             skip_view_ratio = (total_skipped_view_count / total_frombuffer_calls * 100) if total_frombuffer_calls > 0 else 0
             one_d_ratio = (total_one_d_tensors / total_frombuffer_calls * 100) if total_frombuffer_calls > 0 else 0
             
-            logger.warning(
-                f"MooncakeStorageClient: Tensor conversion breakdown (max time: {max_tensor_convert_time:.8f}s, "
-                f"{max_tensor_convert_time/get_elapsed*100:.1f}%): "
-                f"validate_group: {total_validate_group_time:.8f}s, "
-                f"frombuffer: {total_frombuffer_time:.8f}s (avg: {avg_frombuffer_time*1000:.3f}ms/call, {total_frombuffer_calls} calls), "
-                f"view: {total_view_time:.8f}s (avg: {avg_view_time*1000:.3f}ms/call, {total_frombuffer_calls - total_skipped_view_count} calls), "
-                f"slice: {total_slice_time:.8f}s, "
-                f"empty_tensor: {total_empty_tensor_time:.8f}s, "
-                f"other_overhead: {total_other_overhead:.8f}s"
-            )
-            logger.warning(
-                f"MooncakeStorageClient: Shape distribution analysis: "
-                f"unique shapes: {len(total_unique_shapes)}, "
-                f"1D tensors: {total_one_d_tensors} ({one_d_ratio:.1f}%), "
-                f"skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%), "
-                f"top shapes: {shape_distribution_str}"
-            )
+            # Improved logging format for better readability
+            logger.warning("=" * 80)
+            logger.warning(f"MooncakeStorageClient: GET Tensor Operation Time Distribution")
+            logger.warning("=" * 80)
+            logger.warning(f"Total tensors: {len(tensor_indices)}, Total time: {get_elapsed:.4f}s")
+            logger.warning(f"Data transferred: {total_get_batch_bytes / (1024**3):.2f} GB, Throughput: {get_batch_throughput_gbps:.2f} Gb/s")
+            logger.warning("")
+            logger.warning("Time Breakdown (using max time for parallel operations):")
+            logger.warning(f"  ├─ Network (get_batch):     {max_get_batch_time:8.4f}s ({max_get_batch_time/get_elapsed*100:5.1f}%)")
+            logger.warning(f"  └─ Tensor Conversion:       {max_tensor_convert_time:8.4f}s ({max_tensor_convert_time/get_elapsed*100:5.1f}%)")
+            # Calculate proportional times for tensor conversion sub-components
+            # Use sum times to estimate proportions, then scale to max time
+            tensor_convert_sum = total_validate_group_time + total_frombuffer_time + total_view_time + total_slice_time + total_empty_tensor_time + total_other_overhead
+            if tensor_convert_sum > 0 and max_tensor_convert_time > 0:
+                scale_factor = max_tensor_convert_time / tensor_convert_sum
+                estimated_validate_group = total_validate_group_time * scale_factor
+                estimated_frombuffer = total_frombuffer_time * scale_factor
+                estimated_view = total_view_time * scale_factor
+                estimated_slice = total_slice_time * scale_factor
+                estimated_empty = total_empty_tensor_time * scale_factor
+                estimated_other = total_other_overhead * scale_factor
+                
+                logger.warning(f"      ├─ validate_group:       {estimated_validate_group:8.4f}s ({estimated_validate_group/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ frombuffer:           {estimated_frombuffer:8.4f}s ({estimated_frombuffer/max_tensor_convert_time*100:5.1f}%) "
+                              f"[avg: {avg_frombuffer_time*1000:.3f}ms/call, {total_frombuffer_calls} calls]")
+                logger.warning(f"      ├─ view:                 {estimated_view:8.4f}s ({estimated_view/max_tensor_convert_time*100:5.1f}%) "
+                              f"[avg: {avg_view_time*1000:.3f}ms/call, {total_frombuffer_calls - total_skipped_view_count} calls]")
+                logger.warning(f"      ├─ slice:                {estimated_slice:8.4f}s ({estimated_slice/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ empty_tensor:         {estimated_empty:8.4f}s ({estimated_empty/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      └─ other_overhead:       {estimated_other:8.4f}s ({estimated_other/max_tensor_convert_time*100:5.1f}%)")
+            else:
+                logger.warning(f"      ├─ validate_group:       {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ frombuffer:           {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ view:                 {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ slice:                {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ empty_tensor:         {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      └─ other_overhead:       {0.0:8.4f}s ({0.0:5.1f}%)")
+            logger.warning("")
+            logger.warning("Shape Distribution:")
+            logger.warning(f"  ├─ Unique shapes: {len(total_unique_shapes)}")
+            logger.warning(f"  ├─ 1D tensors: {total_one_d_tensors} ({one_d_ratio:.1f}%)")
+            logger.warning(f"  ├─ Skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%)")
+            logger.warning(f"  └─ Top shapes: {shape_distribution_str}")
+            logger.warning("")
+            logger.warning("Note: Sum times exceed total due to parallel processing (sum: {:.4f}s)".format(
+                total_get_batch_time_sum + total_tensor_convert_time_sum
+            ))
+            logger.warning("=" * 80)
         
         non_tensor_get_batch_time = 0.0
         non_tensor_pickle_time = 0.0
@@ -791,19 +813,38 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 
                 i += batch_size
             non_tensor_total_time = time.time() - non_tensor_start_time
-            logger.warning(
-                f"MooncakeStorageClient: Got {len(non_tensor_indices)} non-tensors via batch API, "
-                f"total time: {non_tensor_total_time:.8f}s, "
-                f"get_batch time: {non_tensor_get_batch_time:.8f}s ({non_tensor_get_batch_time/non_tensor_total_time*100:.1f}%), "
-                f"pickle time: {non_tensor_pickle_time:.8f}s ({non_tensor_pickle_time/non_tensor_total_time*100:.1f}%)"
-            )
+            logger.warning("=" * 80)
+            logger.warning(f"MooncakeStorageClient: GET Non-Tensor Operation Time Distribution")
+            logger.warning("=" * 80)
+            logger.warning(f"Total non-tensors: {len(non_tensor_indices)}, Total time: {non_tensor_total_time:.4f}s")
+            logger.warning("Time Breakdown:")
+            logger.warning(f"  ├─ Network (get_batch): {non_tensor_get_batch_time:8.4f}s ({non_tensor_get_batch_time/non_tensor_total_time*100:5.1f}%)")
+            logger.warning(f"  └─ Deserialize (pickle): {non_tensor_pickle_time:8.4f}s ({non_tensor_pickle_time/non_tensor_total_time*100:5.1f}%)")
+            logger.warning("=" * 80)
         
         get_method_end_time = time.time()
         get_method_total_time = get_method_end_time - get_method_start_time
-        logger.warning(
-            f"MooncakeStorageClient: get() method total time: {get_method_total_time:.8f}s, "
-            f"classify time: {classify_time:.8f}s ({classify_time/get_method_total_time*100:.1f}%)"
-        )
+        
+        # Calculate component times for summary
+        tensor_time = get_elapsed if tensor_indices else 0.0
+        non_tensor_time = non_tensor_total_time if non_tensor_indices else 0.0
+        
+        logger.warning("=" * 80)
+        logger.warning(f"MooncakeStorageClient: GET Method Summary")
+        logger.warning("=" * 80)
+        logger.warning(f"Total items: {total_items} (tensors: {len(tensor_indices) if tensor_indices else 0}, "
+                      f"non-tensors: {len(non_tensor_indices) if non_tensor_indices else 0})")
+        logger.warning(f"Total time: {get_method_total_time:.4f}s")
+        logger.warning("Time Breakdown:")
+        logger.warning(f"  ├─ Classify items:     {classify_time:8.4f}s ({classify_time/get_method_total_time*100:5.1f}%)")
+        if tensor_indices:
+            logger.warning(f"  ├─ Tensor operations:   {tensor_time:8.4f}s ({tensor_time/get_method_total_time*100:5.1f}%)")
+        if non_tensor_indices:
+            logger.warning(f"  ├─ Non-tensor ops:      {non_tensor_time:8.4f}s ({non_tensor_time/get_method_total_time*100:5.1f}%)")
+        other_time = get_method_total_time - classify_time - tensor_time - non_tensor_time
+        if other_time > 0.001:
+            logger.warning(f"  └─ Other overhead:      {other_time:8.4f}s ({other_time/get_method_total_time*100:5.1f}%)")
+        logger.warning("=" * 80)
         logger.debug(f"MooncakeStorageClient: Successfully got all {total_items} items")
         return final_results
     

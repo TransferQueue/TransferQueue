@@ -523,13 +523,16 @@ class KVStorageManager(TransferQueueStorageManager):
         merge_time = time.time() - merge_start
         
         get_data_total_time = time.time() - get_data_start_time
-        logger.warning(
-            f"KVStorageManager.get_data() total time: {get_data_total_time:.8f}s, "
-            f"generate_keys: {generate_keys_time:.8f}s ({generate_keys_time/get_data_total_time*100:.1f}%), "
-            f"get_shape_type: {get_shape_type_time:.8f}s ({get_shape_type_time/get_data_total_time*100:.1f}%), "
-            f"storage_client.get: {storage_get_time:.8f}s ({storage_get_time/get_data_total_time*100:.1f}%), "
-            f"merge_tensors: {merge_time:.8f}s ({merge_time/get_data_total_time*100:.1f}%)"
-        )
+        logger.warning("=" * 80)
+        logger.warning(f"KVStorageManager: GET_DATA Operation Time Distribution")
+        logger.warning("=" * 80)
+        logger.warning(f"Total time: {get_data_total_time:.4f}s")
+        logger.warning("Time Breakdown:")
+        logger.warning(f"  ├─ Generate keys:      {generate_keys_time:8.4f}s ({generate_keys_time/get_data_total_time*100:5.1f}%)")
+        logger.warning(f"  ├─ Get shape/type:     {get_shape_type_time:8.4f}s ({get_shape_type_time/get_data_total_time*100:5.1f}%)")
+        logger.warning(f"  ├─ Storage client.get: {storage_get_time:8.4f}s ({storage_get_time/get_data_total_time*100:5.1f}%)")
+        logger.warning(f"  └─ Merge tensors:      {merge_time:8.4f}s ({merge_time/get_data_total_time*100:5.1f}%)")
+        logger.warning("=" * 80)
         return result
 
     async def clear_data(self, metadata: BatchMeta) -> None:
