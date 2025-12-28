@@ -247,10 +247,13 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         slice_time = 0.0
         skipped_view_count = 0
         
-        # Performance monitoring: slice phase (delayed slicing)
-        slice_phase_time = 0.0
+        # Performance monitoring: detailed breakdown of other_overhead
+        element_size_cache_time = 0.0
+        calculation_time = 0.0
+        dict_operation_time = 0.0
         
         # Process tensors directly in a single loop (like YuanrongClient)
+        # Performance monitoring: measure key operations
         for idx, raw_data, shape, dtype in zip(
             batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
         ):
@@ -263,14 +266,16 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 continue
             
             # Cache element_size calculation per dtype
+            cache_start = time.time()
             if dtype not in dtype_element_sizes:
                 dtype_element_sizes[dtype] = torch.tensor(0, dtype=dtype).element_size()
             element_size = dtype_element_sizes[dtype]
+            element_size_cache_time += time.time() - cache_start
             
             # Slice tensor_data only when needed (lazy slicing)
             slice_start = time.time()
             tensor_data = raw_data[metadata_size:]
-            slice_phase_time += time.time() - slice_start
+            slice_time += time.time() - slice_start
             
             if not tensor_data:
                 # Handle empty tensor case
@@ -288,8 +293,11 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 # Check if 1D tensor that can skip view (optimization)
                 if len(shape) == 1:
                     # For 1D tensors, if shape matches implicit 1D shape, skip view
+                    calc_start = time.time()
                     expected_elements = shape[0]
                     actual_elements = len(tensor_data) // element_size
+                    calculation_time += time.time() - calc_start
+                    
                     if expected_elements == actual_elements:
                         # Skip view for 1D tensors with matching shape
                         skipped_view_count += 1
@@ -304,20 +312,24 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     tensor = tensor.view(shape)
                     view_time += time.time() - view_start
             
+            # Dictionary operation
+            dict_start = time.time()
             batch_results[idx] = tensor
-        
-        # Update slice_time to include slice_phase_time
-        slice_time = slice_phase_time
+            dict_operation_time += time.time() - dict_start
         
         empty_tensor_time = 0.0
         
         tensor_convert_time = time.time() - tensor_convert_start
         
         # Calculate other overhead (total - measured components)
-        other_overhead = tensor_convert_time - frombuffer_time - view_time - slice_time - empty_tensor_time
+        # other_overhead includes: loop iteration overhead, condition checks, Python interpreter overhead
+        other_overhead = tensor_convert_time - element_size_cache_time - calculation_time - dict_operation_time - frombuffer_time - view_time - slice_time - empty_tensor_time
         
         # Store detailed timing for analysis
         tensor_convert_details = {
+            'element_size_cache_time': element_size_cache_time,
+            'calculation_time': calculation_time,
+            'dict_operation_time': dict_operation_time,
             'frombuffer_time': frombuffer_time,
             'view_time': view_time,
             'slice_time': slice_time,
@@ -373,6 +385,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             total_get_batch_bytes = 0  # Total bytes retrieved via get_batch
             
             # Aggregate detailed tensor conversion timing
+            total_element_size_cache_time = 0.0
+            total_calculation_time = 0.0
+            total_dict_operation_time = 0.0
             total_frombuffer_time = 0.0
             total_view_time = 0.0
             total_slice_time = 0.0
@@ -424,6 +439,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             
                             # Aggregate detailed timing
                             details = result.get('tensor_convert_details', {})
+                            total_element_size_cache_time += details.get('element_size_cache_time', 0.0)
+                            total_calculation_time += details.get('calculation_time', 0.0)
+                            total_dict_operation_time += details.get('dict_operation_time', 0.0)
                             total_frombuffer_time += details.get('frombuffer_time', 0.0)
                             total_view_time += details.get('view_time', 0.0)
                             total_slice_time += details.get('slice_time', 0.0)
@@ -459,6 +477,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             
                             # Aggregate detailed timing
                             details = result.get('tensor_convert_details', {})
+                            total_element_size_cache_time += details.get('element_size_cache_time', 0.0)
+                            total_calculation_time += details.get('calculation_time', 0.0)
+                            total_dict_operation_time += details.get('dict_operation_time', 0.0)
                             total_frombuffer_time += details.get('frombuffer_time', 0.0)
                             total_view_time += details.get('view_time', 0.0)
                             total_slice_time += details.get('slice_time', 0.0)
@@ -556,28 +577,40 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             logger.warning(f"  └─ Tensor Conversion:       {max_tensor_convert_time:8.4f}s ({max_tensor_convert_time/get_elapsed*100:5.1f}%)")
             # Calculate proportional times for tensor conversion sub-components
             # Use sum times to estimate proportions, then scale to max time
-            tensor_convert_sum = total_frombuffer_time + total_view_time + total_slice_time + total_empty_tensor_time + total_other_overhead
+            tensor_convert_sum = (total_element_size_cache_time + total_calculation_time + 
+                                 total_dict_operation_time + total_frombuffer_time + 
+                                 total_view_time + total_slice_time + total_empty_tensor_time + 
+                                 total_other_overhead)
             if tensor_convert_sum > 0 and max_tensor_convert_time > 0:
                 scale_factor = max_tensor_convert_time / tensor_convert_sum
+                estimated_element_size_cache = total_element_size_cache_time * scale_factor
+                estimated_calculation = total_calculation_time * scale_factor
+                estimated_dict_operation = total_dict_operation_time * scale_factor
+                estimated_slice = total_slice_time * scale_factor
                 estimated_frombuffer = total_frombuffer_time * scale_factor
                 estimated_view = total_view_time * scale_factor
-                estimated_slice = total_slice_time * scale_factor
                 estimated_empty = total_empty_tensor_time * scale_factor
                 estimated_other = total_other_overhead * scale_factor
                 
                 logger.warning(f"      ├─ slice (remove header):  {estimated_slice:8.4f}s ({estimated_slice/max_tensor_convert_time*100:5.1f}%)")
-                logger.warning(f"      ├─ frombuffer:             {estimated_frombuffer:8.4f}s ({estimated_frombuffer/max_tensor_convert_time*100:5.1f}%) "
+                logger.warning(f"      ├─ element_size_cache:     {estimated_element_size_cache:8.4f}s ({estimated_element_size_cache/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ calculation:            {estimated_calculation:8.4f}s ({estimated_calculation/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ dict_operation:         {estimated_dict_operation:8.4f}s ({estimated_dict_operation/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ frombuffer:              {estimated_frombuffer:8.4f}s ({estimated_frombuffer/max_tensor_convert_time*100:5.1f}%) "
                               f"[avg: {avg_frombuffer_time*1000:.3f}ms/call, {total_frombuffer_calls} calls]")
-                logger.warning(f"      ├─ view:                   {estimated_view:8.4f}s ({estimated_view/max_tensor_convert_time*100:5.1f}%) "
+                logger.warning(f"      ├─ view:                    {estimated_view:8.4f}s ({estimated_view/max_tensor_convert_time*100:5.1f}%) "
                               f"[avg: {avg_view_time*1000:.3f}ms/call, {total_frombuffer_calls - total_skipped_view_count} calls]")
-                logger.warning(f"      ├─ empty_tensor:           {estimated_empty:8.4f}s ({estimated_empty/max_tensor_convert_time*100:5.1f}%)")
-                logger.warning(f"      └─ other_overhead:        {estimated_other:8.4f}s ({estimated_other/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ empty_tensor:            {estimated_empty:8.4f}s ({estimated_empty/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      └─ other_overhead:         {estimated_other:8.4f}s ({estimated_other/max_tensor_convert_time*100:5.1f}%)")
             else:
-                logger.warning(f"      ├─ slice (remove header):  {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      ├─ frombuffer:             {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      ├─ view:                   {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      ├─ empty_tensor:           {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      └─ other_overhead:         {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ slice (remove header):   {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ element_size_cache:      {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ calculation:             {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ dict_operation:          {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ frombuffer:               {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ view:                     {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ empty_tensor:             {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      └─ other_overhead:          {0.0:8.4f}s ({0.0:5.1f}%)")
             logger.warning("")
             logger.warning(f"Skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%)")
             logger.warning("")
