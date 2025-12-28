@@ -304,6 +304,27 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         
         validate_group_time = time.time() - validate_group_start
         
+        # Optimization: Check if all tensors have the same shape (common case)
+        all_same_shape = False
+        common_shape = None
+        common_num_elements = None
+        if dtype_groups:
+            # Check if all tensors in all dtype groups have the same shape
+            all_shapes = []
+            all_num_elements = []
+            for dtype, items in dtype_groups.items():
+                for _, _, shape, num_elements, _ in items:
+                    all_shapes.append(tuple(shape) if shape else tuple())
+                    all_num_elements.append(num_elements)
+            
+            if all_shapes:
+                unique_shapes = set(all_shapes)
+                unique_num_elements = set(all_num_elements)
+                if len(unique_shapes) == 1 and len(unique_num_elements) == 1:
+                    all_same_shape = True
+                    common_shape = all_shapes[0]
+                    common_num_elements = all_num_elements[0]
+        
         if failed_count > 0:
             tensor_convert_time = time.time() - tensor_convert_start
             tensor_convert_details = {
@@ -339,34 +360,64 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         slice_time = 0.0
         skipped_view_count = 0  # Count tensors that skipped view
         
-        for dtype, items in dtype_groups.items():
-            element_size = dtype_element_sizes[dtype]
-            # Process all tensors of the same dtype together
-            for idx, tensor_data, shape, num_elements, can_skip_view in items:
-                # Performance monitoring: torch.frombuffer time
-                frombuffer_start = time.time()
-                tensor = torch.frombuffer(tensor_data, dtype=dtype)
-                frombuffer_time += time.time() - frombuffer_start
+        # Optimization: If all tensors have the same shape, use optimized path
+        if all_same_shape and common_shape and len(common_shape) == 1:
+            # Fast path: All tensors are 1D with the same shape
+            # Pre-compute common values to avoid repeated calculations in inner loop
+            for dtype, items in dtype_groups.items():
+                element_size = dtype_element_sizes[dtype]
+                # Pre-compute expected_size once per dtype (all tensors have same shape)
+                common_expected_size = common_num_elements * element_size
                 
-                # Performance monitoring: slice time
-                expected_size = num_elements * element_size
-                if len(tensor_data) != expected_size:
-                    slice_start = time.time()
-                    tensor = tensor[:num_elements]
-                    slice_time += time.time() - slice_start
-                
-                # Performance monitoring: view time
-                # Skip view if tensor is 1D and shape matches frombuffer result
-                if shape:
-                    if can_skip_view:
-                        # 1D tensor with matching shape, skip view
-                        skipped_view_count += 1
-                    else:
-                        view_start = time.time()
-                        tensor = tensor.view(shape)
-                        view_time += time.time() - view_start
-                
-                batch_results[idx] = tensor
+                # Batch process all tensors of the same dtype
+                # Since shape is identical, we can skip shape checks and view operations
+                for idx, tensor_data, shape, num_elements, can_skip_view in items:
+                    # Performance monitoring: torch.frombuffer time
+                    frombuffer_start = time.time()
+                    tensor = torch.frombuffer(tensor_data, dtype=dtype)
+                    frombuffer_time += time.time() - frombuffer_start
+                    
+                    # Performance monitoring: slice time
+                    # Since shape is identical, expected_size is the same for all tensors of this dtype
+                    # Only check length once, no need to recalculate expected_size
+                    if len(tensor_data) != common_expected_size:
+                        slice_start = time.time()
+                        tensor = tensor[:num_elements]
+                        slice_time += time.time() - slice_start
+                    
+                    # Skip view for 1D tensors with matching shape (already verified in first pass)
+                    skipped_view_count += 1
+                    batch_results[idx] = tensor
+        else:
+            # Standard path: Handle mixed shapes
+            for dtype, items in dtype_groups.items():
+                element_size = dtype_element_sizes[dtype]
+                # Process all tensors of the same dtype together
+                for idx, tensor_data, shape, num_elements, can_skip_view in items:
+                    # Performance monitoring: torch.frombuffer time
+                    frombuffer_start = time.time()
+                    tensor = torch.frombuffer(tensor_data, dtype=dtype)
+                    frombuffer_time += time.time() - frombuffer_start
+                    
+                    # Performance monitoring: slice time
+                    expected_size = num_elements * element_size
+                    if len(tensor_data) != expected_size:
+                        slice_start = time.time()
+                        tensor = tensor[:num_elements]
+                        slice_time += time.time() - slice_start
+                    
+                    # Performance monitoring: view time
+                    # Skip view if tensor is 1D and shape matches frombuffer result
+                    if shape:
+                        if can_skip_view:
+                            # 1D tensor with matching shape, skip view
+                            skipped_view_count += 1
+                        else:
+                            view_start = time.time()
+                            tensor = tensor.view(shape)
+                            view_time += time.time() - view_start
+                    
+                    batch_results[idx] = tensor
         
         # Add empty tensors
         empty_tensor_start = time.time()
