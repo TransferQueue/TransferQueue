@@ -314,7 +314,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     raise
         
         total_time = time.time() - parallel_start
-        max_thread_time = max_get_batch_time + max_frombuffer_time
+        max_batch_time = max_get_batch_time + max_frombuffer_time
         get_batch_throughput = (total_get_batch_bytes * 8 / (1024**3)) / max_get_batch_time if max_get_batch_time > 0 else 0
         
         logger.warning("=" * 80)
@@ -322,17 +322,28 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         logger.warning("=" * 80)
         logger.warning(f"Total tensors: {len(keys)}, Total bytes: {total_get_batch_bytes / (1024**3):.2f} GB")
         logger.warning(f"Batches: {num_batches}, Threads: {max_workers}")
-        logger.warning(f"Total time (wall-clock): {total_time:.4f}s")
-        logger.warning(f"Max batch time: {max_thread_time:.4f}s")
-        logger.warning("Time Breakdown (using max time for parallel operations):")
-        logger.warning(f"  ├─ get_batch (network):    {max_get_batch_time:8.4f}s ({max_get_batch_time/total_time*100:5.1f}%) "
-                      f"[throughput: {get_batch_throughput:.2f} Gb/s]")
-        logger.warning(f"  └─ frombuffer (deserialize): {max_frombuffer_time:8.4f}s ({max_frombuffer_time/total_time*100:5.1f}%) "
-                      f"[{total_frombuffer_time/len(keys)*1000:.4f} ms/tensor avg]")
         logger.warning("")
-        logger.warning(f"Parallel efficiency: {max_thread_time/total_time*100:.1f}% "
-                      f"(ideal: 100%, lower means better parallelization)")
-        logger.warning(f"Sum times (all batches): get_batch={total_get_batch_time:.4f}s, frombuffer={total_frombuffer_time:.4f}s")
+        logger.warning("Time Metrics:")
+        logger.warning(f"  ├─ Wall-clock time (total):     {total_time:8.4f}s  (实际总耗时)")
+        logger.warning(f"  └─ Max batch time (slowest):    {max_batch_time:8.4f}s  (最慢batch耗时)")
+        logger.warning("")
+        logger.warning("Max Batch Breakdown (最慢batch的时间分布):")
+        logger.warning(f"  ├─ get_batch (network):         {max_get_batch_time:8.4f}s ({max_get_batch_time/max_batch_time*100:5.1f}%) "
+                      f"[throughput: {get_batch_throughput:.2f} Gb/s]")
+        logger.warning(f"  └─ frombuffer (deserialize):   {max_frombuffer_time:8.4f}s ({max_frombuffer_time/max_batch_time*100:5.1f}%) "
+                      f"[{max_frombuffer_time/500*1000:.4f} ms/tensor for this batch]")
+        logger.warning("")
+        logger.warning("Parallel Statistics:")
+        logger.warning(f"  ├─ Parallel efficiency:        {max_batch_time/total_time*100:5.1f}%  "
+                      f"(max_batch_time/total_time, 理想值接近100%)")
+        logger.warning(f"  ├─ Sum get_batch time:         {total_get_batch_time:8.4f}s  (所有batch的get_batch时间总和)")
+        logger.warning(f"  └─ Sum frombuffer time:        {total_frombuffer_time:8.4f}s  (所有batch的frombuffer时间总和)")
+        logger.warning("")
+        logger.warning("Explanation:")
+        logger.warning(f"  - Wall-clock time ({total_time:.2f}s) 是实际经过的时间")
+        logger.warning(f"  - Max batch time ({max_batch_time:.2f}s) 是最慢的单个batch耗时")
+        logger.warning(f"  - Sum times ({total_get_batch_time+total_frombuffer_time:.2f}s) 是所有batch时间总和")
+        logger.warning(f"  - 如果并行效率低，说明有batch在等待线程资源")
         logger.warning("=" * 80)
 
         return tensors
