@@ -232,28 +232,31 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             }
         
         # Convert tensors
-        # Reference: YuanrongClient approach - trust business layer, no validation
-        # Only do essential operations: remove metadata header and group by dtype
+        # Reference: YuanrongClient approach - trust business layer, process directly without grouping
+        # Delay slicing to avoid creating intermediate bytes objects
         tensor_convert_start = time.time()
         batch_results = {}
         
         # Pre-compute element sizes by dtype to avoid repeated calculations
         dtype_element_sizes = {}
         
-        # Group by dtype for batch processing (similar to YuanrongClient's approach)
+        # Process tensors directly without grouping (like YuanrongClient)
         # Trust business layer: use provided shapes and dtypes directly
-        dtype_groups = {}
+        frombuffer_time = 0.0
+        view_time = 0.0
+        slice_time = 0.0
+        skipped_view_count = 0
         
-        # Performance monitoring: group phase
-        group_start = time.time()
+        # Performance monitoring: slice phase (delayed slicing)
+        slice_phase_time = 0.0
+        
+        # Process tensors directly in a single loop (like YuanrongClient)
         for idx, raw_data, shape, dtype in zip(
             batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
         ):
             # Trust storage layer: assume raw_data is valid
-            # Only extract tensor_data (remove 24-byte metadata header)
-            tensor_data = raw_data[metadata_size:] if raw_data else None
-            
-            if not tensor_data:
+            # Delay slicing: slice only when needed (just before frombuffer)
+            if not raw_data:
                 # Handle empty tensor case
                 if shape and 0 in shape:
                     batch_results[idx] = torch.empty(shape, dtype=dtype)
@@ -262,73 +265,66 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             # Cache element_size calculation per dtype
             if dtype not in dtype_element_sizes:
                 dtype_element_sizes[dtype] = torch.tensor(0, dtype=dtype).element_size()
-            
-            # Group by dtype for batch processing
-            if dtype not in dtype_groups:
-                dtype_groups[dtype] = []
-            dtype_groups[dtype].append((idx, tensor_data, shape))
-        group_time = time.time() - group_start
-        
-        # Batch process tensors by dtype (grouped processing reduces overhead)
-        # Reference: YuanrongClient - directly use provided shapes and dtypes, no shape checking
-        frombuffer_time = 0.0
-        view_time = 0.0
-        slice_time = 0.0
-        skipped_view_count = 0
-        
-        # Process tensors by dtype (similar to YuanrongClient's approach)
-        for dtype, items in dtype_groups.items():
             element_size = dtype_element_sizes[dtype]
             
-            for idx, tensor_data, shape in items:
-                if not tensor_data:
-                    continue
-                
-                # Performance monitoring: torch.frombuffer time
-                frombuffer_start = time.time()
-                tensor = torch.frombuffer(tensor_data, dtype=dtype)
-                frombuffer_time += time.time() - frombuffer_start
-                
-                # Trust business layer: use provided shape directly (like YuanrongClient)
-                if shape:
-                    # Check if 1D tensor that can skip view (optimization)
-                    if len(shape) == 1:
-                        # For 1D tensors, if shape matches implicit 1D shape, skip view
-                        expected_elements = shape[0]
-                        actual_elements = len(tensor_data) // element_size
-                        if expected_elements == actual_elements:
-                            # Skip view for 1D tensors with matching shape
-                            skipped_view_count += 1
-                        else:
-                            # Need to reshape (trust business layer shape)
-                            view_start = time.time()
-                            tensor = tensor.view(shape)
-                            view_time += time.time() - view_start
+            # Slice tensor_data only when needed (lazy slicing)
+            slice_start = time.time()
+            tensor_data = raw_data[metadata_size:]
+            slice_phase_time += time.time() - slice_start
+            
+            if not tensor_data:
+                # Handle empty tensor case
+                if shape and 0 in shape:
+                    batch_results[idx] = torch.empty(shape, dtype=dtype)
+                continue
+            
+            # Performance monitoring: torch.frombuffer time
+            frombuffer_start = time.time()
+            tensor = torch.frombuffer(tensor_data, dtype=dtype)
+            frombuffer_time += time.time() - frombuffer_start
+            
+            # Trust business layer: use provided shape directly (like YuanrongClient)
+            if shape:
+                # Check if 1D tensor that can skip view (optimization)
+                if len(shape) == 1:
+                    # For 1D tensors, if shape matches implicit 1D shape, skip view
+                    expected_elements = shape[0]
+                    actual_elements = len(tensor_data) // element_size
+                    if expected_elements == actual_elements:
+                        # Skip view for 1D tensors with matching shape
+                        skipped_view_count += 1
                     else:
-                        # Multi-dimensional tensor, need view (trust business layer shape)
+                        # Need to reshape (trust business layer shape)
                         view_start = time.time()
                         tensor = tensor.view(shape)
                         view_time += time.time() - view_start
-                
-                batch_results[idx] = tensor
+                else:
+                    # Multi-dimensional tensor, need view (trust business layer shape)
+                    view_start = time.time()
+                    tensor = tensor.view(shape)
+                    view_time += time.time() - view_start
+            
+            batch_results[idx] = tensor
+        
+        # Update slice_time to include slice_phase_time
+        slice_time = slice_phase_time
         
         empty_tensor_time = 0.0
         
         tensor_convert_time = time.time() - tensor_convert_start
         
         # Calculate other overhead (total - measured components)
-        other_overhead = tensor_convert_time - group_time - frombuffer_time - view_time - slice_time - empty_tensor_time
+        other_overhead = tensor_convert_time - frombuffer_time - view_time - slice_time - empty_tensor_time
         
         # Store detailed timing for analysis
         tensor_convert_details = {
-            'group_time': group_time,
             'frombuffer_time': frombuffer_time,
             'view_time': view_time,
             'slice_time': slice_time,
             'empty_tensor_time': empty_tensor_time,
             'other_overhead': other_overhead,
             'total_tensors': len(batch_results),
-            'num_frombuffer_calls': sum(len(items) for items in dtype_groups.values()),
+            'num_frombuffer_calls': len(batch_results),
             'skipped_view_count': skipped_view_count
         }
         
@@ -377,7 +373,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             total_get_batch_bytes = 0  # Total bytes retrieved via get_batch
             
             # Aggregate detailed tensor conversion timing
-            total_group_time = 0.0
             total_frombuffer_time = 0.0
             total_view_time = 0.0
             total_slice_time = 0.0
@@ -429,7 +424,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             
                             # Aggregate detailed timing
                             details = result.get('tensor_convert_details', {})
-                            total_group_time += details.get('group_time', 0.0)
                             total_frombuffer_time += details.get('frombuffer_time', 0.0)
                             total_view_time += details.get('view_time', 0.0)
                             total_slice_time += details.get('slice_time', 0.0)
@@ -465,7 +459,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             
                             # Aggregate detailed timing
                             details = result.get('tensor_convert_details', {})
-                            total_group_time += details.get('group_time', 0.0)
                             total_frombuffer_time += details.get('frombuffer_time', 0.0)
                             total_view_time += details.get('view_time', 0.0)
                             total_slice_time += details.get('slice_time', 0.0)
@@ -563,31 +556,28 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             logger.warning(f"  └─ Tensor Conversion:       {max_tensor_convert_time:8.4f}s ({max_tensor_convert_time/get_elapsed*100:5.1f}%)")
             # Calculate proportional times for tensor conversion sub-components
             # Use sum times to estimate proportions, then scale to max time
-            tensor_convert_sum = total_group_time + total_frombuffer_time + total_view_time + total_slice_time + total_empty_tensor_time + total_other_overhead
+            tensor_convert_sum = total_frombuffer_time + total_view_time + total_slice_time + total_empty_tensor_time + total_other_overhead
             if tensor_convert_sum > 0 and max_tensor_convert_time > 0:
                 scale_factor = max_tensor_convert_time / tensor_convert_sum
-                estimated_group = total_group_time * scale_factor
                 estimated_frombuffer = total_frombuffer_time * scale_factor
                 estimated_view = total_view_time * scale_factor
                 estimated_slice = total_slice_time * scale_factor
                 estimated_empty = total_empty_tensor_time * scale_factor
                 estimated_other = total_other_overhead * scale_factor
                 
-                logger.warning(f"      ├─ group (slice+group):  {estimated_group:8.4f}s ({estimated_group/max_tensor_convert_time*100:5.1f}%)")
-                logger.warning(f"      ├─ frombuffer:            {estimated_frombuffer:8.4f}s ({estimated_frombuffer/max_tensor_convert_time*100:5.1f}%) "
+                logger.warning(f"      ├─ slice (remove header):  {estimated_slice:8.4f}s ({estimated_slice/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ frombuffer:             {estimated_frombuffer:8.4f}s ({estimated_frombuffer/max_tensor_convert_time*100:5.1f}%) "
                               f"[avg: {avg_frombuffer_time*1000:.3f}ms/call, {total_frombuffer_calls} calls]")
-                logger.warning(f"      ├─ view:                  {estimated_view:8.4f}s ({estimated_view/max_tensor_convert_time*100:5.1f}%) "
+                logger.warning(f"      ├─ view:                   {estimated_view:8.4f}s ({estimated_view/max_tensor_convert_time*100:5.1f}%) "
                               f"[avg: {avg_view_time*1000:.3f}ms/call, {total_frombuffer_calls - total_skipped_view_count} calls]")
-                logger.warning(f"      ├─ slice:                 {estimated_slice:8.4f}s ({estimated_slice/max_tensor_convert_time*100:5.1f}%)")
-                logger.warning(f"      ├─ empty_tensor:          {estimated_empty:8.4f}s ({estimated_empty/max_tensor_convert_time*100:5.1f}%)")
+                logger.warning(f"      ├─ empty_tensor:           {estimated_empty:8.4f}s ({estimated_empty/max_tensor_convert_time*100:5.1f}%)")
                 logger.warning(f"      └─ other_overhead:        {estimated_other:8.4f}s ({estimated_other/max_tensor_convert_time*100:5.1f}%)")
             else:
-                logger.warning(f"      ├─ group (slice+group):   {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      ├─ frombuffer:            {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      ├─ view:                  {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      ├─ slice:                 {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      ├─ empty_tensor:          {0.0:8.4f}s ({0.0:5.1f}%)")
-                logger.warning(f"      └─ other_overhead:        {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ slice (remove header):  {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ frombuffer:             {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ view:                   {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      ├─ empty_tensor:           {0.0:8.4f}s ({0.0:5.1f}%)")
+                logger.warning(f"      └─ other_overhead:         {0.0:8.4f}s ({0.0:5.1f}%)")
             logger.warning("")
             logger.warning(f"Skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%)")
             logger.warning("")
