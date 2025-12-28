@@ -156,7 +156,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             
             tensor_end_time = time.time()
             tensor_elapsed = tensor_end_time - tensor_start_time
-            logger.info(
+            logger.warning(
                 f"MooncakeStorageClient: Put {len(tensor_items)} tensors "
                 f"via put_batch, cost time: {tensor_elapsed:.8f}s"
             )
@@ -186,7 +186,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 i += batch_size
             non_tensor_end_time = time.time()
             non_tensor_elapsed = non_tensor_end_time - non_tensor_start_time
-            logger.info(
+            logger.warning(
                 f"MooncakeStorageClient: Put {len(non_tensor_keys)} non-tensors via batch API, "
                 f"cost time: {non_tensor_elapsed:.8f}s"
             )
@@ -194,15 +194,17 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         logger.debug(f"MooncakeStorageClient: Successfully put all {total_items} items")
 
     def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Any]:
+        get_method_start_time = time.time()
         if shapes is None or dtypes is None:
             raise ValueError("MooncakeStorageClient needs shapes and dtypes")
         if not (len(keys) == len(shapes) == len(dtypes)):
             raise ValueError("Lengths of keys, shapes, dtypes must match")
 
         total_items = len(keys)
-        initial_batch_size = 200
+        initial_batch_size = 500
         logger.debug(f"MooncakeStorageClient: Getting {total_items} items using zero-copy batch_get_into")
         
+        classify_start_time = time.time()
         tensor_indices = []
         non_tensor_indices = []
         
@@ -213,6 +215,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 non_tensor_indices.append(i)
         
         final_results = [None] * len(keys)
+        classify_time = time.time() - classify_start_time
         
         if tensor_indices:
             get_start_time = time.time()
@@ -323,20 +326,27 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             
             get_end_time = time.time()
             get_elapsed = get_end_time - get_start_time
-            logger.info(
+            logger.warning(
                 f"MooncakeStorageClient: Got {len(tensor_indices)} tensors "
                 f"via get_batch, total time: {get_elapsed:.8f}s, "
                 f"get_batch time: {total_get_batch_time:.8f}s ({total_get_batch_time/get_elapsed*100:.1f}%), "
                 f"tensor convert time: {total_tensor_convert_time:.8f}s ({total_tensor_convert_time/get_elapsed*100:.1f}%)"
             )
         
+        non_tensor_get_batch_time = 0.0
+        non_tensor_pickle_time = 0.0
         if non_tensor_indices:
+            non_tensor_start_time = time.time()
             batch_size = initial_batch_size
             i = 0
             while i < len(non_tensor_indices):
                 batch_indices = non_tensor_indices[i:i + batch_size]
                 batch_keys = [keys[j] for j in batch_indices]
+                
+                non_tensor_get_batch_start = time.time()
                 raw_data_list = self._store.get_batch(batch_keys)
+                non_tensor_get_batch_time += time.time() - non_tensor_get_batch_start
+                
                 if len(raw_data_list) != len(batch_keys):
                     if batch_size > 1:
                         new_batch_size = max(1, batch_size // 2)
@@ -353,6 +363,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                         )
                 
                 failed_count = 0
+                pickle_start = time.time()
                 for idx, raw_data in zip(batch_indices, raw_data_list, strict=True):
                     if not raw_data:
                         failed_count += 1
@@ -361,6 +372,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                         else:
                             raise RuntimeError(f"get_batch failed for key '{keys[idx]}': empty data")
                     final_results[idx] = pickle.loads(raw_data)
+                non_tensor_pickle_time += time.time() - pickle_start
                 
                 if failed_count > 0 and batch_size > 1:
                     new_batch_size = max(1, batch_size // 2)
@@ -372,8 +384,20 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     continue
                 
                 i += batch_size
-            logger.debug(f"MooncakeStorageClient: Got {len(non_tensor_indices)} non-tensors via batch API")
+            non_tensor_total_time = time.time() - non_tensor_start_time
+            logger.warning(
+                f"MooncakeStorageClient: Got {len(non_tensor_indices)} non-tensors via batch API, "
+                f"total time: {non_tensor_total_time:.8f}s, "
+                f"get_batch time: {non_tensor_get_batch_time:.8f}s ({non_tensor_get_batch_time/non_tensor_total_time*100:.1f}%), "
+                f"pickle time: {non_tensor_pickle_time:.8f}s ({non_tensor_pickle_time/non_tensor_total_time*100:.1f}%)"
+            )
         
+        get_method_end_time = time.time()
+        get_method_total_time = get_method_end_time - get_method_start_time
+        logger.warning(
+            f"MooncakeStorageClient: get() method total time: {get_method_total_time:.8f}s, "
+            f"classify time: {classify_time:.8f}s ({classify_time/get_method_total_time*100:.1f}%)"
+        )
         logger.debug(f"MooncakeStorageClient: Successfully got all {total_items} items")
         return final_results
     

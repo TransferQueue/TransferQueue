@@ -498,13 +498,37 @@ class KVStorageManager(TransferQueueStorageManager):
         Fetches tensors using the provided metadata, reconstructs them with the
         correct shapes and dtypes, and merge them as a TensorDict according to metadata.
         """
+        get_data_start_time = time.time()
+        
         if not metadata.field_names:
             logger.warning("Attempted to get data, but metadata contains no fields.")
             return TensorDict({}, batch_size=len(metadata))
+        
+        generate_keys_start = time.time()
         keys = self._generate_keys(metadata.field_names, metadata.global_indexes)
+        generate_keys_time = time.time() - generate_keys_start
+        
+        get_shape_type_start = time.time()
         shapes, dtypes = self._get_shape_type_list(metadata)
+        get_shape_type_time = time.time() - get_shape_type_start
+        
+        storage_get_start = time.time()
         values = self.storage_client.get(keys=keys, shapes=shapes, dtypes=dtypes)
-        return self._merge_tensors_to_tensordict(metadata, values)
+        storage_get_time = time.time() - storage_get_start
+        
+        merge_start = time.time()
+        result = self._merge_tensors_to_tensordict(metadata, values)
+        merge_time = time.time() - merge_start
+        
+        get_data_total_time = time.time() - get_data_start_time
+        logger.warning(
+            f"KVStorageManager.get_data() total time: {get_data_total_time:.8f}s, "
+            f"generate_keys: {generate_keys_time:.8f}s ({generate_keys_time/get_data_total_time*100:.1f}%), "
+            f"get_shape_type: {get_shape_type_time:.8f}s ({get_shape_type_time/get_data_total_time*100:.1f}%), "
+            f"storage_client.get: {storage_get_time:.8f}s ({storage_get_time/get_data_total_time*100:.1f}%), "
+            f"merge_tensors: {merge_time:.8f}s ({merge_time/get_data_total_time*100:.1f}%)"
+        )
+        return result
 
     async def clear_data(self, metadata: BatchMeta) -> None:
         """Remove stored data associated with the given metadata."""
