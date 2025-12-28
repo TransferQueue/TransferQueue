@@ -240,9 +240,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     ) -> list[Tensor]:
         tensors = [None] * len(keys)
         
-            total_get_batch_time = 0.0
+        total_get_batch_time = 0.0
         total_frombuffer_time = 0.0
-            total_get_batch_bytes = 0
+        total_get_batch_bytes = 0
             
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
