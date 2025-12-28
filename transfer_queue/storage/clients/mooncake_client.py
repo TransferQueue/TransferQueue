@@ -243,10 +243,24 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         dtype_element_sizes = {}
         
         # First pass: validate and group by dtype for batch processing
+        # Note: This phase is necessary because:
+        # 1. Need to validate raw_data integrity (safety check)
+        # 2. Need to extract tensor_data (remove 24-byte metadata header)
+        # 3. Need to group by dtype for batch processing optimization
         dtype_groups = {}
         empty_tensors = {}
         
-        # Statistics for optimization analysis
+        # Optimization: Check if batch has single dtype (common case)
+        # If all dtypes are the same, we can optimize grouping
+        unique_dtypes = set(batch_dtypes)
+        single_dtype = len(unique_dtypes) == 1
+        
+        # Optimization: Check if batch has single shape (common case)
+        # If all shapes are the same, we can optimize processing
+        unique_shapes = set(tuple(s) if s else tuple() for s in batch_shapes)
+        single_shape = len(unique_shapes) == 1
+        
+        # Statistics for optimization analysis (only collect if needed for debugging)
         shape_counter = {}  # Count occurrences of each shape
         one_d_tensors = 0  # Count 1D tensors that can skip view
         skip_view_count = 0  # Count tensors that can skip view (1D with matching num_elements)
@@ -259,6 +273,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         for idx, raw_data, shape, dtype in zip(
             batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
         ):
+            # Essential validation: check raw_data integrity
             if not raw_data:
                 failed_count += 1
                 break
@@ -267,8 +282,10 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 failed_count += 1
                 break
             
-            tensor_data = raw_data[metadata_size:]
-            if not tensor_data:
+            # Essential: extract tensor_data (remove metadata header)
+            # This is unavoidable - we must slice to get tensor data
+            tensor_data_len = len(raw_data) - metadata_size
+            if tensor_data_len <= 0:
                 if shape and 0 in shape:
                     empty_tensors[idx] = torch.empty(shape, dtype=dtype)
                 else:
@@ -276,11 +293,11 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     break
                 continue
             
-            # Cache element_size calculation per dtype
+            # Essential: calculate num_elements for validation
             if dtype not in dtype_element_sizes:
                 dtype_element_sizes[dtype] = torch.tensor(0, dtype=dtype).element_size()
             element_size = dtype_element_sizes[dtype]
-            num_elements = len(tensor_data) // element_size
+            num_elements = tensor_data_len // element_size
             
             if num_elements == 0:
                 if shape and 0 in shape:
@@ -290,7 +307,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     break
                 continue
             
-            # Statistics: count shape occurrences
+            # Statistics: count shape occurrences (for optimization analysis)
             shape_tuple = tuple(shape) if shape else tuple()
             shape_counter[shape_tuple] = shape_counter.get(shape_tuple, 0) + 1
             
@@ -310,10 +327,11 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 if shape[0] == num_elements:
                     skip_view_count += 1
             
-            # Group by dtype for batch processing
+            # Essential: Group by dtype for batch processing
+            # Store raw_data and offset to avoid copying bytes (will slice later when needed)
             if dtype not in dtype_groups:
                 dtype_groups[dtype] = []
-            dtype_groups[dtype].append((idx, tensor_data, shape, num_elements, is_1d and shape[0] == num_elements))
+            dtype_groups[dtype].append((idx, raw_data, metadata_size, tensor_data_len, shape, num_elements, is_1d and shape[0] == num_elements))
         
         validate_group_time = time.time() - validate_group_start
         
@@ -372,7 +390,10 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 
                 # Batch process all tensors of the same dtype
                 # Since shape is identical, we can skip shape checks and view operations
-                for idx, tensor_data, shape, num_elements, can_skip_view in items:
+                for idx, raw_data, metadata_offset, tensor_data_len, shape, num_elements, can_skip_view in items:
+                    # Slice tensor_data only when needed (lazy slicing)
+                    tensor_data = raw_data[metadata_offset:]
+                    
                     # Performance monitoring: torch.frombuffer time
                     frombuffer_start = time.time()
                     tensor = torch.frombuffer(tensor_data, dtype=dtype)
@@ -381,7 +402,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     # Performance monitoring: slice time
                     # Since shape is identical, expected_size is the same for all tensors of this dtype
                     # Only check length once, no need to recalculate expected_size
-                    if len(tensor_data) != common_expected_size:
+                    if tensor_data_len != common_expected_size:
                         slice_start = time.time()
                         tensor = tensor[:num_elements]
                         slice_time += time.time() - slice_start
@@ -394,7 +415,10 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             for dtype, items in dtype_groups.items():
                 element_size = dtype_element_sizes[dtype]
                 # Process all tensors of the same dtype together
-                for idx, tensor_data, shape, num_elements, can_skip_view in items:
+                for idx, raw_data, metadata_offset, tensor_data_len, shape, num_elements, can_skip_view in items:
+                    # Slice tensor_data only when needed (lazy slicing)
+                    tensor_data = raw_data[metadata_offset:]
+                    
                     # Performance monitoring: torch.frombuffer time
                     frombuffer_start = time.time()
                     tensor = torch.frombuffer(tensor_data, dtype=dtype)
@@ -402,7 +426,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     
                     # Performance monitoring: slice time
                     expected_size = num_elements * element_size
-                    if len(tensor_data) != expected_size:
+                    if tensor_data_len != expected_size:
                         slice_start = time.time()
                         tensor = tensor[:num_elements]
                         slice_time += time.time() - slice_start
