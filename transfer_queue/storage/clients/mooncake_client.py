@@ -240,9 +240,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     break
                 continue
             
-            tensor_bytes = bytearray(tensor_data)
             element_size = torch.tensor(0, dtype=dtype).element_size()
-            num_elements = len(tensor_bytes) // element_size
+            num_elements = len(tensor_data) // element_size
             
             if num_elements == 0:
                 if shape and 0 in shape:
@@ -252,10 +251,11 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     break
                 continue
             
-            tensor_uint8 = torch.frombuffer(tensor_bytes, dtype=torch.uint8)
-            tensor = tensor_uint8[:num_elements * element_size].view(dtype)
+            tensor = torch.frombuffer(tensor_data, dtype=dtype)
             if shape:
-                tensor = tensor.view(shape)
+                tensor = tensor[:num_elements].view(shape)
+            else:
+                tensor = tensor[:num_elements]
             batch_results[idx] = tensor
         
         tensor_convert_time = time.time() - tensor_convert_start
