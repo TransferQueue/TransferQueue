@@ -709,9 +709,20 @@ def run_benchmark(args):
         test_duration_seconds = args.duration
         value_size_bytes = args.value_size
         
+        if value_size_bytes <= 0:
+            print(f"ERROR: Invalid value_size: {value_size_bytes}")
+            store.close()
+            return 1
+        
         # Calculate minimum data size needed: throughput * duration * 1.5 (safety margin)
         min_data_size_bytes = expected_get_throughput_gbps * (1024**3) * test_duration_seconds * 1.5
         min_keys_needed = int(min_data_size_bytes / value_size_bytes)
+        
+        # Cap min_keys_needed to avoid excessive memory usage (max 10M keys)
+        max_keys_limit = 10 * 1000 * 1000
+        if min_keys_needed > max_keys_limit:
+            print(f"  WARNING: Calculated min_keys_needed ({min_keys_needed}) exceeds limit ({max_keys_limit}), capping to limit")
+            min_keys_needed = max_keys_limit
         
         # Use the larger of num_keys and calculated minimum
         actual_num_keys = max(num_keys, min_keys_needed)
@@ -721,46 +732,47 @@ def run_benchmark(args):
             print(f"  Expected data size: {actual_num_keys * value_size_bytes / (1024**3):.2f} GB")
         
         # Use value pool to avoid repeated random data generation overhead
+        # Limit pool_size to avoid excessive memory usage, reuse values from pool
         value_pool = []
-        pool_size = max(actual_num_keys, 10)
+        pool_size = min(max(actual_num_keys, 10), 1000)  # Cap at 1000 to avoid excessive memory
+        print(f"  Generating value pool of size {pool_size}...")
         for i in range(pool_size):
             value_pool.append(generate_random_data_fast(args.value_size))
+        print(f"  Value pool generated, starting pre-population...")
         
         # Use batch API for better performance
         batch_size = max(args.batch_size, 16)  # Use at least 16 for batch operations
-        all_keys = []
-        all_values = []
+        total_keys = args.threads * actual_num_keys
         
-        for i in range(args.threads):
-            for j in range(actual_num_keys):
-                key = f"{key_prefix}_t{i}_k{j}"
-                value = value_pool[j % pool_size]
-                all_keys.append(key)
-                all_values.append(value)
-        
-        # Pre-populate in batches
-        total_keys = len(all_keys)
+        # Pre-populate in batches without storing all keys/values in memory
         batch_count = 0
-        for batch_start in range(0, total_keys, batch_size):
-            batch_end = min(batch_start + batch_size, total_keys)
-            batch_keys = all_keys[batch_start:batch_end]
-            batch_values = all_values[batch_start:batch_end]
-            
-            ret = store.put_batch(batch_keys, batch_values)
-            if ret == 0:
-                prepopulate_keys.extend(batch_keys)
-                batch_count += 1
-                if batch_count % 10 == 0 or batch_count == 1:
-                    print(f"Pre-populated batch {batch_count} ({len(prepopulate_keys)}/{total_keys} keys)")
-            else:
-                print(f"Failed to prepopulate batch {batch_count + 1}, error: {ret}")
-                # Try individual puts for failed batch
-                for key, value in zip(batch_keys, batch_values):
-                    ret = store.put(key, value)
-                    if ret == 0:
-                        prepopulate_keys.append(key)
-                    else:
-                        print(f"Failed to prepopulate key {key}, error: {ret}")
+        for i in range(args.threads):
+            for j_start in range(0, actual_num_keys, batch_size):
+                j_end = min(j_start + batch_size, actual_num_keys)
+                batch_keys = []
+                batch_values = []
+                
+                for j in range(j_start, j_end):
+                    key = f"{key_prefix}_t{i}_k{j}"
+                    value = value_pool[j % pool_size]
+                    batch_keys.append(key)
+                    batch_values.append(value)
+                
+                ret = store.put_batch(batch_keys, batch_values)
+                if ret == 0:
+                    prepopulate_keys.extend(batch_keys)
+                    batch_count += 1
+                    if batch_count % 100 == 0 or batch_count == 1:
+                        print(f"Pre-populated batch {batch_count} ({len(prepopulate_keys)}/{total_keys} keys)")
+                else:
+                    print(f"Failed to prepopulate batch {batch_count + 1}, error: {ret}")
+                    # Try individual puts for failed batch
+                    for key, value in zip(batch_keys, batch_values):
+                        ret = store.put(key, value)
+                        if ret == 0:
+                            prepopulate_keys.append(key)
+                        else:
+                            print(f"Failed to prepopulate key {key}, error: {ret}")
         
         print(f"Pre-populated {len(prepopulate_keys)} keys")
         print(f"Starting GET benchmark...")
