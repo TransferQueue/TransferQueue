@@ -693,15 +693,41 @@ def run_benchmark(args):
         for i in range(pool_size):
             value_pool.append(generate_random_data_fast(args.value_size))
         
+        # Use batch API for better performance
+        batch_size = max(args.batch_size, 16)  # Use at least 16 for batch operations
+        all_keys = []
+        all_values = []
+        
         for i in range(args.threads):
             for j in range(num_keys):
                 key = f"{key_prefix}_t{i}_k{j}"
                 value = value_pool[j % pool_size]
-                ret = store.put(key, value)
-                if ret == 0:
-                    prepopulate_keys.append(key)
-                else:
-                    print(f"Failed to prepopulate key {key}, error: {ret}")
+                all_keys.append(key)
+                all_values.append(value)
+        
+        # Pre-populate in batches
+        total_keys = len(all_keys)
+        batch_count = 0
+        for batch_start in range(0, total_keys, batch_size):
+            batch_end = min(batch_start + batch_size, total_keys)
+            batch_keys = all_keys[batch_start:batch_end]
+            batch_values = all_values[batch_start:batch_end]
+            
+            ret = store.put_batch(batch_keys, batch_values)
+            if ret == 0:
+                prepopulate_keys.extend(batch_keys)
+                batch_count += 1
+                if batch_count % 10 == 0 or batch_count == 1:
+                    print(f"Pre-populated batch {batch_count} ({len(prepopulate_keys)}/{total_keys} keys)")
+            else:
+                print(f"Failed to prepopulate batch {batch_count + 1}, error: {ret}")
+                # Try individual puts for failed batch
+                for key, value in zip(batch_keys, batch_values):
+                    ret = store.put(key, value)
+                    if ret == 0:
+                        prepopulate_keys.append(key)
+                    else:
+                        print(f"Failed to prepopulate key {key}, error: {ret}")
         
         print(f"Pre-populated {len(prepopulate_keys)} keys")
         print(f"Starting GET benchmark...")
