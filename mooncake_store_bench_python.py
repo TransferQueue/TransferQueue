@@ -327,16 +327,26 @@ def worker_get_verify(store, thread_id, key_prefix, value_size, num_keys, batch_
     operation_count = 0
     bytes_transferred = 0
     verification_errors = 0
-    key_counter = 0
+    
+    # Get all keys for this thread from verification_data
+    thread_keys = [key for key in verification_data.keys() if key.startswith(f"{key_prefix}_t{thread_id}_")]
+    if not thread_keys:
+        print(f"Thread {thread_id}: No keys found in verification_data for this thread")
+        return 0
+    
+    key_index = 0
     
     while running:
         try:
             batch_keys = []
             
+            # Read keys from verification_data in order
             for j in range(batch_size):
-                key = f"{key_prefix}_t{thread_id}_k{key_counter % num_keys}"
-                batch_keys.append(key)
-                key_counter += 1
+                if key_index >= len(thread_keys):
+                    # Wrap around to read all keys multiple times
+                    key_index = 0
+                batch_keys.append(thread_keys[key_index])
+                key_index += 1
             
             if not batch_keys:
                 break
