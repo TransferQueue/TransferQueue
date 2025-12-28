@@ -45,6 +45,8 @@ TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_M
 
 TQ_SLEEP = int(os.environ.get("TQ_SLEEP", 5))  # seconds
 
+from transfer_queue.utils.utils import get_env_bool
+TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False)
 
 @TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager")
 class AsyncSimpleStorageManager(TransferQueueStorageManager):
@@ -288,18 +290,15 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         Send data to a specific storage unit.
         """
 
-        tensordict_data = TensorDict(
-            {
-                field: (
-                    torch.nested.as_nested_tensor(storage_data[field])
-                    if storage_data[field] and all(isinstance(x, torch.Tensor) for x in storage_data[field])
-                    else NonTensorStack(*storage_data[field])
-                )
-                for field in storage_data.keys()
-            },
-            batch_size=len(local_indexes),
-        )
 
+
+        tensordict_data = storage_data
+
+        print(
+            f"put from single_controller进程完成传输前的copy。请export TQ_SLEEP=30，"
+            f"以便在命令行vmmap"
+        )
+        await asyncio.sleep(TQ_SLEEP)
         import os
 
         pid = os.getpid()
@@ -581,6 +580,10 @@ def _filter_storage_data(storage_meta_group: StorageMetaGroup, data: TensorDict)
         if not isinstance(result, tuple):
             result = (result,)
         results[fname] = list(result)
+
+        if not TQ_ZERO_COPY_SERIALIZATION:
+            # 只在关闭zero copy时clone tensor，避免pickle的时候将整个内存空间传输过去
+            results[fname] = [item.clone() if isinstance(item, torch.Tensor) else item for item in results[fname]]
 
     return results
 

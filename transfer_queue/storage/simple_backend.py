@@ -44,6 +44,9 @@ if not logger.hasHandlers():
 TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
 TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 8))
 
+from transfer_queue.utils.utils import get_env_bool
+TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False)
+
 import time
 
 
@@ -112,23 +115,20 @@ class StorageUnitData:
                 # The unsqueeze op make the shape from n to (1, n)
                 gathered_item = self.field_data[field][local_indexes[0]]
                 if not isinstance(gathered_item, torch.Tensor):
-                    result[field] = NonTensorStack(gathered_item)
+                    result[field] = gathered_item
                 else:
                     result[field] = gathered_item.unsqueeze(0)
             else:
                 gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
 
                 if gathered_items:
-                    all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
-                    if all_tensors:
-                        result[field] = torch.nested.as_nested_tensor(gathered_items)
-                    else:
-                        result[field] = NonTensorStack(*gathered_items)
+                    result[field] = gathered_items
+
 
         # Explicit batch size for stability
         batch_size = 0 if not fields or not local_indexes else len(local_indexes)
 
-        data_to_return = TensorDict(result, batch_size=batch_size)
+        data_to_return = result
 
         output_file = os.path.expanduser(f"~/vmmap_{uuid}_StorageUnitData在get之后.txt")
         with open(output_file, "w", encoding="utf-8") as f:
@@ -151,7 +151,7 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        extracted_data = field_data.to_dict()
+        extracted_data = field_data
 
         for f, values in extracted_data.items():
             if f not in self.field_data:
@@ -164,8 +164,8 @@ class StorageUnitData:
                         f"storage_size: {self.storage_size}"
                     )
 
-                if isinstance(values[i], torch.Tensor):
-                    self.field_data[f][idx] = values[i]  # .clone()
+                if not TQ_ZERO_COPY_SERIALIZATION and isinstance(values[i], torch.Tensor):
+                    self.field_data[f][idx] = values[i].clone()
                 else:
                     self.field_data[f][idx] = values[i]
 
