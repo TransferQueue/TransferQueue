@@ -2,6 +2,7 @@ import logging
 import os
 import pickle
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import torch
@@ -193,6 +194,91 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         
         logger.debug(f"MooncakeStorageClient: Successfully put all {total_items} items")
 
+    def _process_tensor_batch(self, batch_info):
+        """Process a single batch of tensors. Used for parallel batch processing."""
+        batch_idx, batch_indices, batch_keys, batch_shapes, batch_dtypes, keys = batch_info
+        metadata_size = 24
+        
+        # Get batch data
+        get_batch_start = time.time()
+        raw_data_list = self._store.get_batch(batch_keys)
+        get_batch_time = time.time() - get_batch_start
+        
+        # Check if batch size needs to be reduced
+        if len(raw_data_list) != len(batch_keys):
+            return {
+                'batch_idx': batch_idx,
+                'success': False,
+                'needs_retry': True,
+                'get_batch_time': get_batch_time,
+                'tensor_convert_time': 0.0,
+                'results': None
+            }
+        
+        # Convert tensors
+        tensor_convert_start = time.time()
+        batch_results = {}
+        failed_count = 0
+        
+        for idx, raw_data, shape, dtype in zip(
+            batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
+        ):
+            if not raw_data:
+                failed_count += 1
+                break
+            
+            if len(raw_data) < metadata_size:
+                failed_count += 1
+                break
+            
+            tensor_data = raw_data[metadata_size:]
+            if not tensor_data:
+                if shape and 0 in shape:
+                    batch_results[idx] = torch.empty(shape, dtype=dtype)
+                else:
+                    failed_count += 1
+                    break
+                continue
+            
+            tensor_bytes = bytearray(tensor_data)
+            element_size = torch.tensor(0, dtype=dtype).element_size()
+            num_elements = len(tensor_bytes) // element_size
+            
+            if num_elements == 0:
+                if shape and 0 in shape:
+                    batch_results[idx] = torch.empty(shape, dtype=dtype)
+                else:
+                    failed_count += 1
+                    break
+                continue
+            
+            tensor_uint8 = torch.frombuffer(tensor_bytes, dtype=torch.uint8)
+            tensor = tensor_uint8[:num_elements * element_size].view(dtype)
+            if shape:
+                tensor = tensor.view(shape)
+            batch_results[idx] = tensor
+        
+        tensor_convert_time = time.time() - tensor_convert_start
+        
+        if failed_count > 0:
+            return {
+                'batch_idx': batch_idx,
+                'success': False,
+                'needs_retry': True,
+                'get_batch_time': get_batch_time,
+                'tensor_convert_time': tensor_convert_time,
+                'results': None
+            }
+        
+        return {
+            'batch_idx': batch_idx,
+            'success': True,
+            'needs_retry': False,
+            'get_batch_time': get_batch_time,
+            'tensor_convert_time': tensor_convert_time,
+            'results': batch_results
+        }
+
     def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Any]:
         get_method_start_time = time.time()
         if shapes is None or dtypes is None:
@@ -220,115 +306,121 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         if tensor_indices:
             get_start_time = time.time()
             batch_size = initial_batch_size
-            i = 0
             total_get_batch_time = 0.0
             total_tensor_convert_time = 0.0
+            
+            # Prepare all batches
+            batches = []
+            i = 0
+            batch_idx = 0
             while i < len(tensor_indices):
                 batch_indices = tensor_indices[i:i + batch_size]
                 batch_keys = [keys[j] for j in batch_indices]
                 batch_shapes = [shapes[j] for j in batch_indices]
                 batch_dtypes = [dtypes[j] for j in batch_indices]
-                
-                get_batch_start = time.time()
-                raw_data_list = self._store.get_batch(batch_keys)
-                get_batch_time = time.time() - get_batch_start
-                total_get_batch_time += get_batch_time
-                if len(raw_data_list) != len(batch_keys):
-                    if batch_size > 1:
-                        new_batch_size = max(1, batch_size // 2)
-                        logger.warning(
-                            f"get_batch returned {len(raw_data_list)} items, expected {len(batch_keys)}, "
-                            f"reducing batch size from {batch_size} to {new_batch_size}"
-                        )
-                        batch_size = new_batch_size
-                        continue
-                    else:
-                        raise RuntimeError(
-                            f"get_batch returned {len(raw_data_list)} items, expected {len(batch_keys)} "
-                            f"for batch starting at index {i}"
-                        )
-                
-                import numpy as np
-                metadata_size = 24
-                failed_count = 0
-                
-                tensor_convert_start = time.time()
-                for idx, raw_data, shape, dtype in zip(
-                    batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
-                ):
-                    if not raw_data:
-                        failed_count += 1
-                        if batch_size > 1:
-                            break
-                        else:
-                            raise RuntimeError(f"get_batch failed for key '{keys[idx]}': empty data")
-                    
-                    if len(raw_data) < metadata_size:
-                        failed_count += 1
-                        if batch_size > 1:
-                            break
-                        else:
-                            raise RuntimeError(
-                                f"get_batch returned insufficient data for key '{keys[idx]}': "
-                                f"got {len(raw_data)} bytes, expected at least {metadata_size} bytes"
-                            )
-                    
-                    tensor_data = raw_data[metadata_size:]
-                    if not tensor_data:
-                        if shape and 0 in shape:
-                            final_results[idx] = torch.empty(shape, dtype=dtype)
-                        else:
-                            failed_count += 1
-                            if batch_size > 1:
-                                break
-                            else:
-                                raise RuntimeError(f"get_batch returned empty tensor data for key '{keys[idx]}'")
-                        continue
-                    
-                    tensor_bytes = bytearray(tensor_data)
-                    element_size = torch.tensor(0, dtype=dtype).element_size()
-                    num_elements = len(tensor_bytes) // element_size
-                    
-                    if num_elements == 0:
-                        if shape and 0 in shape:
-                            final_results[idx] = torch.empty(shape, dtype=dtype)
-                        else:
-                            failed_count += 1
-                            if batch_size > 1:
-                                break
-                            else:
-                                raise RuntimeError(f"get_batch returned insufficient tensor data for key '{keys[idx]}'")
-                        continue
-                    
-                    tensor_uint8 = torch.frombuffer(tensor_bytes, dtype=torch.uint8)
-                    tensor = tensor_uint8[:num_elements * element_size].view(dtype)
-                    if shape:
-                        tensor = tensor.view(shape)
-                    final_results[idx] = tensor
-                tensor_convert_time = time.time() - tensor_convert_start
-                total_tensor_convert_time += tensor_convert_time
-                
-                if failed_count > 0 and batch_size > 1:
-                    new_batch_size = max(1, batch_size // 2)
-                    logger.warning(
-                        f"get_batch failed for {failed_count} items due to buffer allocation, "
-                        f"reducing batch size from {batch_size} to {new_batch_size}"
-                    )
-                    batch_size = new_batch_size
-                    continue
-                
+                batches.append((batch_idx, batch_indices, batch_keys, batch_shapes, batch_dtypes, keys))
                 i += batch_size
-                if i % (initial_batch_size * 10) == 0 or i >= len(tensor_indices):
-                    logger.debug(
-                        f"MooncakeStorageClient: Got {min(i, len(tensor_indices))}/{len(tensor_indices)} tensors "
-                        f"via get_batch API"
-                    )
+                batch_idx += 1
+            
+            # Process batches in parallel with adaptive retry
+            max_workers = min(8, len(batches))  # Limit concurrent batches
+            retry_batches = []
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all batches
+                future_to_batch = {
+                    executor.submit(self._process_tensor_batch, batch_info): batch_info
+                    for batch_info in batches
+                }
+                
+                # Collect results
+                for future in as_completed(future_to_batch):
+                    batch_info = future_to_batch[future]
+                    try:
+                        result = future.result()
+                        if result['success']:
+                            # Update final_results
+                            if result['results']:
+                                for idx, tensor in result['results'].items():
+                                    final_results[idx] = tensor
+                            total_get_batch_time += result['get_batch_time']
+                            total_tensor_convert_time += result['tensor_convert_time']
+                        else:
+                            # Need retry with smaller batch size
+                            retry_batches.append(batch_info)
+                    except Exception as e:
+                        logger.error(f"Error processing batch {batch_info[0]}: {e}")
+                        retry_batches.append(batch_info)
+            
+            # Retry failed batches with smaller batch size
+            retry_batch_size = batch_size
+            while retry_batches:
+                retry_batch_size = max(1, retry_batch_size // 2)
+                if retry_batch_size == 1:
+                    # Last resort: process sequentially
+                    for batch_info in retry_batches:
+                        result = self._process_tensor_batch(batch_info)
+                        if result['success']:
+                            if result['results']:
+                                for idx, tensor in result['results'].items():
+                                    final_results[idx] = tensor
+                            total_get_batch_time += result['get_batch_time']
+                            total_tensor_convert_time += result['tensor_convert_time']
+                        else:
+                            raise RuntimeError(f"Failed to process batch {batch_info[0]} even with batch_size=1")
+                    break
+                
+                logger.warning(
+                    f"Retrying {len(retry_batches)} batches with reduced batch_size={retry_batch_size}"
+                )
+                
+                # Split retry batches into smaller batches
+                new_retry_batches = []
+                for batch_info in retry_batches:
+                    batch_idx, batch_indices, batch_keys, batch_shapes, batch_dtypes, keys = batch_info
+                    # Split into smaller batches
+                    for j in range(0, len(batch_indices), retry_batch_size):
+                        sub_batch_indices = batch_indices[j:j + retry_batch_size]
+                        sub_batch_keys = [keys[idx] for idx in sub_batch_indices]
+                        sub_batch_shapes = [shapes[idx] for idx in sub_batch_indices]
+                        sub_batch_dtypes = [dtypes[idx] for idx in sub_batch_indices]
+                        new_retry_batches.append((
+                            batch_idx * 1000 + j,  # Unique batch idx
+                            sub_batch_indices,
+                            sub_batch_keys,
+                            sub_batch_shapes,
+                            sub_batch_dtypes,
+                            keys
+                        ))
+                
+                retry_batches = []
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_batch = {
+                        executor.submit(self._process_tensor_batch, batch_info): batch_info
+                        for batch_info in new_retry_batches
+                    }
+                    
+                    for future in as_completed(future_to_batch):
+                        batch_info = future_to_batch[future]
+                        try:
+                            result = future.result()
+                            if result['success']:
+                                if result['results']:
+                                    for idx, tensor in result['results'].items():
+                                        final_results[idx] = tensor
+                                total_get_batch_time += result['get_batch_time']
+                                total_tensor_convert_time += result['tensor_convert_time']
+                            else:
+                                retry_batches.append(batch_info)
+                        except Exception as e:
+                            logger.error(f"Error processing retry batch {batch_info[0]}: {e}")
+                            retry_batches.append(batch_info)
             
             get_end_time = time.time()
             get_elapsed = get_end_time - get_start_time
             logger.warning(
                 f"MooncakeStorageClient: Got {len(tensor_indices)} tensors "
-                f"via get_batch, total time: {get_elapsed:.8f}s, "
+                f"via get_batch (parallel), total time: {get_elapsed:.8f}s, "
                 f"get_batch time: {total_get_batch_time:.8f}s ({total_get_batch_time/get_elapsed*100:.1f}%), "
                 f"tensor convert time: {total_tensor_convert_time:.8f}s ({total_tensor_convert_time/get_elapsed*100:.1f}%)"
             )
