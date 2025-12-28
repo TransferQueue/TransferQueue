@@ -215,15 +215,21 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         final_results = [None] * len(keys)
         
         if tensor_indices:
+            get_start_time = time.time()
             batch_size = initial_batch_size
             i = 0
+            total_get_batch_time = 0.0
+            total_tensor_convert_time = 0.0
             while i < len(tensor_indices):
                 batch_indices = tensor_indices[i:i + batch_size]
                 batch_keys = [keys[j] for j in batch_indices]
                 batch_shapes = [shapes[j] for j in batch_indices]
                 batch_dtypes = [dtypes[j] for j in batch_indices]
                 
+                get_batch_start = time.time()
                 raw_data_list = self._store.get_batch(batch_keys)
+                get_batch_time = time.time() - get_batch_start
+                total_get_batch_time += get_batch_time
                 if len(raw_data_list) != len(batch_keys):
                     if batch_size > 1:
                         new_batch_size = max(1, batch_size // 2)
@@ -243,6 +249,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 metadata_size = 24
                 failed_count = 0
                 
+                tensor_convert_start = time.time()
                 for idx, raw_data, shape, dtype in zip(
                     batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
                 ):
@@ -264,12 +271,39 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             )
                     
                     tensor_data = raw_data[metadata_size:]
-                    np_dtype = self._dtype_to_numpy(dtype)
-                    tensor_array = np.frombuffer(tensor_data, dtype=np_dtype)
+                    if not tensor_data:
+                        if shape and 0 in shape:
+                            final_results[idx] = torch.empty(shape, dtype=dtype)
+                        else:
+                            failed_count += 1
+                            if batch_size > 1:
+                                break
+                            else:
+                                raise RuntimeError(f"get_batch returned empty tensor data for key '{keys[idx]}'")
+                        continue
+                    
+                    tensor_bytes = bytearray(tensor_data)
+                    element_size = torch.tensor(0, dtype=dtype).element_size()
+                    num_elements = len(tensor_bytes) // element_size
+                    
+                    if num_elements == 0:
+                        if shape and 0 in shape:
+                            final_results[idx] = torch.empty(shape, dtype=dtype)
+                        else:
+                            failed_count += 1
+                            if batch_size > 1:
+                                break
+                            else:
+                                raise RuntimeError(f"get_batch returned insufficient tensor data for key '{keys[idx]}'")
+                        continue
+                    
+                    tensor_uint8 = torch.frombuffer(tensor_bytes, dtype=torch.uint8)
+                    tensor = tensor_uint8[:num_elements * element_size].view(dtype)
                     if shape:
-                        tensor_array = tensor_array.reshape(shape)
-                    tensor = torch.from_numpy(tensor_array).clone()
+                        tensor = tensor.view(shape)
                     final_results[idx] = tensor
+                tensor_convert_time = time.time() - tensor_convert_start
+                total_tensor_convert_time += tensor_convert_time
                 
                 if failed_count > 0 and batch_size > 1:
                     new_batch_size = max(1, batch_size // 2)
@@ -287,9 +321,13 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                         f"via get_batch API"
                     )
             
-            logger.debug(
+            get_end_time = time.time()
+            get_elapsed = get_end_time - get_start_time
+            logger.info(
                 f"MooncakeStorageClient: Got {len(tensor_indices)} tensors "
-                f"via get_batch"
+                f"via get_batch, total time: {get_elapsed:.8f}s, "
+                f"get_batch time: {total_get_batch_time:.8f}s ({total_get_batch_time/get_elapsed*100:.1f}%), "
+                f"tensor convert time: {total_tensor_convert_time:.8f}s ({total_tensor_convert_time/get_elapsed*100:.1f}%)"
             )
         
         if non_tensor_indices:
