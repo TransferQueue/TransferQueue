@@ -617,7 +617,6 @@ def run_benchmark(args):
             print(f"  Duration: {args.verify_duration} seconds")
             
             # Reset counters for GET verification
-            global total_operations, total_bytes, total_failed_operations
             total_operations = 0
             total_bytes = 0
             total_failed_operations = 0
