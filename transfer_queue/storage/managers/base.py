@@ -430,11 +430,16 @@ class KVStorageManager(TransferQueueStorageManager):
         extracts per-sample dtype and shape information, and sends a notification
         to the controller that new data is available.
         """
+        put_data_start = time.time()
+        
         if not metadata.field_names:
             logger.warning("Attempted to put data, but metadata contains no fields.")
             return
+        
+        generate_start = time.time()
         keys = self._generate_keys(data.keys(), metadata.global_indexes)
         values = self._generate_values(data)
+        generate_time = time.time() - generate_start
         
         logger.info(
             f"[{self.storage_manager_id}]: Starting put operation: "
@@ -442,11 +447,14 @@ class KVStorageManager(TransferQueueStorageManager):
             f"{len(metadata.global_indexes)} samples"
         )
         
+        client_put_start = time.time()
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self.storage_client.put, keys, values)
+        client_put_time = time.time() - client_put_start
         
         logger.info(f"[{self.storage_manager_id}]: Put operation completed")
 
+        extract_start = time.time()
         per_field_dtypes = {}
         per_field_shapes = {}
 
@@ -483,15 +491,31 @@ class KVStorageManager(TransferQueueStorageManager):
                 per_field_shapes[global_idx][field_name] = (
                     getattr(data_item, "shape", None) if isinstance(data_item, Tensor) else None
                 )
+        extract_time = time.time() - extract_start
 
         # Get current data partition id
         # Note: Currently we only support putting to & getting data from a single data partition simultaneously,
         # but in the future we may support putting to & getting data from multiple data partitions concurrently.
         partition_id = metadata.samples[0].partition_id
         # notify controller that new data is ready
+        notify_start = time.time()
         await self.notify_data_update(
             partition_id, list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes
         )
+        notify_time = time.time() - notify_start
+        
+        total_time = time.time() - put_data_start
+        
+        logger.warning("=" * 80)
+        logger.warning("KVStorageManager: put_data() Time Breakdown")
+        logger.warning("=" * 80)
+        logger.warning(f"Total time: {total_time:.4f}s")
+        logger.warning("Time Breakdown:")
+        logger.warning(f"  ├─ Generate keys/values:  {generate_time:8.4f}s ({generate_time/total_time*100:5.1f}%)")
+        logger.warning(f"  ├─ Storage client.put:    {client_put_time:8.4f}s ({client_put_time/total_time*100:5.1f}%)")
+        logger.warning(f"  ├─ Extract dtype/shape:   {extract_time:8.4f}s ({extract_time/total_time*100:5.1f}%)")
+        logger.warning(f"  └─ Notify controller:     {notify_time:8.4f}s ({notify_time/total_time*100:5.1f}%)")
+        logger.warning("=" * 80)
 
     async def get_data(self, metadata: BatchMeta) -> TensorDict:
         """
