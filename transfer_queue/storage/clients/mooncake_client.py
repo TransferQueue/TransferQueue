@@ -18,7 +18,7 @@ try:
 except ImportError:
     MOONCAKE_STORE_IMPORTED = False
 
-BATCH_SIZE_LIMIT: int = 200
+BATCH_SIZE_LIMIT: int = 500
 
 
 @StorageClientFactory.register("MooncakeStorageClient")
@@ -144,7 +144,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     ) -> list[Tensor]:
         import numpy as np
         
-        tensors = []
         all_bytes = []
         
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
@@ -168,13 +167,18 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             torch.bfloat16: np.int16,
         }
 
-        for raw_bytes, shape, dtype in zip(all_bytes, shapes, dtypes, strict=True):
+        tensors = [None] * len(keys)
+        for i, (raw_bytes, shape, dtype) in enumerate(zip(all_bytes, shapes, dtypes, strict=True)):
             np_dtype = dtype_map.get(dtype, np.float32)
-            arr = np.frombuffer(raw_bytes, dtype=np_dtype).reshape(shape)
-            tensor = torch.from_numpy(arr.copy())
+            arr = np.frombuffer(raw_bytes, dtype=np_dtype)
             if dtype == torch.bfloat16:
+                tensor = torch.empty(shape, dtype=torch.int16)
+                tensor.view(-1).copy_(torch.from_numpy(arr))
                 tensor = tensor.view(torch.bfloat16)
-            tensors.append(tensor)
+            else:
+                tensor = torch.empty(shape, dtype=dtype)
+                tensor.view(-1).copy_(torch.from_numpy(arr))
+            tensors[i] = tensor
 
         return tensors
 
