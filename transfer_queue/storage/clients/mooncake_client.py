@@ -220,6 +220,13 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         batch_results = {}
         failed_count = 0
         
+        # Pre-compute element sizes by dtype to avoid repeated calculations
+        dtype_element_sizes = {}
+        
+        # First pass: validate and group by dtype for batch processing
+        dtype_groups = {}
+        empty_tensors = {}
+        
         for idx, raw_data, shape, dtype in zip(
             batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
         ):
@@ -234,29 +241,60 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             tensor_data = raw_data[metadata_size:]
             if not tensor_data:
                 if shape and 0 in shape:
-                    batch_results[idx] = torch.empty(shape, dtype=dtype)
+                    empty_tensors[idx] = torch.empty(shape, dtype=dtype)
                 else:
                     failed_count += 1
                     break
                 continue
             
-            element_size = torch.tensor(0, dtype=dtype).element_size()
+            # Cache element_size calculation per dtype
+            if dtype not in dtype_element_sizes:
+                dtype_element_sizes[dtype] = torch.tensor(0, dtype=dtype).element_size()
+            element_size = dtype_element_sizes[dtype]
             num_elements = len(tensor_data) // element_size
             
             if num_elements == 0:
                 if shape and 0 in shape:
-                    batch_results[idx] = torch.empty(shape, dtype=dtype)
+                    empty_tensors[idx] = torch.empty(shape, dtype=dtype)
                 else:
                     failed_count += 1
                     break
                 continue
             
-            tensor = torch.frombuffer(tensor_data, dtype=dtype)
-            if shape:
-                tensor = tensor[:num_elements].view(shape)
-            else:
-                tensor = tensor[:num_elements]
-            batch_results[idx] = tensor
+            # Group by dtype for batch processing
+            if dtype not in dtype_groups:
+                dtype_groups[dtype] = []
+            dtype_groups[dtype].append((idx, tensor_data, shape, num_elements))
+        
+        if failed_count > 0:
+            tensor_convert_time = time.time() - tensor_convert_start
+            return {
+                'batch_idx': batch_idx,
+                'success': False,
+                'needs_retry': True,
+                'get_batch_time': get_batch_time,
+                'tensor_convert_time': tensor_convert_time,
+                'results': None
+            }
+        
+        # Batch process tensors by dtype (grouped processing reduces overhead)
+        # Processing same dtype together improves cache locality and reduces repeated calculations
+        for dtype, items in dtype_groups.items():
+            element_size = dtype_element_sizes[dtype]
+            # Process all tensors of the same dtype together
+            for idx, tensor_data, shape, num_elements in items:
+                # Optimize: directly create tensor with correct dtype
+                tensor = torch.frombuffer(tensor_data, dtype=dtype)
+                # Only slice if needed (when tensor_data length doesn't match expected)
+                expected_size = num_elements * element_size
+                if len(tensor_data) != expected_size:
+                    tensor = tensor[:num_elements]
+                if shape:
+                    tensor = tensor.view(shape)
+                batch_results[idx] = tensor
+        
+        # Add empty tensors
+        batch_results.update(empty_tensors)
         
         tensor_convert_time = time.time() - tensor_convert_start
         
