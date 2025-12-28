@@ -232,231 +232,121 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             }
         
         # Convert tensors
+        # Reference: YuanrongClient approach - trust business layer, no validation
+        # Only do essential operations: remove metadata header and group by dtype
         tensor_convert_start = time.time()
         batch_results = {}
-        failed_count = 0
-        
-        # Performance monitoring: track each phase separately
-        validate_group_start = time.time()
         
         # Pre-compute element sizes by dtype to avoid repeated calculations
         dtype_element_sizes = {}
         
-        # First pass: validate and group by dtype for batch processing
-        # Note: This phase is necessary because:
-        # 1. Need to validate raw_data integrity (safety check)
-        # 2. Need to extract tensor_data (remove 24-byte metadata header)
-        # 3. Need to group by dtype for batch processing optimization
+        # Group by dtype for batch processing (similar to YuanrongClient's approach)
+        # Trust business layer: use provided shapes and dtypes directly
         dtype_groups = {}
-        empty_tensors = {}
-        
-        # Optimization: Check if batch has single dtype (common case)
-        # If all dtypes are the same, we can optimize grouping
-        unique_dtypes = set(batch_dtypes)
-        single_dtype = len(unique_dtypes) == 1
-        
-        # Optimization: Check if batch has single shape (common case)
-        # If all shapes are the same, we can optimize processing
-        unique_shapes = set(tuple(s) if s else tuple() for s in batch_shapes)
-        single_shape = len(unique_shapes) == 1
-        
-        # Statistics for optimization analysis (only collect if needed for debugging)
-        shape_counter = {}  # Count occurrences of each shape
-        one_d_tensors = 0  # Count 1D tensors that can skip view
-        skip_view_count = 0  # Count tensors that can skip view (1D with matching num_elements)
-        
-        # Optimization: Track if all shapes are the same during first pass
-        first_shape = None
-        first_num_elements = None
-        all_shapes_match = True
         
         for idx, raw_data, shape, dtype in zip(
             batch_indices, raw_data_list, batch_shapes, batch_dtypes, strict=True
         ):
-            # Essential validation: check raw_data integrity
-            if not raw_data:
-                failed_count += 1
-                break
+            # Trust storage layer: assume raw_data is valid
+            # Only extract tensor_data (remove 24-byte metadata header)
+            tensor_data = raw_data[metadata_size:] if raw_data else None
             
-            if len(raw_data) < metadata_size:
-                failed_count += 1
-                break
-            
-            # Essential: extract tensor_data (remove metadata header)
-            # This is unavoidable - we must slice to get tensor data
-            tensor_data_len = len(raw_data) - metadata_size
-            if tensor_data_len <= 0:
+            if not tensor_data:
+                # Handle empty tensor case
                 if shape and 0 in shape:
-                    empty_tensors[idx] = torch.empty(shape, dtype=dtype)
-                else:
-                    failed_count += 1
-                    break
+                    batch_results[idx] = torch.empty(shape, dtype=dtype)
                 continue
             
-            # Essential: calculate num_elements for validation
+            # Cache element_size calculation per dtype
             if dtype not in dtype_element_sizes:
                 dtype_element_sizes[dtype] = torch.tensor(0, dtype=dtype).element_size()
-            element_size = dtype_element_sizes[dtype]
-            num_elements = tensor_data_len // element_size
             
-            if num_elements == 0:
-                if shape and 0 in shape:
-                    empty_tensors[idx] = torch.empty(shape, dtype=dtype)
-                else:
-                    failed_count += 1
-                    break
-                continue
-            
-            # Statistics: count shape occurrences (for optimization analysis)
-            shape_tuple = tuple(shape) if shape else tuple()
-            shape_counter[shape_tuple] = shape_counter.get(shape_tuple, 0) + 1
-            
-            # Optimization: Check if all shapes match during first pass
-            if first_shape is None:
-                first_shape = shape_tuple
-                first_num_elements = num_elements
-            else:
-                if shape_tuple != first_shape or num_elements != first_num_elements:
-                    all_shapes_match = False
-            
-            # Statistics: check if 1D tensor that can skip view
-            is_1d = shape and len(shape) == 1
-            if is_1d:
-                one_d_tensors += 1
-                # Check if shape matches frombuffer result (can skip view)
-                if shape[0] == num_elements:
-                    skip_view_count += 1
-            
-            # Essential: Group by dtype for batch processing
-            # Store raw_data and offset to avoid copying bytes (will slice later when needed)
+            # Group by dtype for batch processing
             if dtype not in dtype_groups:
                 dtype_groups[dtype] = []
-            dtype_groups[dtype].append((idx, raw_data, metadata_size, tensor_data_len, shape, num_elements, is_1d and shape[0] == num_elements))
-        
-        validate_group_time = time.time() - validate_group_start
-        
-        # Optimization: Use shape matching result from first pass (already computed during grouping)
-        all_same_shape = False
-        common_shape = None
-        common_num_elements = None
-        if all_shapes_match and first_shape is not None:
-            all_same_shape = True
-            common_shape = first_shape
-            common_num_elements = first_num_elements
-        
-        if failed_count > 0:
-            tensor_convert_time = time.time() - tensor_convert_start
-            tensor_convert_details = {
-                'validate_group_time': validate_group_time,
-                'frombuffer_time': 0.0,
-                'view_time': 0.0,
-                'slice_time': 0.0,
-                'empty_tensor_time': 0.0,
-                'other_overhead': tensor_convert_time - validate_group_time,
-                'total_tensors': 0,
-                'num_frombuffer_calls': 0,
-                'shape_distribution': {},
-                'one_d_tensors': 0,
-                'skip_view_count': 0,
-                'skipped_view_count': 0,
-                'num_unique_shapes': 0
-            }
-            return {
-                'batch_idx': batch_idx,
-                'success': False,
-                'needs_retry': True,
-                'get_batch_time': get_batch_time,
-                'tensor_convert_time': tensor_convert_time,
-                'tensor_convert_details': tensor_convert_details,
-                'get_batch_bytes': 0,
-                'results': None
-            }
+            dtype_groups[dtype].append((idx, tensor_data, shape))
         
         # Batch process tensors by dtype (grouped processing reduces overhead)
-        # Processing same dtype together improves cache locality and reduces repeated calculations
         frombuffer_time = 0.0
         view_time = 0.0
         slice_time = 0.0
-        skipped_view_count = 0  # Count tensors that skipped view
+        skipped_view_count = 0
         
-        # Optimization: If all tensors have the same shape, use optimized path
-        if all_same_shape and common_shape and len(common_shape) == 1:
+        # Check if all tensors have the same shape (optimization)
+        if batch_shapes:
+            first_shape = tuple(batch_shapes[0]) if batch_shapes[0] else tuple()
+            all_same_shape = all(tuple(s) if s else tuple() == first_shape for s in batch_shapes)
+            is_1d_same_shape = all_same_shape and len(first_shape) == 1
+        else:
+            all_same_shape = False
+            is_1d_same_shape = False
+        
+        if is_1d_same_shape:
             # Fast path: All tensors are 1D with the same shape
-            # Pre-compute common values to avoid repeated calculations in inner loop
+            # Trust business layer: use provided shape directly
+            common_shape = first_shape
             for dtype, items in dtype_groups.items():
                 element_size = dtype_element_sizes[dtype]
-                # Pre-compute expected_size once per dtype (all tensors have same shape)
-                common_expected_size = common_num_elements * element_size
+                expected_size = common_shape[0] * element_size
                 
-                # Batch process all tensors of the same dtype
-                # Since shape is identical, we can skip shape checks and view operations
-                for idx, raw_data, metadata_offset, tensor_data_len, shape, num_elements, can_skip_view in items:
-                    # Slice tensor_data only when needed (lazy slicing)
-                    tensor_data = raw_data[metadata_offset:]
+                for idx, tensor_data, shape in items:
+                    if not tensor_data:
+                        continue
                     
                     # Performance monitoring: torch.frombuffer time
                     frombuffer_start = time.time()
                     tensor = torch.frombuffer(tensor_data, dtype=dtype)
                     frombuffer_time += time.time() - frombuffer_start
                     
-                    # Performance monitoring: slice time
-                    # Since shape is identical, expected_size is the same for all tensors of this dtype
-                    # Only check length once, no need to recalculate expected_size
-                    if tensor_data_len != common_expected_size:
-                        slice_start = time.time()
-                        tensor = tensor[:num_elements]
-                        slice_time += time.time() - slice_start
-                    
-                    # Skip view for 1D tensors with matching shape (already verified in first pass)
+                    # Trust business layer: shape matches, skip view
                     skipped_view_count += 1
                     batch_results[idx] = tensor
         else:
             # Standard path: Handle mixed shapes
             for dtype, items in dtype_groups.items():
                 element_size = dtype_element_sizes[dtype]
-                # Process all tensors of the same dtype together
-                for idx, raw_data, metadata_offset, tensor_data_len, shape, num_elements, can_skip_view in items:
-                    # Slice tensor_data only when needed (lazy slicing)
-                    tensor_data = raw_data[metadata_offset:]
+                
+                for idx, tensor_data, shape in items:
+                    if not tensor_data:
+                        continue
                     
                     # Performance monitoring: torch.frombuffer time
                     frombuffer_start = time.time()
                     tensor = torch.frombuffer(tensor_data, dtype=dtype)
                     frombuffer_time += time.time() - frombuffer_start
                     
-                    # Performance monitoring: slice time
-                    expected_size = num_elements * element_size
-                    if tensor_data_len != expected_size:
-                        slice_start = time.time()
-                        tensor = tensor[:num_elements]
-                        slice_time += time.time() - slice_start
-                    
-                    # Performance monitoring: view time
-                    # Skip view if tensor is 1D and shape matches frombuffer result
+                    # Trust business layer: use provided shape directly
                     if shape:
-                        if can_skip_view:
-                            # 1D tensor with matching shape, skip view
-                            skipped_view_count += 1
+                        # Check if 1D tensor that can skip view (optimization)
+                        if len(shape) == 1:
+                            # For 1D tensors, if shape matches implicit 1D shape, skip view
+                            expected_elements = shape[0]
+                            actual_elements = len(tensor_data) // element_size
+                            if expected_elements == actual_elements:
+                                # Skip view for 1D tensors with matching shape
+                                skipped_view_count += 1
+                            else:
+                                # Need to reshape (trust business layer shape)
+                                view_start = time.time()
+                                tensor = tensor.view(shape)
+                                view_time += time.time() - view_start
                         else:
+                            # Multi-dimensional tensor, need view (trust business layer shape)
                             view_start = time.time()
                             tensor = tensor.view(shape)
                             view_time += time.time() - view_start
                     
                     batch_results[idx] = tensor
         
-        # Add empty tensors
-        empty_tensor_start = time.time()
-        batch_results.update(empty_tensors)
-        empty_tensor_time = time.time() - empty_tensor_start
+        empty_tensor_time = 0.0
         
         tensor_convert_time = time.time() - tensor_convert_start
         
         # Calculate other overhead (total - measured components)
-        other_overhead = tensor_convert_time - validate_group_time - frombuffer_time - view_time - slice_time - empty_tensor_time
+        other_overhead = tensor_convert_time - frombuffer_time - view_time - slice_time - empty_tensor_time
         
         # Store detailed timing for analysis
         tensor_convert_details = {
-            'validate_group_time': validate_group_time,
             'frombuffer_time': frombuffer_time,
             'view_time': view_time,
             'slice_time': slice_time,
@@ -464,24 +354,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             'other_overhead': other_overhead,
             'total_tensors': len(batch_results),
             'num_frombuffer_calls': sum(len(items) for items in dtype_groups.values()),
-            'shape_distribution': shape_counter,
-            'one_d_tensors': one_d_tensors,
-            'skip_view_count': skip_view_count,
-            'skipped_view_count': skipped_view_count,
-            'num_unique_shapes': len(shape_counter)
+            'skipped_view_count': skipped_view_count
         }
-        
-        if failed_count > 0:
-            return {
-                'batch_idx': batch_idx,
-                'success': False,
-                'needs_retry': True,
-                'get_batch_time': get_batch_time,
-                'tensor_convert_time': tensor_convert_time,
-                'tensor_convert_details': tensor_convert_details,
-                'get_batch_bytes': 0,
-                'results': None
-            }
         
         return {
             'batch_idx': batch_idx,
@@ -528,7 +402,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             total_get_batch_bytes = 0  # Total bytes retrieved via get_batch
             
             # Aggregate detailed tensor conversion timing
-            total_validate_group_time = 0.0
             total_frombuffer_time = 0.0
             total_view_time = 0.0
             total_slice_time = 0.0
@@ -536,13 +409,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             total_other_overhead = 0.0
             total_tensor_count = 0
             total_frombuffer_calls = 0
-            
-            # Aggregate shape distribution statistics
-            aggregated_shape_distribution = {}
-            total_one_d_tensors = 0
-            total_skip_view_count = 0
             total_skipped_view_count = 0
-            total_unique_shapes = set()
             
             # Prepare all batches
             batches = []
@@ -586,7 +453,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             
                             # Aggregate detailed timing
                             details = result.get('tensor_convert_details', {})
-                            total_validate_group_time += details.get('validate_group_time', 0.0)
                             total_frombuffer_time += details.get('frombuffer_time', 0.0)
                             total_view_time += details.get('view_time', 0.0)
                             total_slice_time += details.get('slice_time', 0.0)
@@ -594,15 +460,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             total_other_overhead += details.get('other_overhead', 0.0)
                             total_tensor_count += details.get('total_tensors', 0)
                             total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
-                            
-                            # Aggregate shape statistics
-                            shape_dist = details.get('shape_distribution', {})
-                            for shape_tuple, count in shape_dist.items():
-                                aggregated_shape_distribution[shape_tuple] = aggregated_shape_distribution.get(shape_tuple, 0) + count
-                            total_one_d_tensors += details.get('one_d_tensors', 0)
-                            total_skip_view_count += details.get('skip_view_count', 0)
                             total_skipped_view_count += details.get('skipped_view_count', 0)
-                            total_unique_shapes.update(shape_dist.keys())
                         else:
                             # Need retry with smaller batch size
                             retry_batches.append(batch_info)
@@ -630,7 +488,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             
                             # Aggregate detailed timing
                             details = result.get('tensor_convert_details', {})
-                            total_validate_group_time += details.get('validate_group_time', 0.0)
                             total_frombuffer_time += details.get('frombuffer_time', 0.0)
                             total_view_time += details.get('view_time', 0.0)
                             total_slice_time += details.get('slice_time', 0.0)
@@ -638,15 +495,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                             total_other_overhead += details.get('other_overhead', 0.0)
                             total_tensor_count += details.get('total_tensors', 0)
                             total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
-                            
-                            # Aggregate shape statistics
-                            shape_dist = details.get('shape_distribution', {})
-                            for shape_tuple, count in shape_dist.items():
-                                aggregated_shape_distribution[shape_tuple] = aggregated_shape_distribution.get(shape_tuple, 0) + count
-                            total_one_d_tensors += details.get('one_d_tensors', 0)
-                            total_skip_view_count += details.get('skip_view_count', 0)
                             total_skipped_view_count += details.get('skipped_view_count', 0)
-                            total_unique_shapes.update(shape_dist.keys())
                         else:
                             raise RuntimeError(f"Failed to process batch {batch_info[0]} even with batch_size=1")
                     break
@@ -705,15 +554,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                                 total_other_overhead += details.get('other_overhead', 0.0)
                                 total_tensor_count += details.get('total_tensors', 0)
                                 total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
-                                
-                                # Aggregate shape statistics
-                                shape_dist = details.get('shape_distribution', {})
-                                for shape_tuple, count in shape_dist.items():
-                                    aggregated_shape_distribution[shape_tuple] = aggregated_shape_distribution.get(shape_tuple, 0) + count
-                                total_one_d_tensors += details.get('one_d_tensors', 0)
-                                total_skip_view_count += details.get('skip_view_count', 0)
                                 total_skipped_view_count += details.get('skipped_view_count', 0)
-                                total_unique_shapes.update(shape_dist.keys())
                             else:
                                 retry_batches.append(batch_info)
                         except Exception as e:
@@ -729,12 +570,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             avg_frombuffer_time = total_frombuffer_time / total_frombuffer_calls if total_frombuffer_calls > 0 else 0
             avg_view_time = total_view_time / total_frombuffer_calls if total_frombuffer_calls > 0 else 0
             
-            # Calculate shape distribution statistics
-            top_shapes = sorted(aggregated_shape_distribution.items(), key=lambda x: x[1], reverse=True)[:10]
-            shape_distribution_str = ", ".join([f"{shape}: {count}" for shape, count in top_shapes])
-            
+            # Calculate statistics
             skip_view_ratio = (total_skipped_view_count / total_frombuffer_calls * 100) if total_frombuffer_calls > 0 else 0
-            one_d_ratio = (total_one_d_tensors / total_frombuffer_calls * 100) if total_frombuffer_calls > 0 else 0
             
             # Improved logging format for better readability
             logger.warning("=" * 80)
@@ -748,17 +585,15 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             logger.warning(f"  └─ Tensor Conversion:       {max_tensor_convert_time:8.4f}s ({max_tensor_convert_time/get_elapsed*100:5.1f}%)")
             # Calculate proportional times for tensor conversion sub-components
             # Use sum times to estimate proportions, then scale to max time
-            tensor_convert_sum = total_validate_group_time + total_frombuffer_time + total_view_time + total_slice_time + total_empty_tensor_time + total_other_overhead
+            tensor_convert_sum = total_frombuffer_time + total_view_time + total_slice_time + total_empty_tensor_time + total_other_overhead
             if tensor_convert_sum > 0 and max_tensor_convert_time > 0:
                 scale_factor = max_tensor_convert_time / tensor_convert_sum
-                estimated_validate_group = total_validate_group_time * scale_factor
                 estimated_frombuffer = total_frombuffer_time * scale_factor
                 estimated_view = total_view_time * scale_factor
                 estimated_slice = total_slice_time * scale_factor
                 estimated_empty = total_empty_tensor_time * scale_factor
                 estimated_other = total_other_overhead * scale_factor
                 
-                logger.warning(f"      ├─ validate_group:       {estimated_validate_group:8.4f}s ({estimated_validate_group/max_tensor_convert_time*100:5.1f}%)")
                 logger.warning(f"      ├─ frombuffer:           {estimated_frombuffer:8.4f}s ({estimated_frombuffer/max_tensor_convert_time*100:5.1f}%) "
                               f"[avg: {avg_frombuffer_time*1000:.3f}ms/call, {total_frombuffer_calls} calls]")
                 logger.warning(f"      ├─ view:                 {estimated_view:8.4f}s ({estimated_view/max_tensor_convert_time*100:5.1f}%) "
@@ -767,18 +602,13 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 logger.warning(f"      ├─ empty_tensor:         {estimated_empty:8.4f}s ({estimated_empty/max_tensor_convert_time*100:5.1f}%)")
                 logger.warning(f"      └─ other_overhead:       {estimated_other:8.4f}s ({estimated_other/max_tensor_convert_time*100:5.1f}%)")
             else:
-                logger.warning(f"      ├─ validate_group:       {0.0:8.4f}s ({0.0:5.1f}%)")
                 logger.warning(f"      ├─ frombuffer:           {0.0:8.4f}s ({0.0:5.1f}%)")
                 logger.warning(f"      ├─ view:                 {0.0:8.4f}s ({0.0:5.1f}%)")
                 logger.warning(f"      ├─ slice:                {0.0:8.4f}s ({0.0:5.1f}%)")
                 logger.warning(f"      ├─ empty_tensor:         {0.0:8.4f}s ({0.0:5.1f}%)")
                 logger.warning(f"      └─ other_overhead:       {0.0:8.4f}s ({0.0:5.1f}%)")
             logger.warning("")
-            logger.warning("Shape Distribution:")
-            logger.warning(f"  ├─ Unique shapes: {len(total_unique_shapes)}")
-            logger.warning(f"  ├─ 1D tensors: {total_one_d_tensors} ({one_d_ratio:.1f}%)")
-            logger.warning(f"  ├─ Skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%)")
-            logger.warning(f"  └─ Top shapes: {shape_distribution_str}")
+            logger.warning(f"Skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%)")
             logger.warning("")
             logger.warning("Note: Sum times exceed total due to parallel processing (sum: {:.4f}s)".format(
                 total_get_batch_time_sum + total_tensor_convert_time_sum
