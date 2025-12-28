@@ -77,7 +77,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             raise ValueError("Number of keys must match number of values")
 
         total_items = len(keys)
-        batch_size = 1000
+        initial_batch_size = 1000
         logger.debug(f"MooncakeStorageClient: Putting {total_items} items using zero-copy batch_put_from")
         
         tensor_items = []
@@ -94,7 +94,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         
         if tensor_items:
             tensor_start_time = time.time()
-            for i in range(0, len(tensor_items), batch_size):
+            batch_size = initial_batch_size
+            i = 0
+            while i < len(tensor_items):
                 batch_items = tensor_items[i:i + batch_size]
                 batch_keys = [item[0] for item in batch_items]
                 batch_tensors = [item[1] for item in batch_items]
@@ -131,14 +133,24 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 
                 ret = self._store.put_batch(batch_keys, batch_values_bytes)
                 if ret != 0:
-                    raise RuntimeError(
-                        f"put_batch failed for tensors batch {i//batch_size + 1} "
-                        f"(items {i} to {min(i+batch_size, len(tensor_items))}) with error code: {ret}"
-                    )
+                    if ret == -600 and batch_size > 1:
+                        new_batch_size = max(1, batch_size // 2)
+                        logger.warning(
+                            f"put_batch failed with buffer allocation error (code: {ret}), "
+                            f"reducing batch size from {batch_size} to {new_batch_size}"
+                        )
+                        batch_size = new_batch_size
+                        continue
+                    else:
+                        raise RuntimeError(
+                            f"put_batch failed for tensors batch starting at item {i} "
+                            f"(batch_size={batch_size}) with error code: {ret}"
+                        )
                 
-                if (i + 1) % (batch_size * 10) == 0 or i + batch_size >= len(tensor_items):
+                i += batch_size
+                if i % (initial_batch_size * 10) == 0 or i >= len(tensor_items):
                     logger.debug(
-                        f"MooncakeStorageClient: Put {min(i + batch_size, len(tensor_items))}/{len(tensor_items)} tensors "
+                        f"MooncakeStorageClient: Put {min(i, len(tensor_items))}/{len(tensor_items)} tensors "
                         f"via put_batch API"
                     )
             
@@ -146,21 +158,32 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             tensor_elapsed = tensor_end_time - tensor_start_time
             logger.info(
                 f"MooncakeStorageClient: Put {len(tensor_items)} tensors "
-                f"via put_batch in {len(tensor_items)//batch_size + 1} batches, "
-                f"cost time: {tensor_elapsed:.8f}s"
+                f"via put_batch, cost time: {tensor_elapsed:.8f}s"
             )
         
         if non_tensor_keys:
             non_tensor_start_time = time.time()
-            for i in range(0, len(non_tensor_keys), batch_size):
+            batch_size = initial_batch_size
+            i = 0
+            while i < len(non_tensor_keys):
                 batch_keys = non_tensor_keys[i:i + batch_size]
                 batch_values = non_tensor_values_bytes[i:i + batch_size]
                 ret = self._store.put_batch(batch_keys, batch_values)
                 if ret != 0:
-                    raise RuntimeError(
-                        f"put_batch failed for non-tensors batch {i//batch_size + 1} "
-                        f"(items {i} to {min(i+batch_size, len(non_tensor_keys))}) with error code: {ret}"
-                    )
+                    if ret == -600 and batch_size > 1:
+                        new_batch_size = max(1, batch_size // 2)
+                        logger.warning(
+                            f"put_batch failed with buffer allocation error (code: {ret}), "
+                            f"reducing batch size from {batch_size} to {new_batch_size}"
+                        )
+                        batch_size = new_batch_size
+                        continue
+                    else:
+                        raise RuntimeError(
+                            f"put_batch failed for non-tensors batch starting at item {i} "
+                            f"(batch_size={batch_size}) with error code: {ret}"
+                        )
+                i += batch_size
             non_tensor_end_time = time.time()
             non_tensor_elapsed = non_tensor_end_time - non_tensor_start_time
             logger.info(
