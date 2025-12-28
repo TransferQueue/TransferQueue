@@ -1,6 +1,7 @@
 import logging
 import os
 import pickle
+import time
 from typing import Any
 
 import torch
@@ -92,6 +93,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 non_tensor_values_bytes.append(pickle.dumps(value))
         
         if tensor_items:
+            tensor_start_time = time.time()
             for i in range(0, len(tensor_items), batch_size):
                 batch_items = tensor_items[i:i + batch_size]
                 batch_keys = [item[0] for item in batch_items]
@@ -140,12 +142,16 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                         f"via put_batch API"
                     )
             
-            logger.debug(
+            tensor_end_time = time.time()
+            tensor_elapsed = tensor_end_time - tensor_start_time
+            logger.info(
                 f"MooncakeStorageClient: Put {len(tensor_items)} tensors "
-                f"via put_batch in {len(tensor_items)//batch_size + 1} batches"
+                f"via put_batch in {len(tensor_items)//batch_size + 1} batches, "
+                f"cost time: {tensor_elapsed:.8f}s"
             )
         
         if non_tensor_keys:
+            non_tensor_start_time = time.time()
             for i in range(0, len(non_tensor_keys), batch_size):
                 batch_keys = non_tensor_keys[i:i + batch_size]
                 batch_values = non_tensor_values_bytes[i:i + batch_size]
@@ -155,7 +161,12 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                         f"put_batch failed for non-tensors batch {i//batch_size + 1} "
                         f"(items {i} to {min(i+batch_size, len(non_tensor_keys))}) with error code: {ret}"
                     )
-            logger.debug(f"MooncakeStorageClient: Put {len(non_tensor_keys)} non-tensors via batch API")
+            non_tensor_end_time = time.time()
+            non_tensor_elapsed = non_tensor_end_time - non_tensor_start_time
+            logger.info(
+                f"MooncakeStorageClient: Put {len(non_tensor_keys)} non-tensors via batch API, "
+                f"cost time: {non_tensor_elapsed:.8f}s"
+            )
         
         logger.debug(f"MooncakeStorageClient: Successfully put all {total_items} items")
 
