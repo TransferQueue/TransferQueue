@@ -308,7 +308,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         max_frombuffer_time = 0.0
         
         tensors = [None] * len(keys)
-        result_queue = Queue()
         
         pipeline_start = time.time()
         
