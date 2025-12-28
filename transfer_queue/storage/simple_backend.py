@@ -267,11 +267,59 @@ class SimpleStorageUnit:
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
             if self.put_get_socket in socks:
+
+                # import os
+                # import subprocess
+                #
+                # pid = os.getpid()
+                # print(f"{self.storage_unit_id}: 进程号是 {os.getpid()}，准备收到数据序列化")
+                # output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_before_put_receive_data.txt")
+                # with open(output_file, "w", encoding="utf-8") as f:
+                #     # 命令拆分为列表（避免Shell解析，更安全）
+                #     result = subprocess.run(
+                #         ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                #         check=True,
+                #         stdout=f,  # 将标准输出重定向到文件
+                #         stderr=subprocess.PIPE,
+                #         text=True,
+                #     )
+                #
+                # time.sleep(5)
+
                 messages = self.put_get_socket.recv_multipart()
+
+
+
+                # output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_after_put_receive_data.txt")
+                # with open(output_file, "w", encoding="utf-8") as f:
+                #     # 命令拆分为列表（避免Shell解析，更安全）
+                #     result = subprocess.run(
+                #         ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                #         check=True,
+                #         stdout=f,  # 将标准输出重定向到文件
+                #         stderr=subprocess.PIPE,
+                #         text=True,
+                #     )
+
                 identity = messages.pop(0)
                 serialized_msg = messages
                 request_msg = ZMQMessage.deserialize(serialized_msg)
                 operation = request_msg.request_type
+
+                # output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_after_put_deserialize.txt")
+                # with open(output_file, "w", encoding="utf-8") as f:
+                #     # 命令拆分为列表（避免Shell解析，更安全）
+                #     result = subprocess.run(
+                #         ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                #         check=True,
+                #         stdout=f,  # 将标准输出重定向到文件
+                #         stderr=subprocess.PIPE,
+                #         text=True,
+                #     )
+
+                # if operation == ZMQRequestType.PUT_DATA:
+                #     raise RuntimeError("触发put_data")
+
                 try:
                     logger.debug(f"[{self.storage_unit_id}]: receive operation: {operation}, message: {request_msg}")
 
