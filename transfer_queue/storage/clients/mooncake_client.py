@@ -58,11 +58,14 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             raise RuntimeError(f"Mooncake store setup failed with error code: {ret}")
 
     def put(self, keys: list[str], values: list[Any]):
+        put_start_time = time.time()
+        
         if not isinstance(keys, list) or not isinstance(values, list):
             raise ValueError("keys and values must be lists")
         if len(keys) != len(values):
             raise ValueError("Number of keys must match number of values")
 
+        classify_start = time.time()
         tensor_keys = []
         tensor_values = []
         non_tensor_keys = []
@@ -76,41 +79,109 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             else:
                 non_tensor_keys.append(key)
                 non_tensor_values.append(pickle.dumps(value))
+        classify_time = time.time() - classify_start
 
+        tensor_time = 0.0
+        non_tensor_time = 0.0
+        
         if tensor_keys:
+            tensor_start = time.time()
             self._batch_put_tensors(tensor_keys, tensor_values)
+            tensor_time = time.time() - tensor_start
 
         if non_tensor_keys:
+            non_tensor_start = time.time()
             self._batch_put_bytes(non_tensor_keys, non_tensor_values)
+            non_tensor_time = time.time() - non_tensor_start
+
+        total_time = time.time() - put_start_time
+        
+        logger.warning("=" * 80)
+        logger.warning("MooncakeStorageClient: put() Method Summary")
+        logger.warning("=" * 80)
+        logger.warning(f"Total items: {len(keys)} (tensors: {len(tensor_keys)}, non-tensors: {len(non_tensor_keys)})")
+        logger.warning(f"Total time: {total_time:.4f}s")
+        logger.warning("Time Breakdown:")
+        logger.warning(f"  ├─ Classify items:     {classify_time:8.4f}s ({classify_time/total_time*100:5.1f}%)")
+        if tensor_keys:
+            logger.warning(f"  ├─ Tensor operations:   {tensor_time:8.4f}s ({tensor_time/total_time*100:5.1f}%)")
+        if non_tensor_keys:
+            logger.warning(f"  ├─ Non-tensor ops:      {non_tensor_time:8.4f}s ({non_tensor_time/total_time*100:5.1f}%)")
+        other_time = total_time - classify_time - tensor_time - non_tensor_time
+        if other_time > 0.001:
+            logger.warning(f"  └─ Other overhead:      {other_time:8.4f}s ({other_time/total_time*100:5.1f}%)")
+        logger.warning("=" * 80)
 
     def _batch_put_tensors(self, keys: list[str], tensors: list[Tensor]):
+        total_serialize_time = 0.0
+        total_put_batch_time = 0.0
+        total_put_bytes = 0
+        
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
             batch_tensors = tensors[i:i + BATCH_SIZE_LIMIT]
+            
+            serialize_start = time.time()
             batch_values = []
             for tensor in batch_tensors:
                 if tensor.dtype == torch.bfloat16:
-                    batch_values.append(tensor.detach().cpu().view(torch.int16).numpy().tobytes())
+                    bytes_data = tensor.detach().cpu().view(torch.int16).numpy().tobytes()
                 else:
-                    batch_values.append(tensor.detach().cpu().numpy().tobytes())
+                    bytes_data = tensor.detach().cpu().numpy().tobytes()
+                batch_values.append(bytes_data)
+                total_put_bytes += len(bytes_data)
+            total_serialize_time += time.time() - serialize_start
+            
+            put_batch_start = time.time()
             ret = self._store.put_batch(batch_keys, batch_values)
+            total_put_batch_time += time.time() - put_batch_start
             if ret != 0:
                 raise RuntimeError(f"put_batch failed with error code: {ret}")
 
+        total_time = total_serialize_time + total_put_batch_time
+        put_batch_throughput = (total_put_bytes * 8 / (1024**3)) / total_put_batch_time if total_put_batch_time > 0 else 0
+        
+        logger.warning("=" * 80)
+        logger.warning("MooncakeStorageClient: _batch_put_tensors Time Breakdown")
+        logger.warning("=" * 80)
+        logger.warning(f"Total tensors: {len(keys)}, Total bytes: {total_put_bytes / (1024**3):.2f} GB")
+        logger.warning(f"Total time: {total_time:.4f}s")
+        logger.warning("Time Breakdown:")
+        logger.warning(f"  ├─ serialize (tensor->bytes): {total_serialize_time:8.4f}s ({total_serialize_time/total_time*100:5.1f}%) "
+                      f"[{total_serialize_time/len(keys)*1000:.4f} ms/tensor]")
+        logger.warning(f"  └─ put_batch (network):        {total_put_batch_time:8.4f}s ({total_put_batch_time/total_time*100:5.1f}%) "
+                      f"[throughput: {put_batch_throughput:.2f} Gb/s]")
+        logger.warning("=" * 80)
+
     def _batch_put_bytes(self, keys: list[str], values: list[bytes]):
+        total_put_batch_time = 0.0
+        total_put_bytes = sum(len(v) for v in values)
+        
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
             batch_values = values[i:i + BATCH_SIZE_LIMIT]
+            
+            put_batch_start = time.time()
             ret = self._store.put_batch(batch_keys, batch_values)
+            total_put_batch_time += time.time() - put_batch_start
             if ret != 0:
                 raise RuntimeError(f"put_batch failed with error code: {ret}")
+        
+        put_batch_throughput = (total_put_bytes * 8 / (1024**3)) / total_put_batch_time if total_put_batch_time > 0 else 0
+        logger.debug(f"MooncakeStorageClient: _batch_put_bytes - {len(keys)} items, "
+                    f"{total_put_bytes / (1024**3):.2f} GB, "
+                    f"{total_put_batch_time:.4f}s, "
+                    f"throughput: {put_batch_throughput:.2f} Gb/s")
 
     def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Any]:
+        get_start_time = time.time()
+        
         if shapes is None or dtypes is None:
             raise ValueError("MooncakeStorageClient needs shapes and dtypes")
         if not (len(keys) == len(shapes) == len(dtypes)):
             raise ValueError("Lengths of keys, shapes, dtypes must match")
 
+        classify_start = time.time()
         tensor_indices = []
         non_tensor_indices = []
 
@@ -119,22 +190,48 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 tensor_indices.append(i)
             else:
                 non_tensor_indices.append(i)
+        classify_time = time.time() - classify_start
 
         results = [None] * len(keys)
 
+        tensor_time = 0.0
+        non_tensor_time = 0.0
+        
         if tensor_indices:
             tensor_keys = [keys[i] for i in tensor_indices]
             tensor_shapes = [shapes[i] for i in tensor_indices]
             tensor_dtypes = [dtypes[i] for i in tensor_indices]
+            tensor_start = time.time()
             tensor_results = self._batch_get_tensors(tensor_keys, tensor_shapes, tensor_dtypes)
             for idx, tensor in zip(tensor_indices, tensor_results, strict=True):
                 results[idx] = tensor
+            tensor_time = time.time() - tensor_start
 
         if non_tensor_indices:
             non_tensor_keys = [keys[i] for i in non_tensor_indices]
+            non_tensor_start = time.time()
             non_tensor_results = self._batch_get_bytes(non_tensor_keys)
             for idx, data in zip(non_tensor_indices, non_tensor_results, strict=True):
                 results[idx] = pickle.loads(data)
+            non_tensor_time = time.time() - non_tensor_start
+
+        total_time = time.time() - get_start_time
+        
+        logger.warning("=" * 80)
+        logger.warning("MooncakeStorageClient: get() Method Summary")
+        logger.warning("=" * 80)
+        logger.warning(f"Total items: {len(keys)} (tensors: {len(tensor_indices)}, non-tensors: {len(non_tensor_indices)})")
+        logger.warning(f"Total time: {total_time:.4f}s")
+        logger.warning("Time Breakdown:")
+        logger.warning(f"  ├─ Classify items:     {classify_time:8.4f}s ({classify_time/total_time*100:5.1f}%)")
+        if tensor_indices:
+            logger.warning(f"  ├─ Tensor operations:   {tensor_time:8.4f}s ({tensor_time/total_time*100:5.1f}%)")
+        if non_tensor_indices:
+            logger.warning(f"  ├─ Non-tensor ops:      {non_tensor_time:8.4f}s ({non_tensor_time/total_time*100:5.1f}%)")
+        other_time = total_time - classify_time - tensor_time - non_tensor_time
+        if other_time > 0.001:
+            logger.warning(f"  └─ Other overhead:      {other_time:8.4f}s ({other_time/total_time*100:5.1f}%)")
+        logger.warning("=" * 80)
 
         return results
 
@@ -143,10 +240,10 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     ) -> list[Tensor]:
         tensors = [None] * len(keys)
         
-        total_get_batch_time = 0.0
+            total_get_batch_time = 0.0
         total_frombuffer_time = 0.0
-        total_get_batch_bytes = 0
-        
+            total_get_batch_bytes = 0
+            
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
             batch_shapes = shapes[i:i + BATCH_SIZE_LIMIT]
@@ -157,7 +254,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             total_get_batch_time += time.time() - get_batch_start
             
             if len(batch_results) != len(batch_keys):
-                raise RuntimeError(
+                        raise RuntimeError(
                     f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
                 )
             
@@ -166,7 +263,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 total_get_batch_bytes += len(raw_bytes)
                 if dtype == torch.bfloat16:
                     tensors[i + j] = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
-                else:
+                        else:
                     tensors[i + j] = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
             total_frombuffer_time += time.time() - frombuffer_start
 
