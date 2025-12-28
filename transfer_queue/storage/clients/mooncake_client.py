@@ -83,17 +83,15 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             self._batch_put_bytes(non_tensor_keys, non_tensor_values)
 
     def _batch_put_tensors(self, keys: list[str], tensors: list[Tensor]):
-        values_bytes = []
-        for tensor in tensors:
-            t = tensor.detach().cpu()
-            if t.dtype == torch.bfloat16:
-                t = t.view(torch.int16)
-            tensor_bytes = t.numpy().tobytes()
-            values_bytes.append(tensor_bytes)
-
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
-            batch_values = values_bytes[i:i + BATCH_SIZE_LIMIT]
+            batch_tensors = tensors[i:i + BATCH_SIZE_LIMIT]
+            batch_values = []
+            for tensor in batch_tensors:
+                if tensor.dtype == torch.bfloat16:
+                    batch_values.append(tensor.detach().cpu().view(torch.int16).numpy().tobytes())
+                else:
+                    batch_values.append(tensor.detach().cpu().numpy().tobytes())
             ret = self._store.put_batch(batch_keys, batch_values)
             if ret != 0:
                 raise RuntimeError(f"put_batch failed with error code: {ret}")
