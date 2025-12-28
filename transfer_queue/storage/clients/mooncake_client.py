@@ -71,7 +71,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         tensor_values = []
         non_tensor_keys = []
         non_tensor_values = []
-
+        
         for key, value in zip(keys, values, strict=True):
             if isinstance(value, torch.Tensor):
                 tensor = value.contiguous()
@@ -89,7 +89,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             tensor_start = time.time()
             self._batch_put_tensors(tensor_keys, tensor_values)
             tensor_time = time.time() - tensor_start
-
+        
         if non_tensor_keys:
             non_tensor_start = time.time()
             self._batch_put_bytes(non_tensor_keys, non_tensor_values)
@@ -185,7 +185,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         classify_start = time.time()
         tensor_indices = []
         non_tensor_indices = []
-
+        
         for i, dtype in enumerate(dtypes):
             if dtype is not None:
                 tensor_indices.append(i)
@@ -194,7 +194,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         classify_time = time.time() - classify_start
 
         results = [None] * len(keys)
-
+        
         tensor_time = 0.0
         non_tensor_time = 0.0
         
@@ -291,7 +291,6 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     ) -> list[Tensor]:
         num_batches = (len(keys) + BATCH_SIZE_LIMIT - 1) // BATCH_SIZE_LIMIT
         fetch_workers = min(16, num_batches)
-        deserialize_workers = min(16, num_batches)
         
         batches = []
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
@@ -309,74 +308,74 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         
         tensors = [None] * len(keys)
         
-        pipeline_start = time.time()
+        overall_start = time.time()
         
+        # Stage 1: 并行获取所有batch数据
+        fetch_start = time.time()
+        fetch_results = []
         with ThreadPoolExecutor(max_workers=fetch_workers) as fetch_executor:
             fetch_futures = {
                 fetch_executor.submit(self._fetch_batch, batch_info): batch_info
                 for batch_info in batches
             }
             
-            with ThreadPoolExecutor(max_workers=deserialize_workers) as deserialize_executor:
-                deserialize_futures = {}
-                
-                for fetch_future in as_completed(fetch_futures):
-                    batch_info = fetch_futures[fetch_future]
-                    try:
-                        fetch_result = fetch_future.result()
-                        total_get_batch_time += fetch_result['get_batch_time']
-                        total_get_batch_bytes += fetch_result['bytes']
-                        max_get_batch_time = max(max_get_batch_time, fetch_result['get_batch_time'])
-                        
-                        deserialize_future = deserialize_executor.submit(self._deserialize_batch, fetch_result)
-                        deserialize_futures[deserialize_future] = fetch_result['batch_idx']
-                    except Exception as e:
-                        logger.error(f"Fetch batch {batch_info[0]} failed: {e}")
-                        raise
-                
-                for deserialize_future in as_completed(deserialize_futures):
-                    try:
-                        result = deserialize_future.result()
-                        for idx, tensor in result['results'].items():
-                            tensors[idx] = tensor
-                        total_frombuffer_time += result['frombuffer_time']
-                        max_frombuffer_time = max(max_frombuffer_time, result['frombuffer_time'])
-                    except Exception as e:
-                        batch_idx = deserialize_futures[deserialize_future]
-                        logger.error(f"Deserialize batch {batch_idx} failed: {e}")
-                        raise
+            for fetch_future in as_completed(fetch_futures):
+                batch_info = fetch_futures[fetch_future]
+                try:
+                    fetch_result = fetch_future.result()
+                    fetch_results.append(fetch_result)
+                    total_get_batch_time += fetch_result['get_batch_time']
+                    total_get_batch_bytes += fetch_result['bytes']
+                    max_get_batch_time = max(max_get_batch_time, fetch_result['get_batch_time'])
+                except Exception as e:
+                    logger.error(f"Fetch batch {batch_info[0]} failed: {e}")
+                    raise
         
-        total_time = time.time() - pipeline_start
-        max_stage_time = max(max_get_batch_time, max_frombuffer_time)
+        fetch_time = time.time() - fetch_start
+        
+        # Stage 2: 单线程顺序反序列化所有batch
+        deserialize_start = time.time()
+        for fetch_result in fetch_results:
+            try:
+                result = self._deserialize_batch(fetch_result)
+                for idx, tensor in result['results'].items():
+                    tensors[idx] = tensor
+                total_frombuffer_time += result['frombuffer_time']
+                max_frombuffer_time = max(max_frombuffer_time, result['frombuffer_time'])
+            except Exception as e:
+                batch_idx = fetch_result['batch_idx']
+                logger.error(f"Deserialize batch {batch_idx} failed: {e}")
+                raise
+        
+        deserialize_time = time.time() - deserialize_start
+        total_time = time.time() - overall_start
+        
         get_batch_throughput = (total_get_batch_bytes * 8 / (1024**3)) / max_get_batch_time if max_get_batch_time > 0 else 0
         
         logger.warning("=" * 80)
-        logger.warning("MooncakeStorageClient: _batch_get_tensors Time Breakdown (Pipeline Parallel)")
+        logger.warning("MooncakeStorageClient: _batch_get_tensors Time Breakdown (Two-Stage)")
         logger.warning("=" * 80)
         logger.warning(f"Total tensors: {len(keys)}, Total bytes: {total_get_batch_bytes / (1024**3):.2f} GB")
-        logger.warning(f"Batches: {num_batches}, Fetch threads: {fetch_workers}, Deserialize threads: {deserialize_workers}")
+        logger.warning(f"Batches: {num_batches}, Fetch threads: {fetch_workers}, Deserialize: single-threaded")
         logger.warning("")
         logger.warning("Time Metrics:")
         logger.warning(f"  ├─ Wall-clock time (total):     {total_time:8.4f}s  (实际总耗时)")
-        logger.warning(f"  ├─ Max fetch stage time:       {max_get_batch_time:8.4f}s  (最慢的get_batch耗时)")
-        logger.warning(f"  └─ Max deserialize stage time: {max_frombuffer_time:8.4f}s  (最慢的frombuffer耗时)")
-        logger.warning("")
-        logger.warning("Stage Breakdown:")
-        logger.warning(f"  ├─ Stage 1 (get_batch):        {max_get_batch_time:8.4f}s ({max_get_batch_time/total_time*100:5.1f}%) "
+        logger.warning(f"  ├─ Stage 1 (get_batch):        {fetch_time:8.4f}s ({fetch_time/total_time*100:5.1f}%) "
                       f"[throughput: {get_batch_throughput:.2f} Gb/s]")
-        logger.warning(f"  └─ Stage 2 (frombuffer):      {max_frombuffer_time:8.4f}s ({max_frombuffer_time/total_time*100:5.1f}%) "
+        logger.warning(f"  └─ Stage 2 (frombuffer):      {deserialize_time:8.4f}s ({deserialize_time/total_time*100:5.1f}%) "
                       f"[{total_frombuffer_time/len(keys)*1000:.4f} ms/tensor avg]")
         logger.warning("")
+        logger.warning("Stage Breakdown:")
+        logger.warning(f"  ├─ Max get_batch time:         {max_get_batch_time:8.4f}s  (最慢的get_batch耗时)")
+        logger.warning(f"  └─ Total frombuffer time:      {total_frombuffer_time:8.4f}s  (单线程顺序执行)")
+        logger.warning("")
         logger.warning("Parallel Statistics:")
-        logger.warning(f"  ├─ Pipeline efficiency:        {max_stage_time/total_time*100:5.1f}%  "
-                      f"(max_stage_time/total_time, 理想值接近100%)")
         logger.warning(f"  ├─ Sum get_batch time:         {total_get_batch_time:8.4f}s  (所有batch的get_batch时间总和)")
         logger.warning(f"  └─ Sum frombuffer time:        {total_frombuffer_time:8.4f}s  (所有batch的frombuffer时间总和)")
         logger.warning("")
-        logger.warning("Explanation:")
-        logger.warning(f"  - 两阶段流水线：Stage 1 (get_batch) 和 Stage 2 (frombuffer) 并行执行")
-        logger.warning(f"  - Wall-clock time ({total_time:.2f}s) = max(Stage1, Stage2) + 调度开销")
-        logger.warning(f"  - 理想情况：total_time ≈ max(max_get_batch_time, max_frombuffer_time)")
+        logger.warning("Note:")
+        logger.warning("  - 网络IO（get_batch）并行执行，16线程")
+        logger.warning("  - 反序列化（frombuffer）单线程顺序执行，避免GIL竞争")
         logger.warning("=" * 80)
 
         return tensors
