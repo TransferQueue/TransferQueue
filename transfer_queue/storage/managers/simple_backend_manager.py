@@ -43,6 +43,8 @@ TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_M
 TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT", 200))  # seconds
 
 
+TQ_SLEEP = int(os.environ.get("TQ_SLEEP", 5))  # seconds
+
 @TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager")
 class AsyncSimpleStorageManager(TransferQueueStorageManager):
     """Asynchronous storage manager that handles multiple storage units.
@@ -185,6 +187,24 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             metadata, self.global_index_storage_unit_mapping, self.global_index_local_index_mapping
         )
 
+        import os
+        import subprocess
+
+        pid = os.getpid()
+        print(f"主控{pid=}中的put进程开始，请看主控进程的内存占用")
+        output_file = os.path.expanduser("~/vmmap_main_before_put.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            result = subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
+        await asyncio.sleep(5)
+
         # send data to each storage unit
         tasks = [
             self._put_to_single_storage_unit(
@@ -193,6 +213,23 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             for storage_id, meta_group in storage_meta_groups.items()
         ]
         await asyncio.gather(*tasks)
+
+        import time
+
+        time.sleep(5)
+
+        print(f"主控{pid=}中的put进程结束，请看主控进程的内存占用")
+        output_file = os.path.expanduser("~/vmmap_main_after_put.txt")
+        with open(output_file, "w", encoding="utf-8") as f:
+            # 命令拆分为列表（避免Shell解析，更安全）
+            result = subprocess.run(
+                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                check=True,
+                stdout=f,  # 将标准输出重定向到文件
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+
 
         # Gather per-field dtype and shape information for each field
         # global_indexes, local_indexes, and field_data correspond one-to-one
@@ -254,6 +291,14 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
 
         try:
             data = request_msg.serialize()
+
+            import os
+            pid = os.getpid()
+            print(f"主控{pid=}中的put from single_controller进程完成序列化开始sleep。请export TQ_SLEEP=30，"
+                  f"以便在命令行vmmap")
+            await asyncio.sleep(TQ_SLEEP)
+
+
             await socket.send_multipart(data, copy=False)
             messages = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(messages)
@@ -386,8 +431,9 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
             import os
 
             pid = os.getpid()
-            print(f"主控{pid=}中的get from single_controller进程开始sleep。请把这块改得巨大，以便在命令行vmmap")
-            await asyncio.sleep(2)
+            print(f"主控{pid=}中的get from single_controller进程收到response开始sleep。请export TQ_SLEEP=30， "
+                  f"以便在命令行vmmap")
+            await asyncio.sleep(TQ_SLEEP)
 
             response_msg = ZMQMessage.deserialize(messages)
 
