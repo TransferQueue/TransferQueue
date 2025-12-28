@@ -3,7 +3,6 @@ import logging
 import os
 import pickle
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 import torch
@@ -356,189 +355,62 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         if tensor_indices:
             get_start_time = time.time()
             batch_size = initial_batch_size
-            total_get_batch_time_sum = 0.0  # Sum of all batch get_batch times (for reference)
-            max_get_batch_time = 0.0  # Max get_batch time for parallel processing
-            max_tensor_convert_time = 0.0  # Track max instead of sum for parallel processing
-            total_tensor_convert_time_sum = 0.0  # Sum for reference
-            total_get_batch_bytes = 0  # Total bytes retrieved via get_batch
+            total_get_batch_time = 0.0
+            total_tensor_convert_time = 0.0
+            total_get_batch_bytes = 0
             
-            # Aggregate tensor conversion statistics
-            total_tensor_count = 0
-            total_frombuffer_calls = 0
-            total_skipped_view_count = 0
-            
-            # Prepare all batches
-            batches = []
+            # Process batches sequentially (like YuanrongClient)
             i = 0
-            batch_idx = 0
             while i < len(tensor_indices):
                 batch_indices = tensor_indices[i:i + batch_size]
                 batch_keys = [keys[j] for j in batch_indices]
                 batch_shapes = [shapes[j] for j in batch_indices]
                 batch_dtypes = [dtypes[j] for j in batch_indices]
-                batches.append((batch_idx, batch_indices, batch_keys, batch_shapes, batch_dtypes, keys))
-                i += batch_size
-                batch_idx += 1
-            
-            # Process batches in parallel with adaptive retry
-            max_workers = min(16, len(batches))  # Increase concurrent batches for better parallelism
-            retry_batches = []
-            
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all batches
-                future_to_batch = {
-                    executor.submit(self._process_tensor_batch, batch_info): batch_info
-                    for batch_info in batches
-                }
+                batch_info = (0, batch_indices, batch_keys, batch_shapes, batch_dtypes, keys)
                 
-                # Collect results
-                for future in as_completed(future_to_batch):
-                    batch_info = future_to_batch[future]
-                    try:
-                        result = future.result()
-                        if result['success']:
-                            # Update final_results
-                            if result['results']:
-                                for idx, tensor in result['results'].items():
-                                    final_results[idx] = tensor
-                            total_get_batch_time_sum += result['get_batch_time']
-                            max_get_batch_time = max(max_get_batch_time, result['get_batch_time'])
-                            total_tensor_convert_time_sum += result['tensor_convert_time']
-                            max_tensor_convert_time = max(max_tensor_convert_time, result['tensor_convert_time'])
-                            total_get_batch_bytes += result.get('get_batch_bytes', 0)
-                            
-                            # Aggregate statistics
-                            details = result.get('tensor_convert_details', {})
-                            total_tensor_count += details.get('total_tensors', 0)
-                            total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
-                            total_skipped_view_count += details.get('skipped_view_count', 0)
-                        else:
-                            # Need retry with smaller batch size
-                            retry_batches.append(batch_info)
-                    except Exception as e:
-                        logger.error(f"Error processing batch {batch_info[0]}: {e}")
-                        retry_batches.append(batch_info)
-            
-            # Retry failed batches with smaller batch size
-            retry_batch_size = batch_size
-            while retry_batches:
-                retry_batch_size = max(1, retry_batch_size // 2)
-                if retry_batch_size == 1:
-                    # Last resort: process sequentially
-                    for batch_info in retry_batches:
-                        result = self._process_tensor_batch(batch_info)
-                        if result['success']:
-                            if result['results']:
-                                for idx, tensor in result['results'].items():
-                                    final_results[idx] = tensor
-                            total_get_batch_time_sum += result['get_batch_time']
-                            max_get_batch_time = max(max_get_batch_time, result['get_batch_time'])
-                            total_tensor_convert_time_sum += result['tensor_convert_time']
-                            max_tensor_convert_time = max(max_tensor_convert_time, result['tensor_convert_time'])
-                            total_get_batch_bytes += result.get('get_batch_bytes', 0)
-                            
-                            # Aggregate statistics
-                            details = result.get('tensor_convert_details', {})
-                            total_tensor_count += details.get('total_tensors', 0)
-                            total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
-                            total_skipped_view_count += details.get('skipped_view_count', 0)
-                        else:
-                            raise RuntimeError(f"Failed to process batch {batch_info[0]} even with batch_size=1")
-                    break
+                result = self._process_tensor_batch(batch_info)
                 
-                logger.warning(
-                    f"Retrying {len(retry_batches)} batches with reduced batch_size={retry_batch_size}"
-                )
-                
-                # Split retry batches into smaller batches
-                new_retry_batches = []
-                for batch_info in retry_batches:
-                    batch_idx, batch_indices, batch_keys, batch_shapes, batch_dtypes, keys = batch_info
-                    # Split into smaller batches
-                    for j in range(0, len(batch_indices), retry_batch_size):
-                        sub_batch_indices = batch_indices[j:j + retry_batch_size]
-                        sub_batch_keys = [keys[idx] for idx in sub_batch_indices]
-                        sub_batch_shapes = [shapes[idx] for idx in sub_batch_indices]
-                        sub_batch_dtypes = [dtypes[idx] for idx in sub_batch_indices]
-                        new_retry_batches.append((
-                            batch_idx * 1000 + j,  # Unique batch idx
-                            sub_batch_indices,
-                            sub_batch_keys,
-                            sub_batch_shapes,
-                            sub_batch_dtypes,
-                            keys
-                        ))
-                
-                retry_batches = []
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    future_to_batch = {
-                        executor.submit(self._process_tensor_batch, batch_info): batch_info
-                        for batch_info in new_retry_batches
-                    }
-                    
-                    for future in as_completed(future_to_batch):
-                        batch_info = future_to_batch[future]
-                        try:
-                            result = future.result()
-                            if result['success']:
-                                if result['results']:
-                                    for idx, tensor in result['results'].items():
-                                        final_results[idx] = tensor
-                                total_get_batch_time_sum += result['get_batch_time']
-                                max_get_batch_time = max(max_get_batch_time, result['get_batch_time'])
-                                total_tensor_convert_time_sum += result['tensor_convert_time']
-                                max_tensor_convert_time = max(max_tensor_convert_time, result['tensor_convert_time'])
-                                total_get_batch_bytes += result.get('get_batch_bytes', 0)
-                                
-                                # Aggregate detailed timing
-                                details = result.get('tensor_convert_details', {})
-                                total_element_size_cache_time += details.get('element_size_cache_time', 0.0)
-                                total_calculation_time += details.get('calculation_time', 0.0)
-                                total_dict_operation_time += details.get('dict_operation_time', 0.0)
-                                total_frombuffer_time += details.get('frombuffer_time', 0.0)
-                                total_view_time += details.get('view_time', 0.0)
-                                total_slice_time += details.get('slice_time', 0.0)
-                                total_empty_tensor_time += details.get('empty_tensor_time', 0.0)
-                                total_other_overhead += details.get('other_overhead', 0.0)
-                                total_tensor_count += details.get('total_tensors', 0)
-                                total_frombuffer_calls += details.get('num_frombuffer_calls', 0)
-                                total_skipped_view_count += details.get('skipped_view_count', 0)
-                            else:
-                                retry_batches.append(batch_info)
-                        except Exception as e:
-                            logger.error(f"Error processing retry batch {batch_info[0]}: {e}")
-                            retry_batches.append(batch_info)
+                if result['success']:
+                    # Update final_results
+                    if result['results']:
+                        for idx, tensor in result['results'].items():
+                            final_results[idx] = tensor
+                    total_get_batch_time += result['get_batch_time']
+                    total_tensor_convert_time += result['tensor_convert_time']
+                    total_get_batch_bytes += result.get('get_batch_bytes', 0)
+                    i += batch_size
+                else:
+                    # Need retry with smaller batch size
+                    if batch_size > 1:
+                        new_batch_size = max(1, batch_size // 2)
+                        logger.warning(
+                            f"batch_get_into failed for batch starting at index {i}, "
+                            f"reducing batch size from {batch_size} to {new_batch_size}"
+                        )
+                        batch_size = new_batch_size
+                    else:
+                        raise RuntimeError(f"Failed to process batch starting at index {i} even with batch_size=1")
             
             get_end_time = time.time()
             get_elapsed = get_end_time - get_start_time
             # Calculate get_batch throughput
-            get_batch_throughput_gbps = (total_get_batch_bytes * 8 / (1024**3)) / max_get_batch_time if max_get_batch_time > 0 else 0
+            get_batch_throughput_gbps = (total_get_batch_bytes * 8 / (1024**3)) / total_get_batch_time if total_get_batch_time > 0 else 0
             
-            # Calculate statistics
-            skip_view_ratio = (total_skipped_view_count / total_frombuffer_calls * 100) if total_frombuffer_calls > 0 else 0
-            
-            # Improved logging format for better readability
+            # Improved logging format
             logger.warning("=" * 80)
             logger.warning(f"MooncakeStorageClient: GET Tensor Operation Time Distribution")
             logger.warning("=" * 80)
             logger.warning(f"Total tensors: {len(tensor_indices)}, Total time: {get_elapsed:.4f}s")
             logger.warning(f"Data transferred: {total_get_batch_bytes / (1024**3):.2f} GB, Throughput: {get_batch_throughput_gbps:.2f} Gb/s")
             logger.warning("")
-            logger.warning("Time Breakdown (using max time for parallel operations):")
-            logger.warning(f"  ├─ Network (get_batch):     {max_get_batch_time:8.4f}s ({max_get_batch_time/get_elapsed*100:5.1f}%)")
-            logger.warning(f"  └─ Tensor Conversion:       {max_tensor_convert_time:8.4f}s ({max_tensor_convert_time/get_elapsed*100:5.1f}%)")
+            logger.warning("Time Breakdown:")
+            logger.warning(f"  ├─ Network (batch_get_into): {total_get_batch_time:8.4f}s ({total_get_batch_time/get_elapsed*100:5.1f}%)")
+            logger.warning(f"  └─ Tensor Conversion:        {total_tensor_convert_time:8.4f}s ({total_tensor_convert_time/get_elapsed*100:5.1f}%)")
             logger.warning("")
             logger.warning(f"Tensor conversion includes:")
-            logger.warning(f"  - Removing metadata header (slice)")
-            logger.warning(f"  - Creating tensors from buffer (torch.frombuffer)")
-            logger.warning(f"  - Reshaping tensors (view, if needed)")
-            logger.warning(f"  - Loop iteration and condition checks")
-            logger.warning("")
-            logger.warning(f"Skipped view: {total_skipped_view_count} ({skip_view_ratio:.1f}%)")
-            logger.warning("")
-            logger.warning("Note: Sum times exceed total due to parallel processing (sum: {:.4f}s)".format(
-                total_get_batch_time_sum + total_tensor_convert_time_sum
-            ))
+            logger.warning(f"  - Pre-allocating empty tensors")
+            logger.warning(f"  - Registering/unregistering buffers")
+            logger.warning(f"  - Copying data from temp buffer to tensor (memmove)")
             logger.warning("=" * 80)
         
         non_tensor_get_batch_time = 0.0
