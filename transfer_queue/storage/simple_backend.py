@@ -267,6 +267,8 @@ class SimpleStorageUnit:
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
             if self.put_get_socket in socks:
+                # time.sleep(10)
+                #
                 # import os
                 # import subprocess
                 #
@@ -282,8 +284,6 @@ class SimpleStorageUnit:
                 #         stderr=subprocess.PIPE,
                 #         text=True,
                 #     )
-                #
-                # time.sleep(5)
 
                 messages = self.put_get_socket.recv_multipart()
 
@@ -313,7 +313,7 @@ class SimpleStorageUnit:
                 #         stderr=subprocess.PIPE,
                 #         text=True,
                 #     )
-
+                #
                 # if operation == ZMQRequestType.PUT_DATA:
                 #     raise RuntimeError("触发put_data")
 
