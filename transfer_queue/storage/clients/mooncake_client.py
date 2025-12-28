@@ -236,74 +236,70 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
 
         return results
 
-    def _process_batch_group(self, batch_groups):
-        """Process a group of batches in a single thread."""
-        thread_get_batch_time = 0.0
-        thread_frombuffer_time = 0.0
-        thread_bytes = 0
-        thread_results = {}
+    def _process_single_batch(self, batch_info):
+        """Process a single batch of tensors."""
+        batch_idx, batch_start_idx, batch_keys, batch_shapes, batch_dtypes = batch_info
         
-        for batch_idx, batch_start_idx, batch_keys, batch_shapes, batch_dtypes in batch_groups:
-            get_batch_start = time.time()
-            batch_results = self._store.get_batch(batch_keys)
-            thread_get_batch_time += time.time() - get_batch_start
-            
-            if len(batch_results) != len(batch_keys):
-                raise RuntimeError(
-                    f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
-                )
-            
-            frombuffer_start = time.time()
-            for j, (raw_bytes, shape, dtype) in enumerate(zip(batch_results, batch_shapes, batch_dtypes, strict=True)):
-                thread_bytes += len(raw_bytes)
-                global_idx = batch_start_idx + j
-                if dtype == torch.bfloat16:
-                    thread_results[global_idx] = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
-                else:
-                    thread_results[global_idx] = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
-            thread_frombuffer_time += time.time() - frombuffer_start
+        get_batch_start = time.time()
+        batch_results = self._store.get_batch(batch_keys)
+        get_batch_time = time.time() - get_batch_start
+        
+        if len(batch_results) != len(batch_keys):
+            raise RuntimeError(
+                f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
+            )
+        
+        get_batch_bytes = sum(len(raw_bytes) for raw_bytes in batch_results)
+        
+        frombuffer_start = time.time()
+        batch_results_dict = {}
+        for j, (raw_bytes, shape, dtype) in enumerate(zip(batch_results, batch_shapes, batch_dtypes, strict=True)):
+            global_idx = batch_start_idx + j
+            if dtype == torch.bfloat16:
+                batch_results_dict[global_idx] = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
+            else:
+                batch_results_dict[global_idx] = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
+        frombuffer_time = time.time() - frombuffer_start
         
         return {
-            'results': thread_results,
-            'get_batch_time': thread_get_batch_time,
-            'frombuffer_time': thread_frombuffer_time,
-            'bytes': thread_bytes
+            'batch_idx': batch_idx,
+            'results': batch_results_dict,
+            'get_batch_time': get_batch_time,
+            'frombuffer_time': frombuffer_time,
+            'bytes': get_batch_bytes
         }
 
     def _batch_get_tensors(
         self, keys: list[str], shapes: list, dtypes: list
     ) -> list[Tensor]:
         num_batches = (len(keys) + BATCH_SIZE_LIMIT - 1) // BATCH_SIZE_LIMIT
-        max_workers = min(8, num_batches)
+        max_workers = min(16, num_batches)
         
-        batch_groups_list = []
+        batches = []
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
             batch_shapes = shapes[i:i + BATCH_SIZE_LIMIT]
             batch_dtypes = dtypes[i:i + BATCH_SIZE_LIMIT]
             batch_idx = i // BATCH_SIZE_LIMIT
-            batch_groups_list.append((batch_idx, i, batch_keys, batch_shapes, batch_dtypes))
-        
-        thread_batch_groups = [[] for _ in range(max_workers)]
-        for idx, batch_group in enumerate(batch_groups_list):
-            thread_batch_groups[idx % max_workers].append(batch_group)
+            batches.append((batch_idx, i, batch_keys, batch_shapes, batch_dtypes))
         
         total_get_batch_time = 0.0
         total_frombuffer_time = 0.0
         total_get_batch_bytes = 0
-        max_thread_time = 0.0
+        max_get_batch_time = 0.0
+        max_frombuffer_time = 0.0
         
         tensors = [None] * len(keys)
         
         parallel_start = time.time()
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(self._process_batch_group, thread_batch_groups[i]): i
-                for i in range(max_workers)
+            future_to_batch = {
+                executor.submit(self._process_single_batch, batch_info): batch_info
+                for batch_info in batches
             }
             
-            for future in as_completed(futures):
-                thread_id = futures[future]
+            for future in as_completed(future_to_batch):
+                batch_info = future_to_batch[future]
                 try:
                     result = future.result()
                     for idx, tensor in result['results'].items():
@@ -311,14 +307,15 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                     total_get_batch_time += result['get_batch_time']
                     total_frombuffer_time += result['frombuffer_time']
                     total_get_batch_bytes += result['bytes']
-                    thread_time = result['get_batch_time'] + result['frombuffer_time']
-                    max_thread_time = max(max_thread_time, thread_time)
+                    max_get_batch_time = max(max_get_batch_time, result['get_batch_time'])
+                    max_frombuffer_time = max(max_frombuffer_time, result['frombuffer_time'])
                 except Exception as e:
-                    logger.error(f"Thread {thread_id} failed: {e}")
+                    logger.error(f"Batch {batch_info[0]} failed: {e}")
                     raise
         
         total_time = time.time() - parallel_start
-        get_batch_throughput = (total_get_batch_bytes * 8 / (1024**3)) / max_thread_time if max_thread_time > 0 else 0
+        max_thread_time = max_get_batch_time + max_frombuffer_time
+        get_batch_throughput = (total_get_batch_bytes * 8 / (1024**3)) / max_get_batch_time if max_get_batch_time > 0 else 0
         
         logger.warning("=" * 80)
         logger.warning("MooncakeStorageClient: _batch_get_tensors Time Breakdown (Multi-threaded)")
@@ -326,15 +323,16 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         logger.warning(f"Total tensors: {len(keys)}, Total bytes: {total_get_batch_bytes / (1024**3):.2f} GB")
         logger.warning(f"Batches: {num_batches}, Threads: {max_workers}")
         logger.warning(f"Total time (wall-clock): {total_time:.4f}s")
-        logger.warning(f"Max thread time: {max_thread_time:.4f}s")
-        logger.warning("Time Breakdown (sum across all threads):")
-        logger.warning(f"  ├─ get_batch (network):    {total_get_batch_time:8.4f}s "
-                      f"[throughput: {get_batch_throughput:.2f} Gb/s, based on max thread time]")
-        logger.warning(f"  └─ frombuffer (deserialize): {total_frombuffer_time:8.4f}s "
-                      f"[{total_frombuffer_time/len(keys)*1000:.4f} ms/tensor]")
+        logger.warning(f"Max batch time: {max_thread_time:.4f}s")
+        logger.warning("Time Breakdown (using max time for parallel operations):")
+        logger.warning(f"  ├─ get_batch (network):    {max_get_batch_time:8.4f}s ({max_get_batch_time/total_time*100:5.1f}%) "
+                      f"[throughput: {get_batch_throughput:.2f} Gb/s]")
+        logger.warning(f"  └─ frombuffer (deserialize): {max_frombuffer_time:8.4f}s ({max_frombuffer_time/total_time*100:5.1f}%) "
+                      f"[{total_frombuffer_time/len(keys)*1000:.4f} ms/tensor avg]")
         logger.warning("")
         logger.warning(f"Parallel efficiency: {max_thread_time/total_time*100:.1f}% "
                       f"(ideal: 100%, lower means better parallelization)")
+        logger.warning(f"Sum times (all batches): get_batch={total_get_batch_time:.4f}s, frombuffer={total_frombuffer_time:.4f}s")
         logger.warning("=" * 80)
 
         return tensors
