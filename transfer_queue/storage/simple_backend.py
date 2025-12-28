@@ -267,7 +267,6 @@ class SimpleStorageUnit:
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
             if self.put_get_socket in socks:
-
                 # import os
                 # import subprocess
                 #
@@ -287,8 +286,6 @@ class SimpleStorageUnit:
                 # time.sleep(5)
 
                 messages = self.put_get_socket.recv_multipart()
-
-
 
                 # output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_after_put_receive_data.txt")
                 # with open(output_file, "w", encoding="utf-8") as f:
@@ -327,8 +324,34 @@ class SimpleStorageUnit:
                         with perf_monitor.measure(op_type="PUT_DATA"):
                             response_msg = self._handle_put(request_msg)
                     elif operation == ZMQRequestType.GET_DATA:
+                        import os
+                        import subprocess
+
+                        pid = os.getpid()
+                        output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_before_handle_get.txt")
+                        with open(output_file, "w", encoding="utf-8") as f:
+                            # 命令拆分为列表（避免Shell解析，更安全）
+                            result = subprocess.run(
+                                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                                check=True,
+                                stdout=f,  # 将标准输出重定向到文件
+                                stderr=subprocess.PIPE,
+                                text=True,
+                            )
+
                         with perf_monitor.measure(op_type="GET_DATA"):
                             response_msg = self._handle_get(request_msg)
+
+                        output_file = os.path.expanduser(f"~/vmmap_{self.storage_unit_id}_after_handle_get.txt")
+                        with open(output_file, "w", encoding="utf-8") as f:
+                            # 命令拆分为列表（避免Shell解析，更安全）
+                            result = subprocess.run(
+                                ["vmmap", f"{pid}"],  # 命令+参数拆分为列表，无Shell解析
+                                check=True,
+                                stdout=f,  # 将标准输出重定向到文件
+                                stderr=subprocess.PIPE,
+                                text=True,
+                            )
                     elif operation == ZMQRequestType.CLEAR_DATA:
                         with perf_monitor.measure(op_type="CLEAR_DATA"):
                             response_msg = self._handle_clear(request_msg)
