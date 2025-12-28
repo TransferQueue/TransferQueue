@@ -1,6 +1,7 @@
 import logging
 import os
 import pickle
+import time
 from typing import Any
 
 import torch
@@ -140,24 +141,49 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     def _batch_get_tensors(
         self, keys: list[str], shapes: list, dtypes: list
     ) -> list[Tensor]:
-        all_bytes = []
+        tensors = [None] * len(keys)
+        
+        total_get_batch_time = 0.0
+        total_frombuffer_time = 0.0
+        total_get_batch_bytes = 0
         
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
+            batch_shapes = shapes[i:i + BATCH_SIZE_LIMIT]
+            batch_dtypes = dtypes[i:i + BATCH_SIZE_LIMIT]
+            
+            get_batch_start = time.time()
             batch_results = self._store.get_batch(batch_keys)
+            total_get_batch_time += time.time() - get_batch_start
+            
             if len(batch_results) != len(batch_keys):
                 raise RuntimeError(
                     f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
                 )
-            all_bytes.extend(batch_results)
+            
+            frombuffer_start = time.time()
+            for j, (raw_bytes, shape, dtype) in enumerate(zip(batch_results, batch_shapes, batch_dtypes, strict=True)):
+                total_get_batch_bytes += len(raw_bytes)
+                if dtype == torch.bfloat16:
+                    tensors[i + j] = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
+                else:
+                    tensors[i + j] = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
+            total_frombuffer_time += time.time() - frombuffer_start
 
-        tensors = [None] * len(keys)
-        for i, (raw_bytes, shape, dtype) in enumerate(zip(all_bytes, shapes, dtypes, strict=True)):
-            if dtype == torch.bfloat16:
-                tensor = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
-            else:
-                tensor = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
-            tensors[i] = tensor
+        total_time = total_get_batch_time + total_frombuffer_time
+        get_batch_throughput = (total_get_batch_bytes * 8 / (1024**3)) / total_get_batch_time if total_get_batch_time > 0 else 0
+        
+        logger.warning("=" * 80)
+        logger.warning("MooncakeStorageClient: _batch_get_tensors Time Breakdown")
+        logger.warning("=" * 80)
+        logger.warning(f"Total tensors: {len(keys)}, Total bytes: {total_get_batch_bytes / (1024**3):.2f} GB")
+        logger.warning(f"Total time: {total_time:.4f}s")
+        logger.warning("Time Breakdown:")
+        logger.warning(f"  ├─ get_batch (network):    {total_get_batch_time:8.4f}s ({total_get_batch_time/total_time*100:5.1f}%) "
+                      f"[throughput: {get_batch_throughput:.2f} Gb/s]")
+        logger.warning(f"  └─ frombuffer (deserialize): {total_frombuffer_time:8.4f}s ({total_frombuffer_time/total_time*100:5.1f}%) "
+                      f"[{total_frombuffer_time/len(keys)*1000:.4f} ms/tensor]")
+        logger.warning("=" * 80)
 
         return tensors
 
