@@ -450,13 +450,15 @@ class KVStorageManager(TransferQueueStorageManager):
             )
         
         for field_name, field_data in data.items():
-            field_data_list = list(field_data)
-            if len(field_data_list) != expected_size:
+            field_items = []
+            for data_item in field_data:
+                field_items.append(data_item)
+            if len(field_items) != expected_size:
                 raise ValueError(
-                    f"Field '{field_name}' has {len(field_data_list)} samples, "
+                    f"Field '{field_name}' has {len(field_items)} samples, "
                     f"but expected {expected_size} samples (metadata.size)"
                 )
-            for i, data_item in enumerate(field_data_list):
+            for i, data_item in enumerate(field_items):
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
