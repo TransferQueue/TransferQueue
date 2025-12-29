@@ -464,7 +464,7 @@ class KVStorageManager(TransferQueueStorageManager):
                     raise IndexError(
                         f"Failed to access field '{field_name}' at index {i}: {e}. "
                         f"Field type: {type(field_data)}, num_samples: {num_samples}"
-                    )
+                    ) from e
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
