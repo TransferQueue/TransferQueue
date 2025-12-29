@@ -28,6 +28,7 @@ from ray.util import get_node_ip_address
 
 from transfer_queue.metadata import SampleMeta
 from transfer_queue.utils.perf_utils import IntervalPerfMonitor
+from transfer_queue.utils.serial_utils import zero_copy_serialization_enabled
 from transfer_queue.utils.utils import TransferQueueRole, get_env_bool, limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket, get_free_port
 
@@ -124,7 +125,7 @@ class StorageUnitData:
                         f"storage_size: {self.storage_size}"
                     )
 
-                if not TQ_ZERO_COPY_SERIALIZATION and isinstance(values[i], torch.Tensor):
+                if not zero_copy_serialization_enabled() and isinstance(values[i], torch.Tensor):
                     # Explicitly copy tensor slices to prevent pickling the whole tensor.
                     # Get is more frequent, so we do the clone during put process.
                     self.field_data[f][idx] = values[i].clone()

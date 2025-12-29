@@ -348,8 +348,6 @@ def test_put_get_single_item(storage_setup):
 
     retrieved_data = response.body["data"]
 
-    print(retrieved_data)
-
     assert "prompt_text" in retrieved_data
     assert "attention_mask" in retrieved_data
 

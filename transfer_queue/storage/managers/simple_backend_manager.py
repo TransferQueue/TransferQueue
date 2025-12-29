@@ -28,7 +28,7 @@ from transfer_queue.metadata import BatchMeta
 from transfer_queue.storage.managers.base import TransferQueueStorageManager
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
 from transfer_queue.storage.simple_backend import StorageMetaGroup
-from transfer_queue.utils.utils import get_env_bool
+from transfer_queue.utils.serial_utils import zero_copy_serialization_enabled
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
 
 logger = logging.getLogger(__name__)
@@ -42,8 +42,6 @@ if not logger.hasHandlers():
 
 TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_RECV_TIMEOUT", 200))  # seconds
 TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT = int(os.environ.get("TQ_SIMPLE_STORAGE_MANAGER_SEND_TIMEOUT", 200))  # seconds
-
-TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False)
 
 
 @TransferQueueStorageManagerFactory.register("AsyncSimpleStorageManager")
@@ -448,9 +446,9 @@ def _filter_storage_data(storage_meta_group: StorageMetaGroup, data: TensorDict)
             result = (result,)
         results[fname] = list(result)
 
-        if not TQ_ZERO_COPY_SERIALIZATION:
+        if not zero_copy_serialization_enabled():
             # Explicitly copy tensor slices to prevent pickling the whole tensor for every storage unit.
-            # The tensors may still be continuous, so we cannot use .continuous() to trigger copy from parent tensors.
+            # The tensors may still be contiguous, so we cannot use .contiguous() to trigger copy from parent tensors.
             results[fname] = [item.clone() if isinstance(item, torch.Tensor) else item for item in results[fname]]
 
     return results

@@ -32,11 +32,18 @@ from torch.distributed.rpc.internal import _internal_rpc_pickler
 
 from transfer_queue.utils.utils import get_env_bool
 
+try:
+    from torch.distributed.rpc.internal import _internal_rpc_pickler
+
+    HAS_RPC_PICKLER = True
+except ImportError:
+    HAS_RPC_PICKLER = False
+
 CUSTOM_TYPE_PICKLE = 1
 CUSTOM_TYPE_CLOUDPICKLE = 2
 CUSTOM_TYPE_RAW_VIEW = 3
 
-TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False)
+TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False) and HAS_RPC_PICKLER
 
 bytestr: TypeAlias = bytes | bytearray | memoryview | zmq.Frame
 tensorenc = tuple[str, tuple[int, ...], int | memoryview]
@@ -269,3 +276,8 @@ def deserialization(data: list[bytestr] | bytestr) -> Any:
                 f"When TQ_ZERO_COPY_SERIALIZATION is disabled, input data should be a list of bytestr,"
                 f" but got {type(data)}."
             )
+
+
+def zero_copy_serialization_enabled() -> bool:
+    """Check if zero-copy serialization is enabled."""
+    return TQ_ZERO_COPY_SERIALIZATION
