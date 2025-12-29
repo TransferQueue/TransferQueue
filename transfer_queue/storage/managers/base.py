@@ -449,15 +449,10 @@ class KVStorageManager(TransferQueueStorageManager):
                 f"Data batch_size ({data.batch_size[0]}) does not match metadata size ({expected_size})"
             )
         
-        for field_name, field_data in data.items():
+        for field_name in data.keys():
             field_items = []
-            for data_item in field_data:
-                field_items.append(data_item)
-            if len(field_items) != expected_size:
-                raise ValueError(
-                    f"Field '{field_name}' has {len(field_items)} samples, "
-                    f"but expected {expected_size} samples (metadata.size)"
-                )
+            for idx in range(expected_size):
+                field_items.append(data[idx][field_name])
             for i, data_item in enumerate(field_items):
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
