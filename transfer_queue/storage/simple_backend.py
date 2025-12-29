@@ -95,10 +95,8 @@ class StorageUnitData:
             if len(local_indexes) == 1:
                 # The unsqueeze op make the shape from n to (1, n)
                 gathered_item = self.field_data[field][local_indexes[0]]
-                if not isinstance(gathered_item, torch.Tensor):
-                    result[field] = gathered_item
-                else:
-                    result[field] = gathered_item.unsqueeze(0)
+                result[field] = [gathered_item]
+
             else:
                 gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
 

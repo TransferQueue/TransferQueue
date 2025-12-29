@@ -21,7 +21,6 @@ import ray
 import tensordict
 import torch
 import zmq
-from tensordict import TensorDict
 
 # Setup path
 parent_dir = Path(__file__).resolve().parent.parent
@@ -108,13 +107,10 @@ def test_put_get_single_client(storage_setup):
 
     # PUT data
     local_indexes = [0, 1, 2]
-    field_data = TensorDict(
-        {
-            "log_probs": [torch.tensor([1.0, 2.0, 3.0]), torch.tensor([4.0, 5.0, 6.0]), torch.tensor([7.0, 8.0, 9.0])],
-            "rewards": [torch.tensor([10.0]), torch.tensor([20.0]), torch.tensor([30.0])],
-        },
-        batch_size=[],
-    )
+    field_data = {
+        "log_probs": [torch.tensor([1.0, 2.0, 3.0]), torch.tensor([4.0, 5.0, 6.0]), torch.tensor([7.0, 8.0, 9.0])],
+        "rewards": [torch.tensor([10.0]), torch.tensor([20.0]), torch.tensor([30.0])],
+    }
 
     response = client.send_put(0, local_indexes, field_data)
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
@@ -126,8 +122,8 @@ def test_put_get_single_client(storage_setup):
     retrieved_data = response.body["data"]
     assert "log_probs" in retrieved_data
     assert "rewards" in retrieved_data
-    assert retrieved_data["log_probs"].size(0) == 2
-    assert retrieved_data["rewards"].size(0) == 2
+    assert len(retrieved_data["log_probs"]) == 2
+    assert len(retrieved_data["rewards"]) == 2
 
     # Verify data correctness
     torch.testing.assert_close(retrieved_data["log_probs"][0], torch.tensor([1.0, 2.0, 3.0]))
@@ -148,16 +144,14 @@ def test_put_get_multiple_clients(storage_setup):
     # Each client puts unique data using different local_indexes
     for i, client in enumerate(clients):
         local_indexes = [i * 10 + 0, i * 10 + 1, i * 10 + 2]
-        field_data = TensorDict(
-            {
-                "log_probs": [
-                    torch.tensor([i, i + 1, i + 2]),
-                    torch.tensor([i + 3, i + 4, i + 5]),
-                    torch.tensor([i + 6, i + 7, i + 8]),
-                ],
-                "rewards": [torch.tensor([i * 10]), torch.tensor([i * 10 + 10]), torch.tensor([i * 10 + 20])],
-            }
-        )
+        field_data = {
+            "log_probs": [
+                torch.tensor([i, i + 1, i + 2]),
+                torch.tensor([i + 3, i + 4, i + 5]),
+                torch.tensor([i + 6, i + 7, i + 8]),
+            ],
+            "rewards": [torch.tensor([i * 10]), torch.tensor([i * 10 + 10]), torch.tensor([i * 10 + 20])],
+        }
 
         response = client.send_put(i, local_indexes, field_data)
         assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
@@ -165,7 +159,7 @@ def test_put_get_multiple_clients(storage_setup):
     # Test overlapping local indexes
     overlapping_client = MockStorageClient(put_get_address)
     overlap_local_indexes = [0]  # Overlaps with first client's index 0
-    overlap_field_data = TensorDict({"log_probs": [torch.tensor([999, 999, 999])], "rewards": [torch.tensor([999])]})
+    overlap_field_data = {"log_probs": [torch.tensor([999, 999, 999])], "rewards": [torch.tensor([999])]}
     response = overlapping_client.send_put(99, overlap_local_indexes, overlap_field_data)
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
 
@@ -175,8 +169,8 @@ def test_put_get_multiple_clients(storage_setup):
         assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
 
         retrieved_data = response.body["data"]
-        assert retrieved_data["log_probs"].size(0) == 2
-        assert retrieved_data["rewards"].size(0) == 2
+        assert len(retrieved_data["log_probs"]) == 2
+        assert len(retrieved_data["rewards"]) == 2
 
         # For index 0, expect data from overlapping_client; others from original client
         if i == 0:
@@ -227,7 +221,7 @@ def test_performance_basic(storage_setup):
             log_probs_data.append(log_probs_tensor)
             rewards_data.append(rewards_tensor)
 
-        field_data = TensorDict({"log_probs": log_probs_data, "rewards": rewards_data}, batch_size=[batch_size])
+        field_data = {"log_probs": log_probs_data, "rewards": rewards_data}
 
         response = client.send_put(0, local_indexes, field_data)
         latency = time.time() - start
@@ -265,17 +259,14 @@ def test_put_get_nested_tensor(storage_setup):
 
     # PUT data with nested tensors
     local_indexes = [0, 1, 2]
-    field_data = TensorDict(
-        {
-            "variable_length_sequences": [
-                torch.tensor([-0.5, -1.2, -0.8]),
-                torch.tensor([-0.3, -1.5, -2.1, -0.9]),
-                torch.tensor([-1.1, -0.7]),
-            ],
-            "attention_mask": [torch.tensor([1, 1, 1]), torch.tensor([1, 1, 1, 1]), torch.tensor([1, 1])],
-        },
-        batch_size=[],
-    )
+    field_data = {
+        "variable_length_sequences": [
+            torch.tensor([-0.5, -1.2, -0.8]),
+            torch.tensor([-0.3, -1.5, -2.1, -0.9]),
+            torch.tensor([-1.1, -0.7]),
+        ],
+        "attention_mask": [torch.tensor([1, 1, 1]), torch.tensor([1, 1, 1, 1]), torch.tensor([1, 1])],
+    }
 
     response = client.send_put(0, local_indexes, field_data)
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
@@ -287,8 +278,8 @@ def test_put_get_nested_tensor(storage_setup):
     retrieved_data = response.body["data"]
     assert "variable_length_sequences" in retrieved_data
     assert "attention_mask" in retrieved_data
-    assert retrieved_data["variable_length_sequences"].size(0) == 2
-    assert retrieved_data["attention_mask"].size(0) == 2
+    assert len(retrieved_data["variable_length_sequences"]) == 2
+    assert len(retrieved_data["attention_mask"]) == 2
 
     # Verify data correctness
     torch.testing.assert_close(retrieved_data["variable_length_sequences"][0], torch.tensor([-0.5, -1.2, -0.8]))
@@ -307,13 +298,10 @@ def test_put_get_non_tensor_data(storage_setup):
 
     # PUT data with non-tensor data
     local_indexes = [0, 1, 2]
-    field_data = TensorDict(
-        {
-            "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
-            "response_text": ["Hi there!", "This is the response to the longer sentence", "Test response"],
-        },
-        batch_size=[],
-    )
+    field_data = {
+        "prompt_text": ["Hello world!", "This is a longer sentence for testing", "Test case"],
+        "response_text": ["Hi there!", "This is the response to the longer sentence", "Test response"],
+    }
 
     response = client.send_put(0, local_indexes, field_data)
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
@@ -347,14 +335,10 @@ def test_put_get_single_item(storage_setup):
     client = MockStorageClient(put_get_address)
 
     # PUT single item data
-    field_data = TensorDict(
-        {
-            "prompt_text": ["Hello world!"],
-            "attention_mask": [torch.tensor([1, 1, 1])],
-        },
-        batch_size=[],
-    )
-
+    field_data = {
+        "prompt_text": ["Hello world!"],
+        "attention_mask": [torch.tensor([1, 1, 1])],
+    }
     response = client.send_put(0, [0], field_data)
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
 
@@ -363,11 +347,14 @@ def test_put_get_single_item(storage_setup):
     assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
 
     retrieved_data = response.body["data"]
+
+    print(retrieved_data)
+
     assert "prompt_text" in retrieved_data
     assert "attention_mask" in retrieved_data
 
     assert retrieved_data["prompt_text"][0] == "Hello world!"
-    assert retrieved_data["attention_mask"].shape == (1, 3)
+    assert len(retrieved_data["attention_mask"]) == 1
     torch.testing.assert_close(retrieved_data["attention_mask"][0], torch.tensor([1, 1, 1]))
 
     client.close()
@@ -381,13 +368,10 @@ def test_clear_data(storage_setup):
 
     # PUT data first
     local_indexes = [0, 1, 2]
-    field_data = TensorDict(
-        {
-            "log_probs": [torch.tensor([1.0]), torch.tensor([2.0]), torch.tensor([3.0])],
-            "rewards": [torch.tensor([10.0]), torch.tensor([20.0]), torch.tensor([30.0])],
-        },
-        batch_size=[],
-    )
+    field_data = {
+        "log_probs": [torch.tensor([1.0]), torch.tensor([2.0]), torch.tensor([3.0])],
+        "rewards": [torch.tensor([10.0]), torch.tensor([20.0]), torch.tensor([30.0])],
+    }
 
     response = client.send_put(0, local_indexes, field_data)
     assert response.request_type == ZMQRequestType.PUT_DATA_RESPONSE
@@ -395,7 +379,7 @@ def test_clear_data(storage_setup):
     # Verify data exists
     response = client.send_get(0, [0, 1, 2], ["log_probs"])
     assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
-    assert response.body["data"]["log_probs"].size(0) == 3
+    assert len(response.body["data"]["log_probs"]) == 3
 
     # Clear data
     response = client.send_clear(0, [0, 2])  # Clear only indexes 0 and 2
@@ -404,7 +388,7 @@ def test_clear_data(storage_setup):
     # Verify some data is cleared (but index 1 should still exist)
     response = client.send_get(0, [1], ["log_probs"])
     assert response.request_type == ZMQRequestType.GET_DATA_RESPONSE
-    assert response.body["data"]["log_probs"].size(0) == 1
+    assert len(response.body["data"]["log_probs"]) == 1
     torch.testing.assert_close(response.body["data"]["log_probs"][0], torch.tensor([2.0]))
 
     client.close()
@@ -417,25 +401,22 @@ def test_storage_unit_data_direct():
     storage_data = StorageUnitData(storage_size=10)
 
     # Test put_data
-    field_data = TensorDict(
-        {
-            "log_probs": [torch.tensor([1.0, 2.0]), torch.tensor([3.0, 4.0])],
-            "rewards": [torch.tensor([10.0]), torch.tensor([20.0])],
-        },
-        batch_size=[],
-    )
+    field_data = {
+        "log_probs": [torch.tensor([1.0, 2.0]), torch.tensor([3.0, 4.0])],
+        "rewards": [torch.tensor([10.0]), torch.tensor([20.0])],
+    }
     storage_data.put_data(field_data, [0, 1])
 
     # Test get_data
     result = storage_data.get_data(["log_probs", "rewards"], [0, 1])
     assert "log_probs" in result
     assert "rewards" in result
-    assert result["log_probs"].size(0) == 2
-    assert result["rewards"].size(0) == 2
+    assert len(result["log_probs"]) == 2
+    assert len(result["rewards"]) == 2
 
     # Test single index get
     result_single = storage_data.get_data(["log_probs"], [0])
-    assert result_single["log_probs"].shape == (1, 2)
+    assert torch.allclose(result_single["log_probs"][0], torch.tensor([1.0, 2.0]))
 
     # Test clear
     storage_data.clear([0])
