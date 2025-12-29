@@ -448,14 +448,14 @@ class KVStorageManager(TransferQueueStorageManager):
         num_samples = len(metadata.global_indexes)
         if num_samples == 0:
             return
-        
+
         data_batch_size = data.batch_size[0] if data.batch_size else 0
         if num_samples != data_batch_size:
             raise ValueError(
                 f"Mismatch between metadata.global_indexes length ({num_samples}) "
                 f"and data.batch_size[0] ({data_batch_size})"
             )
-        
+
         for field_name, field_data in data.items():
             for i in range(num_samples):
                 try:

@@ -26,4 +26,3 @@ class MooncakeStorageManager(KVStorageManager):
         elif client_name != "MooncakeStorageClient":
             raise ValueError(f"Invalid 'client_name': {client_name} in config. Expecting 'MooncakeStorageClient'")
         super().__init__(config)
-

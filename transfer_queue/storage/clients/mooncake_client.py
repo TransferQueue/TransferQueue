@@ -25,10 +25,7 @@ BATCH_SIZE_LIMIT: int = 500
 class MooncakeStorageClient(TransferQueueStorageKVClient):
     def __init__(self, config: dict[str, Any]):
         if not MOONCAKE_STORE_IMPORTED:
-            raise ImportError(
-                "Mooncake Store not installed. "
-                "Please install via: pip install mooncake-transfer-engine"
-            )
+            raise ImportError("Mooncake Store not installed. Please install via: pip install mooncake-transfer-engine")
 
         self.local_hostname = config.get("local_hostname", "localhost")
         self.metadata_server = config.get("metadata_server")
@@ -86,9 +83,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
 
     def _batch_put_tensors(self, keys: list[str], tensors: list[Tensor]):
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
-            batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
-            batch_tensors = tensors[i:i + BATCH_SIZE_LIMIT]
-            
+            batch_keys = keys[i : i + BATCH_SIZE_LIMIT]
+            batch_tensors = tensors[i : i + BATCH_SIZE_LIMIT]
+
             batch_values = []
             for tensor in batch_tensors:
                 if tensor.dtype == torch.bfloat16:
@@ -96,16 +93,16 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
                 else:
                     bytes_data = tensor.detach().numpy().tobytes()
                 batch_values.append(bytes_data)
-            
+
             ret = self._store.put_batch(batch_keys, batch_values)
             if ret != 0:
                 raise RuntimeError(f"put_batch failed with error code: {ret}")
 
     def _batch_put_bytes(self, keys: list[str], values: list[bytes]):
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
-            batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
-            batch_values = values[i:i + BATCH_SIZE_LIMIT]
-            
+            batch_keys = keys[i : i + BATCH_SIZE_LIMIT]
+            batch_values = values[i : i + BATCH_SIZE_LIMIT]
+
             ret = self._store.put_batch(batch_keys, batch_values)
             if ret != 0:
                 raise RuntimeError(f"put_batch failed with error code: {ret}")
@@ -143,23 +140,19 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
 
         return results
 
-    def _batch_get_tensors(
-        self, keys: list[str], shapes: list, dtypes: list
-    ) -> list[Tensor]:
+    def _batch_get_tensors(self, keys: list[str], shapes: list, dtypes: list) -> list[Tensor]:
         tensors = [None] * len(keys)
-        
+
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
-            batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
-            batch_shapes = shapes[i:i + BATCH_SIZE_LIMIT]
-            batch_dtypes = dtypes[i:i + BATCH_SIZE_LIMIT]
-            
+            batch_keys = keys[i : i + BATCH_SIZE_LIMIT]
+            batch_shapes = shapes[i : i + BATCH_SIZE_LIMIT]
+            batch_dtypes = dtypes[i : i + BATCH_SIZE_LIMIT]
+
             batch_results = self._store.get_batch(batch_keys)
-            
+
             if len(batch_results) != len(batch_keys):
-                raise RuntimeError(
-                    f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
-                )
-            
+                raise RuntimeError(f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}")
+
             for j, (raw_bytes, shape, dtype) in enumerate(zip(batch_results, batch_shapes, batch_dtypes, strict=True)):
                 if dtype == torch.bfloat16:
                     tensors[i + j] = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
@@ -171,12 +164,10 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
     def _batch_get_bytes(self, keys: list[str]) -> list[bytes]:
         results = []
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
-            batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
+            batch_keys = keys[i : i + BATCH_SIZE_LIMIT]
             batch_results = self._store.get_batch(batch_keys)
             if len(batch_results) != len(batch_keys):
-                raise RuntimeError(
-                    f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}"
-                )
+                raise RuntimeError(f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}")
             results.extend(batch_results)
         return results
 
@@ -190,4 +181,3 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         if self._store:
             self._store.close()
             self._store = None
-
