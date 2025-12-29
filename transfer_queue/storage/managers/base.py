@@ -539,7 +539,8 @@ class KVStorageManager(TransferQueueStorageManager):
         get_shape_type_time = time.time() - get_shape_type_start
         
         storage_get_start = time.time()
-        values = self.storage_client.get(keys=keys, shapes=shapes, dtypes=dtypes)
+        loop = asyncio.get_event_loop()
+        values = await loop.run_in_executor(None, self.storage_client.get, keys, shapes, dtypes)
         storage_get_time = time.time() - storage_get_start
         
         merge_start = time.time()
