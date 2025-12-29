@@ -431,27 +431,27 @@ class KVStorageManager(TransferQueueStorageManager):
         to the controller that new data is available.
         """
         put_data_start = time.time()
-        
+
         if not metadata.field_names:
             logger.warning("Attempted to put data, but metadata contains no fields.")
             return
-        
+
         generate_start = time.time()
         keys = self._generate_keys(data.keys(), metadata.global_indexes)
         values = self._generate_values(data)
         generate_time = time.time() - generate_start
-        
+
         logger.info(
             f"[{self.storage_manager_id}]: Starting put operation: "
             f"{len(keys)} keys, {len(values)} values, "
             f"{len(metadata.global_indexes)} samples"
         )
-        
+
         client_put_start = time.time()
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self.storage_client.put, keys, values)
         client_put_time = time.time() - client_put_start
-        
+
         logger.info(f"[{self.storage_manager_id}]: Put operation completed")
 
         extract_start = time.time()
@@ -464,17 +464,26 @@ class KVStorageManager(TransferQueueStorageManager):
             per_field_shapes[global_idx] = {}
 
         # For each field, extract dtype and shape for each sample
-        expected_size = metadata.size
-        if data.batch_size[0] != expected_size:
+        num_samples = len(metadata.global_indexes)
+        if num_samples == 0:
+            return
+
+        data_batch_size = data.batch_size[0] if data.batch_size else 0
+        if num_samples != data_batch_size:
             raise ValueError(
-                f"Data batch_size ({data.batch_size[0]}) does not match metadata size ({expected_size})"
+                f"Mismatch between metadata.global_indexes length ({num_samples}) "
+                f"and data.batch_size[0] ({data_batch_size})"
             )
-        
-        for field_name in data.keys():
-            field_items = []
-            for idx in range(expected_size):
-                field_items.append(data[idx][field_name])
-            for i, data_item in enumerate(field_items):
+
+        for field_name, field_data in data.items():
+            for i in range(num_samples):
+                try:
+                    data_item = field_data[i]
+                except (IndexError, TypeError, KeyError) as e:
+                    raise IndexError(
+                        f"Failed to access field '{field_name}' at index {i}: {e}. "
+                        f"Field type: {type(field_data)}, num_samples: {num_samples}"
+                    ) from e
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
@@ -494,32 +503,36 @@ class KVStorageManager(TransferQueueStorageManager):
             partition_id, list(data.keys()), metadata.global_indexes, per_field_dtypes, per_field_shapes
         )
         notify_time = time.time() - notify_start
-        
+
         total_time = time.time() - put_data_start
-        
+
         logger.warning("=" * 80)
         logger.warning("KVStorageManager: put_data() Time Breakdown")
         logger.warning("=" * 80)
         logger.warning(f"Total time: {total_time:.4f}s")
         logger.warning("Time Breakdown:")
-        logger.warning(f"  ├─ Generate keys/values:  {generate_time:8.4f}s ({generate_time/total_time*100:5.1f}%)")
-        logger.warning(f"  ├─ Storage client.put:    {client_put_time:8.4f}s ({client_put_time/total_time*100:5.1f}%)")
-        logger.warning(f"  ├─ Extract dtype/shape:   {extract_time:8.4f}s ({extract_time/total_time*100:5.1f}%)")
-        logger.warning(f"  └─ Notify controller:     {notify_time:8.4f}s ({notify_time/total_time*100:5.1f}%)")
+        logger.warning(f"  ├─ Generate keys/values:  {generate_time:8.4f}s ({generate_time / total_time * 100:5.1f}%)")
+        logger.warning(
+            f"  ├─ Storage client.put:    {client_put_time:8.4f}s ({client_put_time / total_time * 100:5.1f}%)"
+        )
+        logger.warning(f"  ├─ Extract dtype/shape:   {extract_time:8.4f}s ({extract_time / total_time * 100:5.1f}%)")
+        logger.warning(f"  └─ Notify controller:     {notify_time:8.4f}s ({notify_time / total_time * 100:5.1f}%)")
         logger.warning("=" * 80)
         notify_time = time.time() - notify_start
-        
+
         total_time = time.time() - put_data_start
-        
+
         logger.warning("=" * 80)
         logger.warning("KVStorageManager: put_data() Time Breakdown")
         logger.warning("=" * 80)
         logger.warning(f"Total time: {total_time:.4f}s")
         logger.warning("Time Breakdown:")
-        logger.warning(f"  ├─ Generate keys/values:  {generate_time:8.4f}s ({generate_time/total_time*100:5.1f}%)")
-        logger.warning(f"  ├─ Storage client.put:    {client_put_time:8.4f}s ({client_put_time/total_time*100:5.1f}%)")
-        logger.warning(f"  ├─ Extract dtype/shape:   {extract_time:8.4f}s ({extract_time/total_time*100:5.1f}%)")
-        logger.warning(f"  └─ Notify controller:     {notify_time:8.4f}s ({notify_time/total_time*100:5.1f}%)")
+        logger.warning(f"  ├─ Generate keys/values:  {generate_time:8.4f}s ({generate_time / total_time * 100:5.1f}%)")
+        logger.warning(
+            f"  ├─ Storage client.put:    {client_put_time:8.4f}s ({client_put_time / total_time * 100:5.1f}%)"
+        )
+        logger.warning(f"  ├─ Extract dtype/shape:   {extract_time:8.4f}s ({extract_time / total_time * 100:5.1f}%)")
+        logger.warning(f"  └─ Notify controller:     {notify_time:8.4f}s ({notify_time / total_time * 100:5.1f}%)")
         logger.warning("=" * 80)
 
     async def get_data(self, metadata: BatchMeta) -> TensorDict:
@@ -530,38 +543,42 @@ class KVStorageManager(TransferQueueStorageManager):
         correct shapes and dtypes, and merge them as a TensorDict according to metadata.
         """
         get_data_start_time = time.time()
-        
+
         if not metadata.field_names:
             logger.warning("Attempted to get data, but metadata contains no fields.")
             return TensorDict({}, batch_size=len(metadata))
-        
+
         generate_keys_start = time.time()
         keys = self._generate_keys(metadata.field_names, metadata.global_indexes)
         generate_keys_time = time.time() - generate_keys_start
-        
+
         get_shape_type_start = time.time()
         shapes, dtypes = self._get_shape_type_list(metadata)
         get_shape_type_time = time.time() - get_shape_type_start
-        
+
         storage_get_start = time.time()
         loop = asyncio.get_event_loop()
         values = await loop.run_in_executor(None, self.storage_client.get, keys, shapes, dtypes)
         storage_get_time = time.time() - storage_get_start
-        
+
         merge_start = time.time()
         result = self._merge_tensors_to_tensordict(metadata, values)
         merge_time = time.time() - merge_start
-        
+
         get_data_total_time = time.time() - get_data_start_time
         logger.warning("=" * 80)
-        logger.warning(f"KVStorageManager: GET_DATA Operation Time Distribution")
+        logger.warning("KVStorageManager: GET_DATA Operation Time Distribution")
         logger.warning("=" * 80)
         logger.warning(f"Total time: {get_data_total_time:.4f}s")
         logger.warning("Time Breakdown:")
-        logger.warning(f"  ├─ Generate keys:      {generate_keys_time:8.4f}s ({generate_keys_time/get_data_total_time*100:5.1f}%)")
-        logger.warning(f"  ├─ Get shape/type:     {get_shape_type_time:8.4f}s ({get_shape_type_time/get_data_total_time*100:5.1f}%)")
-        logger.warning(f"  ├─ Storage client.get: {storage_get_time:8.4f}s ({storage_get_time/get_data_total_time*100:5.1f}%)")
-        logger.warning(f"  └─ Merge tensors:      {merge_time:8.4f}s ({merge_time/get_data_total_time*100:5.1f}%)")
+        generate_keys_pct = generate_keys_time / get_data_total_time * 100
+        logger.warning(f"  ├─ Generate keys:      {generate_keys_time:8.4f}s ({generate_keys_pct:5.1f}%)")
+        get_shape_type_pct = get_shape_type_time / get_data_total_time * 100
+        logger.warning(f"  ├─ Get shape/type:     {get_shape_type_time:8.4f}s ({get_shape_type_pct:5.1f}%)")
+        logger.warning(
+            f"  ├─ Storage client.get: {storage_get_time:8.4f}s ({storage_get_time / get_data_total_time * 100:5.1f}%)"
+        )
+        logger.warning(f"  └─ Merge tensors:      {merge_time:8.4f}s ({merge_time / get_data_total_time * 100:5.1f}%)")
         logger.warning("=" * 80)
         return result
 

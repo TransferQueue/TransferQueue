@@ -335,7 +335,7 @@ class AsyncTransferQueueClient:
         logger.debug(f"[{self.client_id}]: Put data with data: {data}")
 
         async_put_start = time.time()
-        
+
         put_data_start = time.time()
         with limit_pytorch_auto_parallel_threads(
             target_num_threads=TQ_NUM_THREADS, info=f"[{self.client_id}] async_put"
@@ -351,19 +351,23 @@ class AsyncTransferQueueClient:
         # update metadata after put
         metadata = metadata.add_fields(data)
         update_meta_time = time.time() - update_meta_start
-        
+
         total_time = time.time() - async_put_start
-        
+
         logger.warning("=" * 80)
         logger.warning("AsyncTransferQueueClient: async_put() Time Breakdown")
         logger.warning("=" * 80)
         logger.warning(f"Total time: {total_time:.4f}s")
         logger.warning("Time Breakdown:")
-        logger.warning(f"  ├─ storage_manager.put_data: {put_data_time:8.4f}s ({put_data_time/total_time*100:5.1f}%)")
-        logger.warning(f"  ├─ metadata.add_fields:      {update_meta_time:8.4f}s ({update_meta_time/total_time*100:5.1f}%)")
+        logger.warning(
+            f"  ├─ storage_manager.put_data: {put_data_time:8.4f}s ({put_data_time / total_time * 100:5.1f}%)"
+        )
+        logger.warning(
+            f"  ├─ metadata.add_fields:      {update_meta_time:8.4f}s ({update_meta_time / total_time * 100:5.1f}%)"
+        )
         other_time = total_time - put_data_time - update_meta_time
         if other_time > 0.001:
-            logger.warning(f"  └─ Other overhead:          {other_time:8.4f}s ({other_time/total_time*100:5.1f}%)")
+            logger.warning(f"  └─ Other overhead:          {other_time:8.4f}s ({other_time / total_time * 100:5.1f}%)")
         logger.warning("=" * 80)
 
         return metadata
