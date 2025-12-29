@@ -1,6 +1,0 @@
-metadata_server: "http://10.144.207.122:8081/metadata"  # HTTP metadata server 地址
-master_server_address: "10.144.207.122:50051"           # Master Service 地址
-local_hostname: "localhost"                             # 本地主机名
-protocol: "rdma"                                         # tcp 或 rdma
-global_segment_size: 53687091200                         # 51200MB
-local_buffer_size: 134217728                           # 128MB
