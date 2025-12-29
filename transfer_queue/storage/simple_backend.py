@@ -29,7 +29,7 @@ from ray.util import get_node_ip_address
 from transfer_queue.metadata import SampleMeta
 from transfer_queue.utils.perf_utils import IntervalPerfMonitor
 from transfer_queue.utils.serial_utils import zero_copy_serialization_enabled
-from transfer_queue.utils.utils import TransferQueueRole, get_env_bool, limit_pytorch_auto_parallel_threads
+from transfer_queue.utils.utils import TransferQueueRole, limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket, get_free_port
 
 logger = logging.getLogger(__name__)
@@ -43,9 +43,6 @@ if not logger.hasHandlers():
 
 TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
 TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 8))
-
-
-TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False)
 
 
 class StorageUnitData:

@@ -28,7 +28,6 @@ import numpy as np
 import torch
 import zmq
 from msgspec import msgpack
-from torch.distributed.rpc.internal import _internal_rpc_pickler
 
 from transfer_queue.utils.utils import get_env_bool
 
