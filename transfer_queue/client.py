@@ -340,6 +340,7 @@ class AsyncTransferQueueClient:
             f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
         )
 
+        # update metadata after put
         metadata = metadata.add_fields(data)
 
         return metadata
