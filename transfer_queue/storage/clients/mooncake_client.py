@@ -70,6 +70,8 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         for key, value in zip(keys, values, strict=True):
             if isinstance(value, torch.Tensor):
                 tensor = value.contiguous()
+                if tensor.device.type == "cuda":
+                    tensor = tensor.cpu()
                 tensor_keys.append(key)
                 tensor_values.append(tensor)
             else:
@@ -90,9 +92,9 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             batch_values = []
             for tensor in batch_tensors:
                 if tensor.dtype == torch.bfloat16:
-                    bytes_data = tensor.detach().cpu().view(torch.int16).numpy().tobytes()
+                    bytes_data = tensor.detach().view(torch.int16).numpy().tobytes()
                 else:
-                    bytes_data = tensor.detach().cpu().numpy().tobytes()
+                    bytes_data = tensor.detach().numpy().tobytes()
                 batch_values.append(bytes_data)
             
             ret = self._store.put_batch(batch_keys, batch_values)
@@ -145,7 +147,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         self, keys: list[str], shapes: list, dtypes: list
     ) -> list[Tensor]:
         tensors = [None] * len(keys)
-            
+        
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
             batch_keys = keys[i:i + BATCH_SIZE_LIMIT]
             batch_shapes = shapes[i:i + BATCH_SIZE_LIMIT]
