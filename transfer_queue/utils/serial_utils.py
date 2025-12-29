@@ -28,21 +28,15 @@ import numpy as np
 import torch
 import zmq
 from msgspec import msgpack
+from torch.distributed.rpc.internal import _internal_rpc_pickler
 
 from transfer_queue.utils.utils import get_env_bool
-
-try:
-    from torch.distributed.rpc.internal import _internal_rpc_pickler
-
-    HAS_RPC_PICKLER = True
-except ImportError:
-    HAS_RPC_PICKLER = False
 
 CUSTOM_TYPE_PICKLE = 1
 CUSTOM_TYPE_CLOUDPICKLE = 2
 CUSTOM_TYPE_RAW_VIEW = 3
 
-TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False) and HAS_RPC_PICKLER
+TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False)
 
 bytestr: TypeAlias = bytes | bytearray | memoryview | zmq.Frame
 tensorenc = tuple[str, tuple[int, ...], int | memoryview]
