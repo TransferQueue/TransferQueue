@@ -445,20 +445,25 @@ class KVStorageManager(TransferQueueStorageManager):
             per_field_shapes[global_idx] = {}
 
         # For each field, extract dtype and shape for each sample
-        expected_size = metadata.size
-        if data.batch_size[0] != expected_size:
+        num_samples = len(metadata.global_indexes)
+        if num_samples == 0:
+            return
+        
+        data_batch_size = data.batch_size[0] if data.batch_size else 0
+        if num_samples != data_batch_size:
             raise ValueError(
-                f"Data batch_size ({data.batch_size[0]}) does not match metadata size ({expected_size})"
+                f"Mismatch between metadata.global_indexes length ({num_samples}) "
+                f"and data.batch_size[0] ({data_batch_size})"
             )
         
         for field_name, field_data in data.items():
-            for i in range(expected_size):
+            for i in range(num_samples):
                 try:
                     data_item = field_data[i]
                 except (IndexError, TypeError, KeyError) as e:
                     raise IndexError(
                         f"Failed to access field '{field_name}' at index {i}: {e}. "
-                        f"Field type: {type(field_data)}, expected_size: {expected_size}"
+                        f"Field type: {type(field_data)}, num_samples: {num_samples}"
                     )
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
