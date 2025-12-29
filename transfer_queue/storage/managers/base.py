@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import asyncio
 import itertools
 import logging
 import os
@@ -432,7 +433,8 @@ class KVStorageManager(TransferQueueStorageManager):
             return
         keys = self._generate_keys(data.keys(), metadata.global_indexes)
         values = self._generate_values(data)
-        self.storage_client.put(keys=keys, values=values)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.storage_client.put, keys, values)
 
         per_field_dtypes = {}
         per_field_shapes = {}
@@ -449,11 +451,15 @@ class KVStorageManager(TransferQueueStorageManager):
                 f"Data batch_size ({data.batch_size[0]}) does not match metadata size ({expected_size})"
             )
         
-        for field_name in data.keys():
-            field_items = []
-            for idx in range(expected_size):
-                field_items.append(data[idx][field_name])
-            for i, data_item in enumerate(field_items):
+        for field_name, field_data in data.items():
+            for i in range(expected_size):
+                try:
+                    data_item = field_data[i]
+                except (IndexError, TypeError, KeyError) as e:
+                    raise IndexError(
+                        f"Failed to access field '{field_name}' at index {i}: {e}. "
+                        f"Field type: {type(field_data)}, expected_size: {expected_size}"
+                    )
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
