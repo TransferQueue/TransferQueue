@@ -275,3 +275,8 @@ def deserialization(data: list[bytestr] | bytestr) -> Any:
                 f"When TQ_ZERO_COPY_SERIALIZATION is disabled, input data should be a list of bytestr,"
                 f" but got {type(data)}."
             )
+
+
+def zero_copy_serialization_enabled() -> bool:
+    """Check if zero-copy serialization is enabled."""
+    return TQ_ZERO_COPY_SERIALIZATION
