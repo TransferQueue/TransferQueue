@@ -89,7 +89,6 @@ class StorageUnitData:
                 )
 
             if len(local_indexes) == 1:
-                # The unsqueeze op make the shape from n to (1, n)
                 gathered_item = self.field_data[field][local_indexes[0]]
                 result[field] = [gathered_item]
 
