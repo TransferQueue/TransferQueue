@@ -8,8 +8,8 @@
   <br />
 
   <a href="https://deepwiki.com/Ascend/TransferQueue"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
-  [![GitHub Repo stars](https://img.shields.io/github/stars/Ascend/TransferQueue)](https://github.com/TransferQueue/TransferQueue/stargazers/)
-  [![GitHub commit activity](https://img.shields.io/github/commit-activity/w/Ascend/TransferQueue)](https://github.com/TransferQueue/TransferQueue/graphs/commit-activity)
+  [![GitHub Repo stars](https://img.shields.io/github/stars/Ascend/TransferQueue)](https://github.com/Ascend/TransferQueue/stargazers/)
+  [![GitHub commit activity](https://img.shields.io/github/commit-activity/w/Ascend/TransferQueue)](https://github.com/Ascend/TransferQueue/graphs/commit-activity)
 
 </div>
 <br/>
