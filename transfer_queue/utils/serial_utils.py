@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 # Copyright 2025 The vLLM project
 #
@@ -14,6 +15,7 @@
 # limitations under the License.
 
 # This implementation is inspired by https://github.com/vllm-project/vllm/blob/main/vllm/v1/serial_utils.py
+
 import itertools
 import logging
 import os
