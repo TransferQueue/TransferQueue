@@ -297,8 +297,6 @@ class TQBandwidthTester:
 
 
 def main():
-    import sys
-
     if len(sys.argv) < 2:
         print("Usage: python performance_test.py <test_mode>")
         print("Available test modes:")
