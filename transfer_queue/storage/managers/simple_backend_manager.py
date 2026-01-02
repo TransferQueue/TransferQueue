@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import asyncio
 import logging
 import os
@@ -28,6 +30,7 @@ from transfer_queue.metadata import BatchMeta
 from transfer_queue.storage.managers.base import TransferQueueStorageManager
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
 from transfer_queue.storage.simple_backend import StorageMetaGroup
+from transfer_queue.utils.serial_utils import zero_copy_serialization_enabled
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket
 
 logger = logging.getLogger(__name__)
@@ -233,23 +236,11 @@ class AsyncSimpleStorageManager(TransferQueueStorageManager):
         Send data to a specific storage unit.
         """
 
-        tensordict_data = TensorDict(
-            {
-                field: (
-                    torch.nested.as_nested_tensor(storage_data[field])
-                    if storage_data[field] and all(isinstance(x, torch.Tensor) for x in storage_data[field])
-                    else NonTensorStack(*storage_data[field])
-                )
-                for field in storage_data.keys()
-            },
-            batch_size=len(local_indexes),
-        )
-
         request_msg = ZMQMessage.create(
             request_type=ZMQRequestType.PUT_DATA,
             sender_id=self.storage_manager_id,
             receiver_id=target_storage_unit,
-            body={"local_indexes": local_indexes, "data": tensordict_data},
+            body={"local_indexes": local_indexes, "data": storage_data},
         )
 
         try:
@@ -456,6 +447,11 @@ def _filter_storage_data(storage_meta_group: StorageMetaGroup, data: TensorDict)
         if not isinstance(result, tuple):
             result = (result,)
         results[fname] = list(result)
+
+        if not zero_copy_serialization_enabled():
+            # Explicitly copy tensor slices to prevent pickling the whole tensor for every storage unit.
+            # The tensors may still be contiguous, so we cannot use .contiguous() to trigger copy from parent tensors.
+            results[fname] = [item.clone() if isinstance(item, torch.Tensor) else item for item in results[fname]]
 
     return results
 
