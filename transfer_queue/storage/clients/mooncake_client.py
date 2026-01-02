@@ -86,17 +86,13 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             batch_keys = keys[i : i + BATCH_SIZE_LIMIT]
             batch_tensors = tensors[i : i + BATCH_SIZE_LIMIT]
 
-            batch_values = []
-            for tensor in batch_tensors:
-                if tensor.dtype == torch.bfloat16:
-                    bytes_data = tensor.detach().view(torch.int16).numpy().tobytes()
-                else:
-                    bytes_data = tensor.detach().numpy().tobytes()
-                batch_values.append(bytes_data)
-
-            ret = self._store.put_batch(batch_keys, batch_values)
-            if ret != 0:
-                raise RuntimeError(f"put_batch failed with error code: {ret}")
+            results = self._store.batch_put_tensor(batch_keys, batch_tensors)
+            if not all(r == 0 for r in results):
+                failed_indices = [j for j, r in enumerate(results) if r != 0]
+                error_codes = [results[j] for j in failed_indices]
+                raise RuntimeError(
+                    f"batch_put_tensor failed for indices {failed_indices} with error codes: {error_codes}"
+                )
 
     def _batch_put_bytes(self, keys: list[str], values: list[bytes]):
         for i in range(0, len(keys), BATCH_SIZE_LIMIT):
@@ -129,6 +125,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             tensor_shapes = [shapes[i] for i in tensor_indices]
             tensor_dtypes = [dtypes[i] for i in tensor_indices]
             tensor_results = self._batch_get_tensors(tensor_keys, tensor_shapes, tensor_dtypes)
+            # TODO: optimize these for loops
             for idx, tensor in zip(tensor_indices, tensor_results, strict=True):
                 results[idx] = tensor
 
@@ -148,16 +145,23 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
             batch_shapes = shapes[i : i + BATCH_SIZE_LIMIT]
             batch_dtypes = dtypes[i : i + BATCH_SIZE_LIMIT]
 
-            batch_results = self._store.get_batch(batch_keys)
+            batch_results = self._store.batch_get_tensor(batch_keys)
 
             if len(batch_results) != len(batch_keys):
-                raise RuntimeError(f"get_batch returned {len(batch_results)} items, expected {len(batch_keys)}")
+                raise RuntimeError(f"batch_get_tensor returned {len(batch_results)} items, expected {len(batch_keys)}")
 
-            for j, (raw_bytes, shape, dtype) in enumerate(zip(batch_results, batch_shapes, batch_dtypes, strict=True)):
-                if dtype == torch.bfloat16:
-                    tensors[i + j] = torch.frombuffer(raw_bytes, dtype=torch.int16).view(shape).view(torch.bfloat16)
-                else:
-                    tensors[i + j] = torch.frombuffer(raw_bytes, dtype=dtype).view(shape)
+            for j, (tensor, shape, dtype) in enumerate(zip(batch_results, batch_shapes, batch_dtypes, strict=True)):
+                if tensor is None:
+                    raise RuntimeError(f"batch_get_tensor returned None for key '{batch_keys[j]}'")
+                if tensor.shape != torch.Size(shape):
+                    raise RuntimeError(
+                        f"Shape mismatch for key '{batch_keys[j]}': expected {shape}, got {tensor.shape}"
+                    )
+                if tensor.dtype != dtype:
+                    raise RuntimeError(
+                        f"Dtype mismatch for key '{batch_keys[j]}': expected {dtype}, got {tensor.dtype}"
+                    )
+                tensors[i + j] = tensor
 
         return tensors
 
