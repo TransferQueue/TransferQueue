@@ -431,6 +431,12 @@ class KVStorageManager(TransferQueueStorageManager):
         if not metadata.field_names:
             logger.warning("Attempted to put data, but metadata contains no fields.")
             return
+
+        # For each field, extract dtype and shape for each sample
+        num_samples = len(metadata.global_indexes)
+        if num_samples == 0:
+            return
+
         keys = self._generate_keys(data.keys(), metadata.global_indexes)
         values = self._generate_values(data)
         loop = asyncio.get_event_loop()
@@ -443,11 +449,6 @@ class KVStorageManager(TransferQueueStorageManager):
         for global_idx in metadata.global_indexes:
             per_field_dtypes[global_idx] = {}
             per_field_shapes[global_idx] = {}
-
-        # For each field, extract dtype and shape for each sample
-        num_samples = len(metadata.global_indexes)
-        if num_samples == 0:
-            return
 
         for field_name, field_data in data.items():
             for i in range(num_samples):

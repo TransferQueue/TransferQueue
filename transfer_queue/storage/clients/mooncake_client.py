@@ -67,6 +67,7 @@ class MooncakeStorageClient(TransferQueueStorageKVClient):
         for key, value in zip(keys, values, strict=True):
             if isinstance(value, torch.Tensor):
                 tensor = value.contiguous()
+                # TODO: use gpu direct rdma instead
                 if tensor.device.type == "cuda":
                     tensor = tensor.cpu()
                 tensor_keys.append(key)
