@@ -28,7 +28,7 @@ class RayObjectRefStorage:
 
 @StorageClientFactory.register("RayStorageClient")
 class RayStorageClient(TransferQueueStorageKVClient):
-    def __init__(self):
+    def __init__(self, config=None):
         if not ray.is_initialized():
             raise RuntimeError("Ray is not initialized. Please call ray.init() before creating RayStorageClient.")
 
