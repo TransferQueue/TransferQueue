@@ -72,9 +72,9 @@ This class encapsulates the core interaction logic within the TransferQueue syst
 Currently, we support the following storage backends:
 
 - SimpleStorageUnit: A basic CPU memory storage with minimal data format constraints and easy usability.
-- [Yuanrong](https://gitee.com/openeuler/yuanrong-datasystem): An Ascend native data system that provides hierarchical storage interfaces including HBM/DRAM/SSD.
-- [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) ([WIP](https://github.com/TransferQueue/TransferQueue/pull/162)): A high-performance, KV-based hierarchical storage that supports RDMA transport between GPU and DRAM.
-- [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html) ([WIP](https://github.com/TransferQueue/TransferQueue/pull/108)): Ray's new feature that allows Ray to store and pass objects directly between Ray actors.
+- [Yuanrong](https://gitee.com/openeuler/yuanrong-datasystem) (beta, [#PR107](https://github.com/TransferQueue/TransferQueue/pull/107), [#PR96](https://github.com/TransferQueue/TransferQueue/pull/96)): An Ascend native data system that provides hierarchical storage interfaces including HBM/DRAM/SSD.
+- [Mooncake Store](https://github.com/kvcache-ai/Mooncake) (alpha, [#PR162](https://github.com/TransferQueue/TransferQueue/pull/162)): A high-performance, KV-based hierarchical storage that supports RDMA transport between GPU and DRAM.
+- [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html) (alpha, [PR167](https://github.com/TransferQueue/TransferQueue/pull/167)): Ray's new feature that allows Ray to store and pass objects directly between Ray actors.
 
 Among them, `SimpleStorageUnit` serves as our default storage backend, coordinated by the `AsyncSimpleStorageManager` class. Each storage unit can be deployed on a separate node, allowing for distributed data management.
 
@@ -249,7 +249,7 @@ The data plane is organized as follows:
   transfer_queue/
   ├── storage/
   │   ├── __init__.py
-  │   │── simple_backend.py             # SimpleStorageUnit、StorageUnitData、StorageMetaGroup
+  │   │── simple_backend.py             # Default distributed storage backend (SimpleStorageUnit) by TQ 
   │   ├── managers/                     # Managers are upper level interfaces that encapsulate the interaction logic with TQ system.
   │   │   ├── __init__.py
   │   │   ├──base.py                    # TransferQueueStorageManager, KVStorageManager
@@ -260,8 +260,9 @@ The data plane is organized as follows:
   │   └── clients/                      # Clients are lower level interfaces that directly manipulate the target storage backend.
   │   │   ├── __init__.py
   │   │   ├── base.py                   # TransferQueueStorageKVClient
-  │   │   ├── yuanrong_client.py         # YRStorageClient
-  │   │   ├── mooncake_client.py         # MooncakeStoreClient
+  │   │   ├── yuanrong_client.py        # YuanrongStorageClient
+  │   │   ├── mooncake_client.py        # MooncakeStorageClient
+  │   │   ├── ray_storage_client.py     # RayStorageClient
   │   │   └── factory.py                # TransferQueueStorageClientFactory
 ```
 
@@ -298,7 +299,7 @@ pre-commit install && pre-commit run --all-files --show-diff-on-failure --color=
 - [ ] Support disaggregated framework (each rank retrieves its own data without going through a centralized node)
 - [ ] Provide a `StreamingDataLoader` interface for disaggregated framework
 - [ ] Support load-balancing and dynamic batching
-- [ ] Support high-performance storage backends for RDMA transmission (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake), [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html)...)
+- [x] Support high-performance storage backends for RDMA transmission (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake), [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html)...)
 - [x] High-performance serialization and deserialization
 - [ ] More documentation, examples and tutorials
 
