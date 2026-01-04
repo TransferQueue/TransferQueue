@@ -22,7 +22,8 @@ class RayObjectRefStorage:
 
     def clear_obj_ref(self, keys: list[str]):
         for key in keys:
-            self.storage_dict.pop(key, None)
+            if key in self.storage_dict:
+                del self.storage_dict[key]
 
 
 @StorageClientFactory.register("RayStorageClient")

@@ -1,15 +1,20 @@
+import sys
 import time
+from pathlib import Path
 
 import ray
 import torch
 from ray.util.scheduling_strategies import NodeAffinitySchedulingStrategy
 from tensordict import TensorDict
 
-from transfer_queue.client import TransferQueueClient
-from transfer_queue.metadata import BatchMeta, FieldMeta, SampleMeta
-from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory
-from transfer_queue.storage.managers.kv_manager import KVStorageManager
-from transfer_queue.utils.zmq_utils import ZMQServerInfo
+parent_dir = Path(__file__).resolve().parent.parent
+sys.path.append(str(parent_dir))
+
+from transfer_queue.client import TransferQueueClient  # noqa: E402
+from transfer_queue.metadata import BatchMeta, FieldMeta, SampleMeta  # noqa: E402
+from transfer_queue.storage.managers.base import KVStorageManager  # noqa: E402
+from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory  # noqa: E402
+from transfer_queue.utils.zmq_utils import ZMQServerInfo  # noqa: E402
 
 TEST_CONFIGS: list[tuple[tuple[int, int], torch.dtype]] = [
     ((5000, 5000), torch.float32),
@@ -115,7 +120,6 @@ class WriterActor:
     def put_once(self) -> float:
         t0 = time.time()
         self.client.put(data=self.data, metadata=self.meta)
-        print("[WriterActor] Write completed.")
         return time.time() - t0
 
 
@@ -130,7 +134,6 @@ class ReaderActor:
     def get_once(self, metadata: BatchMeta):
         t0 = time.time()
         self.client.get_data(metadata)
-        print("[ReaderActor] Read completed.")
         return time.time() - t0
 
 
@@ -175,11 +178,11 @@ def main():
     partition_id = "train_step_0"
     meta = ray.get(writer.generate_data.remote(partition_id=partition_id, batch_size=4000, seq_len=4000))
 
-    for i in range(10):
+    for i in range(1):
         cost = ray.get(writer.put_once.remote())
         print(f"[WriterActor] The time consumed by the {i}th put costs: {cost:.2f}s")
 
-    for i in range(10):
+    for i in range(3):
         cost = ray.get(reader.get_once.remote(meta))
         print(f"[ReaderActor] The time consumed by the {i}th get costs: {cost:.2f}s")
 
