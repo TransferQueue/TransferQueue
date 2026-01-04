@@ -305,7 +305,7 @@ class TransferQueueStorageManager(ABC):
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory  # noqa: E402
 
 
-@TransferQueueStorageManagerFactory.register("KV")
+@TransferQueueStorageManagerFactory.register("KVStorageManager")
 class KVStorageManager(TransferQueueStorageManager):
     """
     A storage manager that uses a key-value (KV) backend (e.g., YuanRong) to store and retrieve tensor data.
