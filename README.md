@@ -7,9 +7,9 @@
   <br />
   <br />
 
-  <a href="https://deepwiki.com/TransferQueue/TransferQueue"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
-  [![GitHub Repo stars](https://img.shields.io/github/stars/TransferQueue/TransferQueue)](https://github.com/TransferQueue/TransferQueue/stargazers/)
-  [![GitHub commit activity](https://img.shields.io/github/commit-activity/w/TransferQueue/TransferQueue)](https://github.com/TransferQueue/TransferQueue/graphs/commit-activity)
+  <a href="https://deepwiki.com/Ascend/TransferQueue"><img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" style="height:20px;"></a>
+  [![GitHub Repo stars](https://img.shields.io/github/stars/Ascend/TransferQueue)](https://github.com/Ascend/TransferQueue/stargazers/)
+  [![GitHub commit activity](https://img.shields.io/github/commit-activity/w/Ascend/TransferQueue)](https://github.com/Ascend/TransferQueue/graphs/commit-activity)
 
 </div>
 <br/>
@@ -30,6 +30,8 @@ TransferQueue offers **fine-grained, sample-level** data management and **load-b
 
 <h2 id="updates">🔄 Updates</h2>
 
+ - **Dec 30, 2025**:  **TransferQueue x verl** integration is tested with the DAPO algorithm at scale **(64 nodes, 1024 cards)**. It significantly optimizes host memory utilization and accelerates data transfers. Stay tuned for more details!
+ - **Dec 20, 2025**: 🔥 The official [tutorial](https://github.com/TransferQueue/TransferQueue/tree/main/tutorial) is released! Feel free to check it out.
  - **Nov 10, 2025**: We disentangle the data retrieval logic from TransferQueueController [PR#101](https://github.com/TransferQueue/TransferQueue/pull/101). Now you can implement your own `Sampler` to control how to consume the data.
  - **Nov 5, 2025**: We provide a `KVStorageManager` that simplifies the integration with KV-based storage backends [PR#96](https://github.com/TransferQueue/TransferQueue/pull/96). The first available KV-based backend is [Yuanrong](https://gitee.com/openeuler/yuanrong-datasystem).
  - **Nov 4, 2025**: Data partition capability is available in [PR#98](https://github.com/TransferQueue/TransferQueue/pull/98). Now you can define logical data partitions to manage your train/val/test datasets.
@@ -71,7 +73,7 @@ Currently, we support the following storage backends:
 
 - SimpleStorageUnit: A basic CPU memory storage with minimal data format constraints and easy usability.
 - [Yuanrong](https://gitee.com/openeuler/yuanrong-datasystem): An Ascend native data system that provides hierarchical storage interfaces including HBM/DRAM/SSD.
-- [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) (WIP): A high-performance, KV-based hierarchical storage that supports RDMA transport between GPU and DRAM.
+- [MoonCakeStore](https://github.com/kvcache-ai/Mooncake) ([WIP](https://github.com/TransferQueue/TransferQueue/pull/162)): A high-performance, KV-based hierarchical storage that supports RDMA transport between GPU and DRAM.
 - [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html) ([WIP](https://github.com/TransferQueue/TransferQueue/pull/108)): Ray's new feature that allows Ray to store and pass objects directly between Ray actors.
 
 Among them, `SimpleStorageUnit` serves as our default storage backend, coordinated by the `AsyncSimpleStorageManager` class. Each storage unit can be deployed on a separate node, allowing for distributed data management.
@@ -107,12 +109,12 @@ The primary interaction points are `AsyncTransferQueueClient` and `TransferQueue
 
 Core interfaces:
 
-- (async_)get_meta(data_fields: list[str], batch_size:int, global_step:int, get_n_samples:bool, task_name:str) -> BatchMeta
-- (async_)get_data(metadata:BatchMeta) -> TensorDict
-- (async_)put(data:TensorDict, metadata:BatchMeta, global_step)
-- (async_)clear(global_step: int)
+- `(async_)get_meta(data_fields: list[str], batch_size:int, partition_id: str, mode: str, task_name:str, sampling_config: Optional[dict[str, Any]]) -> BatchMeta`
+- `(async_)get_data(metadata: BatchMeta) -> TensorDict`
+- `(async_)put(data: TensorDict, metadata: Optional[BatchMeta], partition_id: Optional[str])`
+- `(async_)clear_partition(partition_id: str)` and `(async_)clear_samples(metadata: BatchMeta)`
 
-We will soon release a detailed tutorial and API documentation.
+<span style="color: #FF0000;">**Refer to our [tutorial](https://github.com/TransferQueue/TransferQueue/tree/main/tutorial) for detailed examples.**</span>
 
 ### Collocated Example
 
@@ -142,7 +144,9 @@ Work in progress :)
 <h2 id="quick-start">🚀 Quick Start</h2>
 
 ### Use Python package
-We will soon release the Python package on PyPI.
+```bash
+pip install TransferQueue
+```
 
 ### Build wheel package from source code
 
@@ -173,6 +177,8 @@ Follow these steps to build and install:
 > Note: The above benchmark for TransferQueue is based on our naive `SimpleStorageUnit` backend. By introducing high-performance storage backends and optimizing serialization/deserialization, we expect to achieve even better performance. Warmly welcome contributions from the community!
 
 For detailed performance benchmarks, please refer to [this blog](https://www.yuque.com/haomingzi-lfse7/hlx5g0/tml8ke0zkgn6roey?singleDoc#).
+
+We also provide a [stress test report](https://www.yuque.com/haomingzi-lfse7/hlx5g0/ydbwgo5k2umaag78?singleDoc#) that demonstrates **768 concurrent clients writing 1.4 TB of data** into TransferQueue across 4 nodes. The system remains stable without any crashes or data loss, achieving 80% bandwidth.
 
 <h2 id="customize"> 🛠️ Customize TransferQueue</h2>
 
@@ -233,6 +239,9 @@ batch_meta = client.get_meta(
 )
 ```
 
+<span style="color: #FF0000;">**Refer to [tutorial/04_custom_sampler.py](https://github.com/TransferQueue/TransferQueue/blob/main/tutorial/04_custom_sampler.py) for more details.**</span>
+
+
 ### How to integrate a new storage backend
 
 The data plane is organized as follows:
@@ -280,17 +289,17 @@ pre-commit install && pre-commit run --all-files --show-diff-on-failure --color=
 
 <h2 id="roadmap"> 🛣️ Roadmap</h2>
 
-- [ ] Support data rewrite for partial rollout & agentic post-training
+- [x] Support data rewrite for partial rollout & agentic post-training
 - [x] Provide a general storage abstraction layer `TransferQueueStorageManager` to manage distributed storage units, which simplifies `Client` design and makes it possible to introduce different storage backends ([PR#66](https://github.com/TransferQueue/TransferQueue/pull/66), [issue#72](https://github.com/TransferQueue/TransferQueue/issues/72))
 - [x] Implement `AsyncSimpleStorageManager` as the default storage backend based on the `TransferQueueStorageManager` abstraction
 - [x] Provide a `KVStorageManager` to cover all the KV based storage backends ([PR#96](https://github.com/TransferQueue/TransferQueue/pull/96))
 - [x] Support topic-based data partitioning to maintain train/val/test data simultaneously ([PR#98](https://github.com/TransferQueue/TransferQueue/pull/98))
-- [ ] Release the first stable version through PyPI
+- [x] Release the first stable version through PyPI
 - [ ] Support disaggregated framework (each rank retrieves its own data without going through a centralized node)
 - [ ] Provide a `StreamingDataLoader` interface for disaggregated framework
 - [ ] Support load-balancing and dynamic batching
 - [ ] Support high-performance storage backends for RDMA transmission (e.g., [MoonCakeStore](https://github.com/kvcache-ai/Mooncake), [Ray Direct Transport](https://docs.ray.io/en/master/ray-core/direct-transport.html)...)
-- [ ] High-performance serialization and deserialization
+- [x] High-performance serialization and deserialization
 - [ ] More documentation, examples and tutorials
 
 <h2 id="citation">📑 Citation</h2>

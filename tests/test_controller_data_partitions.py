@@ -1,3 +1,18 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
+# Copyright 2025 The TransferQueue Team
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import logging
 import os
 import sys
@@ -12,8 +27,8 @@ sys.path.append(str(parent_dir))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 10))  # Initial number of samples
-TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 10))
+TQ_INIT_SAMPLE_NUM = int(os.environ.get("TQ_INIT_SAMPLE_NUM", 1))  # Initial number of samples
+TQ_INIT_FIELD_NUM = int(os.environ.get("TQ_INIT_FIELD_NUM", 1))
 
 
 def test_data_partition_status():
@@ -26,7 +41,8 @@ def test_data_partition_status():
     partition = DataPartitionStatus(partition_id="test@partition_1")
 
     # Test initial state
-    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
+    assert partition.total_samples_num == 0
+    assert partition.allocated_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
     assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
     assert partition.production_status is not None
@@ -37,8 +53,16 @@ def test_data_partition_status():
     success = partition.update_production_status(
         global_indices=[0, 1, 2],
         field_names=["input_ids", "attention_mask"],
-        dtypes={0: {"input_ids": "torch.int32"}, 1: {"attention_mask": "torch.bool"}},
-        shapes={0: {"input_ids": (512,)}, 1: {"attention_mask": (512,)}},
+        dtypes={
+            0: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+            1: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+            2: {"input_ids": "torch.int32", "attention_mask": "torch.bool"},
+        },
+        shapes={
+            0: {"input_ids": (512,), "attention_mask": (512,)},
+            1: {"input_ids": (512,), "attention_mask": (512,)},
+            2: {"input_ids": (512,), "attention_mask": (512,)},
+        },
     )
 
     assert success
@@ -105,7 +129,7 @@ def test_partition_interface():
 
     # Test that the class can be imported and has expected methods
     assert hasattr(TransferQueueController, "create_partition")
-    assert hasattr(TransferQueueController, "get_partition")
+    assert hasattr(TransferQueueController, "get_partition_snapshot")
     assert hasattr(TransferQueueController, "update_production_status")
     assert hasattr(TransferQueueController, "scan_data_status")
     assert hasattr(TransferQueueController, "generate_batch_meta")
@@ -135,14 +159,29 @@ def test_dynamic_expansion_scenarios():
     partition = DataPartitionStatus(partition_id="expansion_test")
 
     # Scenario 1: Adding samples with large gaps
-    partition.update_production_status([0, 5, 10], ["field1"])
-    assert partition.total_samples_num >= 11  # Should accommodate index 10
-
+    partition.update_production_status(
+        global_indices=[0, 5, 10],
+        field_names=["field1"],
+        dtypes={
+            0: {"field_1": "torch.bool"},
+            5: {"field_1": "torch.bool"},
+            10: {"field_1": "torch.bool"},
+        },
+        shapes={
+            0: {"field_1": (32,)},
+            5: {"field_1": (32,)},
+            10: {"field_1": (32,)},
+        },
+    )
+    assert partition.total_samples_num == 3
+    assert partition.allocated_samples_num >= 11  # Should accommodate index 10
     print("✓ Large index gaps handled correctly")
 
     # Scenario 2: Adding many fields dynamically
     for i in range(15):
-        partition.update_production_status([0], [f"field_{i}"])
+        partition.update_production_status(
+            [0], [f"field_{i}"], {0: {f"field_{i}": "torch.bool"}}, {0: {f"field_{i}": (32,)}}
+        )
 
     assert partition.total_fields_num == 16  # Original + 15 new fields
     assert partition.allocated_fields_num >= 16
@@ -175,12 +214,15 @@ def test_data_partition_status_advanced():
     partition = DataPartitionStatus(partition_id="advanced_test")
 
     # Initially empty
-    assert partition.total_samples_num == TQ_INIT_SAMPLE_NUM
+    assert partition.total_samples_num == 0
+    assert partition.allocated_samples_num == TQ_INIT_SAMPLE_NUM
     assert partition.total_fields_num == 0
     assert partition.allocated_fields_num == TQ_INIT_FIELD_NUM
 
     # Add data to trigger expansion
-    partition.update_production_status([0, 1, 2, 3, 4], ["field_a", "field_b", "field_c"])
+    dtypes = {i: {f"dynamic_field_{s}": "torch.bool" for s in ["a", "b", "c"]} for i in range(5)}
+    shapes = {i: {f"dynamic_field_{s}": (32,) for s in ["a", "b", "c"]} for i in range(5)}
+    partition.update_production_status([0, 1, 2, 3, 4], ["field_a", "field_b", "field_c"], dtypes, shapes)
 
     # Properties should reflect current state
     assert partition.total_samples_num >= 5  # At least 5 samples
@@ -199,7 +241,19 @@ def test_data_partition_status_advanced():
     assert initial_consumption[1] == 1
 
     # Expand samples and verify consumption data preserved
-    partition.update_production_status([10, 11, 12], ["field_d"])  # Triggers sample expansion
+    dtypes = (
+        {
+            10: {"field_d": "torch.bool"},
+            11: {"field_d": "torch.bool"},
+            12: {"field_d": "torch.bool"},
+        },
+    )
+    shapes = {
+        10: {"field_d": (32,)},
+        11: {"field_d": (32,)},
+        12: {"field_d": (32,)},
+    }
+    partition.update_production_status([10, 11, 12], ["field_d"], dtypes, shapes)  # Triggers sample expansion
     expanded_consumption = partition.get_consumption_status(task_name)
     assert expanded_consumption[0] == 1  # Preserved
     assert expanded_consumption[1] == 1  # Preserved
@@ -209,11 +263,15 @@ def test_data_partition_status_advanced():
 
     # Test 3: Complex field addition scenarios
     # Start with some fields
-    partition.update_production_status([0], ["initial_field"])
+    dtypes = {0: {"initial_field": "torch.bool"}}
+    shapes = {0: {"field_d": (32,)}}
+    partition.update_production_status([0], ["initial_field"], dtypes, shapes)
 
     # Add many fields to trigger column expansion
     new_fields = [f"dynamic_field_{i}" for i in range(20)]
-    partition.update_production_status([1], new_fields)
+    dtypes = {1: {f"dynamic_field_{i}": "torch.bool" for i in range(20)}}
+    shapes = {1: {f"dynamic_field_{i}": (32,) for i in range(20)}}
+    partition.update_production_status([1], new_fields, dtypes, shapes)
 
     # Verify all fields are registered and accessible
     assert "initial_field" in partition.field_name_mapping
@@ -234,6 +292,7 @@ def test_data_partition_status_advanced():
         "created_at",
         "total_samples_num",
         "total_fields_num",
+        "allocated_samples_num",
         "allocated_fields_num",
         "registered_tasks",
         "produced_samples",
@@ -256,8 +315,7 @@ def test_data_partition_status_advanced():
     initial_consumption_sum = sum(t.sum().item() for t in partition.consumption_status.values())
 
     # Clear only production data
-    success = partition.clear_data(list(range(4)), clear_consumption=False)
-    assert success
+    partition.clear_data(list(range(4)), clear_consumption=False)
     assert partition.production_status[:4, :].sum().item() == 0
 
     # Consumption data should remain
@@ -298,86 +356,22 @@ def test_edge_cases_and_error_handling():
     task_name = "early_task"
     consumption_tensor = partition.get_consumption_status(task_name)
     assert consumption_tensor is not None
-    assert consumption_tensor.shape[0] == partition.total_samples_num
+    assert consumption_tensor.shape[0] == partition.allocated_samples_num
 
     # Test 4: Production status update error conditions
     # Test with empty lists
-    success = partition.update_production_status([], [])
+    success = partition.update_production_status([], [], [], [])
     assert success  # Should handle empty lists gracefully
 
     # Test with valid data but ensure no crashes
-    success = partition.update_production_status([0], ["new_field"])
+    dtypes = {0: {"new_field": "torch.int64"}}
+    shapes = {0: {"new_field": (32,)}}
+    success = partition.update_production_status([0], ["new_field"], dtypes=dtypes, shapes=shapes)
     assert success
 
     print("✓ Production status update edge cases handled correctly")
 
     print("Edge cases and error handling tests passed!\n")
-
-
-def test_backward_compatibility():
-    """Test backward compatibility with existing interfaces."""
-    print("Testing backward compatibility...")
-
-    from transfer_queue.controller import DataPartitionStatus
-
-    partition = DataPartitionStatus(partition_id="compat_test")
-
-    # Test 1: Basic workflow should work as before
-    sample_indices = [0, 1, 2, 3, 4]
-    field_names = ["input_ids", "attention_mask", "labels"]
-
-    success = partition.update_production_status(sample_indices, field_names)
-    assert success
-
-    # Traditional consumption tracking
-    task_name = "training_task"
-    ready_samples = partition.scan_data_status(field_names, task_name)
-    assert len(ready_samples) == 5
-
-    # Mark as consumed
-    partition.mark_consumed(task_name, ready_samples[:3])
-
-    # Should now return only unconsumed samples
-    remaining_ready = partition.scan_data_status(field_names, task_name)
-    assert len(remaining_ready) == 2
-
-    print("✓ Basic workflow maintains compatibility")
-
-    # Test 2: Field mapping should be consistent
-    for field in field_names:
-        assert field in partition.field_name_mapping
-        field_idx = partition.field_name_mapping[field]
-        assert field_idx >= 0
-        assert field_idx < partition.allocated_fields_num
-
-    print("✓ Field mapping consistency maintained")
-
-    # Test 3: Metadata access patterns
-    for sample_idx in sample_indices:
-        for field in field_names:
-            # These should return reasonable values or None
-            dtype = partition.get_field_dtype(sample_idx, field)
-            shape = partition.get_field_shape(sample_idx, field)
-            assert dtype is None
-            assert shape is None
-            # Should not crash even if metadata wasn't provided
-
-    print("✓ Metadata access patterns preserved")
-
-    # Test 4: Statistics format should be familiar
-    stats = partition.get_statistics()
-    familiar_keys = ["partition_id", "total_samples_num", "total_fields_num"]
-    for key in familiar_keys:
-        assert key in stats
-
-    assert isinstance(stats["total_samples_num"], int)
-    assert isinstance(stats["total_fields_num"], int)
-    assert stats["total_samples_num"] > 0
-    assert stats["total_fields_num"] == len(field_names)
-
-    print("✓ Statistics format maintains familiarity")
-
-    print("Backward compatibility tests passed!\n")
 
 
 def test_performance_characteristics():
@@ -392,7 +386,9 @@ def test_performance_characteristics():
     start_time = time.time()
     field_count = 100  # Reduced from 1000 to avoid potential issues
     many_fields = [f"perf_field_{i}" for i in range(field_count)]
-    partition.update_production_status([0], many_fields)
+    dtypes = {0: {f"perf_field_{i}": "torch.bool" for i in range(field_count)}}
+    shapes = {0: {f"perf_field_{i}": (32,) for i in range(field_count)}}
+    partition.update_production_status([0], many_fields, dtypes, shapes)
     field_creation_time = time.time() - start_time
 
     assert partition.total_fields_num == field_count
@@ -402,7 +398,9 @@ def test_performance_characteristics():
     # Test 2: Large number of samples
     start_time = time.time()
     many_samples = list(range(5000))
-    partition.update_production_status(many_samples, ["test_field"])
+    dtypes = {k: {"test_field": "torch.int64"} for k in many_samples}
+    shapes = {k: {"test_field": (32,)} for k in many_samples}
+    partition.update_production_status(many_samples, ["test_field"], dtypes=dtypes, shapes=shapes)
     sample_creation_time = time.time() - start_time
 
     assert partition.total_samples_num >= 5000
@@ -428,7 +426,9 @@ def test_performance_characteristics():
     initial_samples = partition.total_samples_num
 
     # Add more data (should reuse existing space where possible)
-    partition.update_production_status([100], ["new_field"])
+    dtypes = {100: {"new_field": "torch.int64"}}
+    shapes = {100: {"new_field": (32,)}}
+    partition.update_production_status([100], ["new_field"], dtypes=dtypes, shapes=shapes)
 
     # Memory growth should be reasonable
     final_allocated = partition.allocated_fields_num
@@ -441,65 +441,3 @@ def test_performance_characteristics():
     print("✓ Memory usage patterns reasonable")
 
     print("Performance characteristics tests passed!\n")
-
-
-def main():
-    """Run all tests."""
-    print("=== Comprehensive Testing of TransferQueue Controller ===\n")
-
-    test_functions = [
-        test_data_partition_status,
-        test_partition_interface,
-        test_dynamic_expansion_scenarios,
-        test_data_partition_status_advanced,
-        test_edge_cases_and_error_handling,
-        test_backward_compatibility,
-        test_performance_characteristics,
-    ]
-
-    passed_tests = 0
-    total_tests = len(test_functions)
-
-    try:
-        for test_func in test_functions:
-            try:
-                test_func()
-                passed_tests += 1
-            except Exception as e:
-                print(f"❌ {test_func.__name__} failed: {e}")
-                import traceback
-
-                traceback.print_exc()
-                print()
-
-        print("=" * 60)
-        print(f"TEST SUMMARY: {passed_tests}/{total_tests} test suites passed")
-
-        if passed_tests == total_tests:
-            print("🎉 ALL TESTS PASSED!")
-            print("\nThe refactored DataPartitionStatus demonstrates:")
-            print("1. ✅ Dynamic row and column expansion without pre-allocation")
-            print("2. ✅ Robust partition-controller interface design")
-            print("3. ✅ Self-contained state management in DataPartitionStatus")
-            print("4. ✅ Flexible consumption tracking per task")
-            print("5. ✅ Comprehensive scanning and query capabilities")
-            print("6. ✅ Advanced error handling and edge case management")
-            print("7. ✅ Backward compatibility with existing interfaces")
-            print("8. ✅ Good performance characteristics for large datasets")
-            print("\n🚀 DataPartitionStatus refactoring is ready for production!")
-        else:
-            print(f"⚠️  {total_tests - passed_tests} test suites failed.")
-            print("Please review the failures before deploying to production.")
-
-        print("=" * 60)
-
-    except Exception as e:
-        print(f"❌ Critical test failure: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

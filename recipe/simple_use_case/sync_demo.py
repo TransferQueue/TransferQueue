@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -190,7 +191,7 @@ def fit(config, data_system_client):
             # Client then notifies the storage plane to clear based on metadata
             # Client selects one master controller to get metadata,
             # other controllers directly clear without returning metadata
-            data_system_client.clear(partition_id=f"train_{step}")
+            data_system_client.clear_partition(partition_id=f"train_{step}")
             logger.info("clear ok! ")
     logger.info("demo done!")
 

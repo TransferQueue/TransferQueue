@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,10 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
 import logging
 import os
-import pickle
 import socket
 import time
 from dataclasses import dataclass
@@ -23,29 +22,23 @@ from typing import Any, Optional, TypeAlias
 from uuid import uuid4
 
 import psutil
-import torch
 import zmq
 
-try:
-    from torch.distributed.rpc.internal import _internal_rpc_pickler
-
-    HAS_RPC_PICKLER = True
-except ImportError:
-    HAS_RPC_PICKLER = False
-
-from transfer_queue.utils.serial_utils import MsgpackDecoder, MsgpackEncoder
+from transfer_queue.utils.serial_utils import deserialization, serialization
 from transfer_queue.utils.utils import (
     ExplicitEnum,
     TransferQueueRole,
-    get_env_bool,
 )
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
-TQ_ZERO_COPY_SERIALIZATION = get_env_bool("TQ_ZERO_COPY_SERIALIZATION", default=False) and HAS_RPC_PICKLER
-_encoder = MsgpackEncoder()
-_decoder = MsgpackDecoder(torch.Tensor)
+# Ensure logger has a handler
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
 
 bytestr: TypeAlias = bytes | bytearray | memoryview
 
@@ -72,14 +65,24 @@ class ZMQRequestType(ExplicitEnum):
     # META_OPERATION
     GET_META = "GET_META"
     GET_META_RESPONSE = "GET_META_RESPONSE"
-    GET_CLEAR_META = "GET_CLEAR_META"
-    GET_CLEAR_META_RESPONSE = "GET_CLEAR_META_RESPONSE"
+    GET_PARTITION_META = "GET_PARTITION_META"
+    GET_PARTITION_META_RESPONSE = "GET_PARTITION_META_RESPONSE"
     CLEAR_META = "CLEAR_META"
     CLEAR_META_RESPONSE = "CLEAR_META_RESPONSE"
+    CLEAR_PARTITION = "CLEAR_PARTITION"
+    CLEAR_PARTITION_RESPONSE = "CLEAR_PARTITION_RESPONSE"
 
     # CHECK_CONSUMPTION
     CHECK_CONSUMPTION = "CHECK_CONSUMPTION"
     CONSUMPTION_RESPONSE = "CONSUMPTION_RESPONSE"
+
+    # CHECK_PRODUCTION
+    CHECK_PRODUCTION = "CHECK_PRODUCTION"
+    PRODUCTION_RESPONSE = "PRODUCTION_RESPONSE"
+
+    # LIST_PARTITIONS
+    GET_LIST_PARTITIONS = "GET_LIST_PARTITIONS"
+    LIST_PARTITIONS_RESPONSE = "LIST_PARTITIONS_RESPONSE"
 
     # NOTIFY_DATA_UPDATE
     NOTIFY_DATA_UPDATE = "NOTIFY_DATA_UPDATE"
@@ -140,75 +143,13 @@ class ZMQMessage:
     ) -> list[bytestr]:
         """
         Serializes the ZMQMessage object.
-
-        Returns:
-            list[bytestr]: If TQ_ZERO_COPY_SERIALIZATION is enabled, returns a list where the first element
-            is the pickled bytes of the message, followed by the flattened serialized tensor parts as
-            [pickled_bytes, |<bytes>, <memoryview>, |<bytes>, <memoryview>|...].
-            From the second element, two elements is a group that will be used to restore a tensor.
-
-            If TQ_ZERO_COPY_SERIALIZATION is disabled, returns a single-element list containing only the pickled bytes
-            through pickle.
         """
-        logger.info(f"Serializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
-        if TQ_ZERO_COPY_SERIALIZATION:
-            pickled_bytes, tensors = _internal_rpc_pickler.serialize(self)
-
-            nested_serialized_tensors: list[list[bytestr]] = [[] for _ in range(len(tensors))]
-            for i, tensor in enumerate(tensors):
-                nested_serialized_tensors[i] = _encoder.encode(tensor)  # type: ignore[call-overload]
-
-            # flatten the list
-            serialized_tensors: list[bytestr] = list(itertools.chain.from_iterable(nested_serialized_tensors))
-
-            return [pickled_bytes, *serialized_tensors]
-        else:
-            return [pickle.dumps(self)]
+        return serialization(self)
 
     @classmethod
     def deserialize(cls, data: list[bytestr] | bytestr) -> "ZMQMessage":
         """Deserialize a ZMQMessage object from serialized data."""
-        logger.info(f"Deserializing ZMQMessage with TQ_ZERO_COPY_SERIALIZATION={TQ_ZERO_COPY_SERIALIZATION}")
-        if TQ_ZERO_COPY_SERIALIZATION:
-            if isinstance(data, list):
-                # contain tensors
-                pickled_bytes = data[0]
-                serialized_tensors = data[1:]
-                if len(serialized_tensors) % 2 != 0:
-                    # Note: data is a list of [pickled_bytes, |<bytes>, <memoryview>, |<bytes>, <memoryview>|...].
-                    # From the second element, two elements is a group that will be used to restore a tensor.
-                    raise ValueError(
-                        f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should "
-                        f"be a list containing an odd number of elements, but got {len(serialized_tensors)}."
-                    )
-                nested_serialized_tensors: list[list[bytestr]] = [
-                    serialized_tensors[i : i + 2] for i in range(0, len(serialized_tensors), 2)
-                ]
-            else:
-                raise ValueError(
-                    f"When TQ_ZERO_COPY_SERIALIZATION is enabled, input data should be a list, but got {type(data)}."
-                )
-            tensors: list[Optional[torch.Tensor]] = [None] * len(nested_serialized_tensors)
-            for i, serialized_tensor in enumerate(nested_serialized_tensors):
-                tensors[i] = _decoder.decode(serialized_tensor)
-
-            x = _internal_rpc_pickler.deserialize(pickled_bytes, tensors)
-            return x
-        else:
-            if isinstance(data, bytestr):
-                return pickle.loads(data)
-            elif isinstance(data, list):
-                if len(data) > 1:
-                    raise ValueError(
-                        f"When TQ_ZERO_COPY_SERIALIZATION is disabled, must have only 1 element in"
-                        f" list for deserialization, but got {len(data)}."
-                    )
-                return pickle.loads(data[0])
-            else:
-                raise ValueError(
-                    f"When TQ_ZERO_COPY_SERIALIZATION is disabled, input data should be a list of bytestr,"
-                    f" but got {type(data)}."
-                )
+        return deserialization(data)
 
 
 def get_free_port() -> str:

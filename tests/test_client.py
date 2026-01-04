@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,11 +102,38 @@ class MockController:
                     if request_msg.request_type == ZMQRequestType.GET_META:
                         response_body = self._mock_batch_meta(request_msg.body)
                         response_type = ZMQRequestType.GET_META_RESPONSE
-                    elif request_msg.request_type == ZMQRequestType.GET_CLEAR_META:
-                        response_body = self._mock_batch_meta(request_msg.body)
-                        response_type = ZMQRequestType.GET_CLEAR_META_RESPONSE
                     elif request_msg.request_type == ZMQRequestType.CLEAR_META:
-                        response_body = {"message": "clear ok"}
+                        response_body = {"message": "clear meta ok"}
+                        response_type = ZMQRequestType.CLEAR_META_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.CLEAR_PARTITION:
+                        response_body = {"message": "clear partition ok"}
+                        response_type = ZMQRequestType.CLEAR_PARTITION_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.GET_PARTITION_META:
+                        # Mock partition metadata response
+                        response_body = {"metadata": self._mock_batch_meta(request_msg.body)}
+                        response_type = ZMQRequestType.GET_PARTITION_META_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.CHECK_CONSUMPTION:
+                        # Mock consumption status check - all consumed
+                        response_body = {
+                            "partition_id": request_msg.body.get("partition_id"),
+                            "consumed": True,
+                        }
+                        response_type = ZMQRequestType.CONSUMPTION_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.CHECK_PRODUCTION:
+                        # Mock production status check - all produced
+                        response_body = {
+                            "partition_id": request_msg.body.get("partition_id"),
+                            "produced": True,
+                        }
+                        response_type = ZMQRequestType.PRODUCTION_RESPONSE
+                    elif request_msg.request_type == ZMQRequestType.GET_LIST_PARTITIONS:
+                        # Mock partition list
+                        response_body = {
+                            "partition_ids": ["partition_0", "partition_1", "test_partition"],
+                        }
+                        response_type = ZMQRequestType.LIST_PARTITIONS_RESPONSE
+                    else:
+                        response_body = {"error": f"Unknown request type: {request_msg.request_type}"}
                         response_type = ZMQRequestType.CLEAR_META_RESPONSE
 
                     # Send response
@@ -352,14 +380,6 @@ def test_get_meta(client_setup):
     assert len(metadata.global_indexes) == 10
 
 
-def test_clear_operation(client_setup):
-    """Test clear operation"""
-    client, _, _ = client_setup
-
-    # Test clear operation
-    client.clear(partition_id="0")
-
-
 # Test with single controller and multiple storage units
 def test_single_controller_multiple_storages():
     """Test client with single controller and multiple storage units"""
@@ -426,3 +446,140 @@ def test_put_without_required_params(client_setup):
     # Test put without partition id (should fail)
     with pytest.raises(ValueError):
         client.put(data=test_data)
+
+
+# Test new status checking methods
+def test_check_consumption_status(client_setup):
+    """Test consumption status checking"""
+    client, _, _ = client_setup
+
+    # Test synchronous check_consumption_status
+    is_consumed = client.check_consumption_status(task_name="generate_sequences", partition_id="train_0")
+    assert is_consumed is True
+
+
+def test_check_production_status(client_setup):
+    """Test production status checking"""
+    client, _, _ = client_setup
+
+    # Test synchronous check_production_status
+    is_produced = client.check_production_status(data_fields=["prompt_ids", "attention_mask"], partition_id="train_0")
+    assert is_produced is True
+
+
+def test_get_partition_list(client_setup):
+    """Test partition list retrieval"""
+    client, _, _ = client_setup
+
+    # Test synchronous get_partition_list
+    partition_list = client.get_partition_list()
+    assert isinstance(partition_list, list)
+    assert len(partition_list) > 0
+    assert "partition_0" in partition_list
+    assert "partition_1" in partition_list
+    assert "test_partition" in partition_list
+
+
+@pytest.mark.asyncio
+async def test_async_check_consumption_status(client_setup):
+    """Test async consumption status checking"""
+    client, _, _ = client_setup
+
+    # Test async_check_consumption_status
+    is_consumed = await client.async_check_consumption_status(task_name="generate_sequences", partition_id="train_0")
+    assert is_consumed is True
+
+
+@pytest.mark.asyncio
+async def test_async_check_production_status(client_setup):
+    """Test async production status checking"""
+    client, _, _ = client_setup
+
+    # Test async_check_production_status
+    is_produced = await client.async_check_production_status(
+        data_fields=["prompt_ids", "attention_mask"], partition_id="train_0"
+    )
+    assert is_produced is True
+
+
+@pytest.mark.asyncio
+async def test_async_get_partition_list(client_setup):
+    """Test async partition list retrieval"""
+    client, _, _ = client_setup
+
+    # Test async_get_partition_list
+    partition_list = await client.async_get_partition_list()
+    assert isinstance(partition_list, list)
+    assert len(partition_list) > 0
+    assert "partition_0" in partition_list
+    assert "partition_1" in partition_list
+    assert "test_partition" in partition_list
+
+
+# Test clear methods
+@pytest.mark.asyncio
+async def test_async_clear_partition(client_setup):
+    """Test async clear partition operation"""
+    client, _, _ = client_setup
+
+    # Test async_clear_partition
+    await client.async_clear_partition(partition_id="test_partition")
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+@pytest.mark.asyncio
+async def test_async_clear_samples(client_setup):
+    """Test async clear samples operation"""
+    client, _, _ = client_setup
+
+    # First get metadata to create a BatchMeta object
+    metadata = await client.async_get_meta(data_fields=["tokens", "labels"], batch_size=2, partition_id="0")
+
+    # Test async_clear_samples
+    await client.async_clear_samples(metadata=metadata)
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+def test_clear_partition(client_setup):
+    """Test synchronous clear partition operation"""
+    client, _, _ = client_setup
+
+    # Test synchronous clear_partition
+    client.clear_partition(partition_id="test_partition")
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+def test_clear_samples(client_setup):
+    """Test synchronous clear samples operation"""
+    client, _, _ = client_setup
+
+    # First get metadata to create a BatchMeta object
+    metadata = client.get_meta(data_fields=["tokens", "labels"], batch_size=2, partition_id="0")
+
+    # Test synchronous clear_samples
+    client.clear_samples(metadata=metadata)
+
+    # If no exception is raised, the test passes
+    assert True
+
+
+@pytest.mark.asyncio
+async def test_async_clear_samples_with_empty_metadata(client_setup):
+    """Test async_clear_samples with empty BatchMeta"""
+    client, _, _ = client_setup
+
+    # Create empty BatchMeta
+    metadata = BatchMeta(samples=[])
+
+    # The clear operation should complete without raising an exception
+    # because the mock storage manager is configured to handle this
+    await client.async_clear_samples(metadata=metadata)
+
+    # If no exception is raised, the test passes
+    assert True

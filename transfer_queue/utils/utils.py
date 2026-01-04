@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 from contextlib import contextmanager
 from enum import Enum
@@ -20,6 +22,15 @@ from typing import Optional
 import psutil
 import ray
 import torch
+
+logger = logging.getLogger(__name__)
+logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
+
+# Ensure logger has a handler
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
 
 
 class ExplicitEnum(str, Enum):
@@ -40,11 +51,10 @@ class TransferQueueRole(ExplicitEnum):
     CLIENT = "TransferQueueClient"
 
 
-# production_status enum: 0: not produced, 1: ready for consume, 2: consumed
+# production_status enum: 0: not produced, 1: ready for consume
 class ProductionStatus(ExplicitEnum):
     NOT_PRODUCED = 0
     READY_FOR_CONSUME = 1
-    CONSUMED = 2
 
 
 def get_placement_group(num_ray_actors: int, num_cpus_per_actor: int = 1):
@@ -103,12 +113,11 @@ def sequential_sampler(
 
 
 @contextmanager
-def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None):
+def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None, info: str = ""):
     """Prevent PyTorch from overdoing the automatic parallelism during torch.stack() operation"""
     pytorch_current_num_threads = torch.get_num_threads()
-    logical_cores = psutil.cpu_count(logical=True)
     physical_cores = psutil.cpu_count(logical=False)
-
+    pid = os.getpid()
     if target_num_threads is None:
         # auto determine target_num_threads
         if physical_cores >= 16:
@@ -116,21 +125,27 @@ def limit_pytorch_auto_parallel_threads(target_num_threads: Optional[int] = None
         else:
             target_num_threads = physical_cores
 
-    if target_num_threads > logical_cores:
-        raise RuntimeError(
-            f"target_num_threads {target_num_threads} should not exceed total logical CPU cores {logical_cores}"
+    if target_num_threads > physical_cores:
+        logger.error(
+            f"target_num_threads {target_num_threads} should not exceed total "
+            f"physical CPU cores {physical_cores}. Setting to {physical_cores}."
         )
+        target_num_threads = physical_cores
 
-    if pytorch_current_num_threads <= target_num_threads:
-        # No need to change settings
-        yield
-    else:
+    try:
         torch.set_num_threads(target_num_threads)
-        try:
-            yield
-        finally:
-            # Restore the original number of threads
-            torch.set_num_threads(pytorch_current_num_threads)
+        logger.debug(
+            f"{info} (pid={pid}): torch.get_num_threads() is {pytorch_current_num_threads}, "
+            f"setting to {target_num_threads}."
+        )
+        yield
+    finally:
+        # Restore the original number of threads
+        torch.set_num_threads(pytorch_current_num_threads)
+        logger.debug(
+            f"{info} (pid={pid}): torch.get_num_threads() is {torch.get_num_threads()}, "
+            f"restoring to {pytorch_current_num_threads}."
+        )
 
 
 def get_env_bool(env_key: str, default: bool = False) -> bool:

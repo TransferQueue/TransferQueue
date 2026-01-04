@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -306,7 +307,7 @@ class Trainer:
 
                 # Client notifies controller to clear data status, controller returns metadata;
                 # Client then notifies the storage plane to clear based on metadata
-                asyncio.run(self.data_system_client.async_clear(partition_id=f"train_{step}"))
+                asyncio.run(self.data_system_client.async_clear_partition(partition_id=f"train_{step}"))
                 logger.info("clear ok! ")
         logger.info("demo done!")
 

@@ -27,6 +27,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install the current repository
         run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install -e .
       - name: Set ruff --output-format=github
         run: |

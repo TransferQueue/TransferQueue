@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +34,7 @@ from transfer_queue.storage import (
     TransferQueueStorageManager,
     TransferQueueStorageManagerFactory,
 )
+from transfer_queue.utils.utils import limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import (
     ZMQMessage,
     ZMQRequestType,
@@ -42,6 +44,14 @@ from transfer_queue.utils.zmq_utils import (
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
+
+# Ensure logger has a handler
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
+TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 8))
 
 
 class AsyncTransferQueueClient:
@@ -120,7 +130,7 @@ class AsyncTransferQueueClient:
 
                 try:
                     sock.connect(address)
-                    logger.info(
+                    logger.debug(
                         f"[{self.client_id}]: Connected to Controller {server_info.id} at {address} "
                         f"with identity {identity.decode()}"
                     )
@@ -228,8 +238,7 @@ class AsyncTransferQueueClient:
             response_serialized = await socket.recv_multipart()
             response_msg = ZMQMessage.deserialize(response_serialized)
             logger.debug(
-                f"[{self.client_id}]: Client get datameta response: {response_msg} "
-                f"from controller {self._controller.id}"
+                f"[{self.client_id}]: Client get_meta response: {response_msg} from controller {self._controller.id}"
             )
 
             if response_msg.request_type == ZMQRequestType.GET_META_RESPONSE:
@@ -322,11 +331,13 @@ class AsyncTransferQueueClient:
 
         if not metadata or metadata.size == 0:
             raise ValueError("metadata cannot be none or empty")
-        logger.debug(f"[{self.client_id}]: Put data with data: {data}")
 
-        await self.storage_manager.put_data(data, metadata)
+        with limit_pytorch_auto_parallel_threads(
+            target_num_threads=TQ_NUM_THREADS, info=f"[{self.client_id}] async_put"
+        ):
+            await self.storage_manager.put_data(data, metadata)
 
-        logger.info(
+        logger.debug(
             f"[{self.client_id}]: partition {partition_id} put {metadata.size} samples to storage units successfully."
         )
 
@@ -365,15 +376,21 @@ class AsyncTransferQueueClient:
                 "Call initialize_storage_manager() before performing storage operations."
             )
 
-        if not metadata or metadata.size == 0:
+        if not metadata or metadata.size == 0 or len(metadata.field_names) == 0:
+            logger.warning(f"[{self.client_id}]: Empty BatchMeta provided to get_data. Returning empty TensorDict.")
             return TensorDict({}, batch_size=0)
 
-        results = await self.storage_manager.get_data(metadata)
+        with limit_pytorch_auto_parallel_threads(
+            target_num_threads=TQ_NUM_THREADS, info=f"[{self.client_id}] async_get_data"
+        ):
+            results = await self.storage_manager.get_data(metadata)
+
+        logger.debug(f"[{self.client_id}]: get_data with {metadata.size} samples successfully.")
 
         return results
 
-    async def async_clear(self, partition_id: str):
-        """Asynchronously clear data from all storage units and controller metadata.
+    async def async_clear_partition(self, partition_id: str):
+        """Asynchronously clear the whole partition from all storage units and the controller.
 
         Args:
             partition_id: The partition id to clear data for
@@ -391,24 +408,83 @@ class AsyncTransferQueueClient:
             if not self._controller:
                 raise RuntimeError("No controller registered")
 
-            metadata = await self._get_clear_meta(partition_id)
+            metadata = await self._get_partition_meta(partition_id)
 
             # Clear the controller metadata
-            await self._clear_controller(partition_id)
+            await self._clear_partition_in_controller(partition_id)
 
             # Clear storage unit data
             await self.storage_manager.clear_data(metadata)
 
-            logger.info(f"[{self.client_id}]: Clear operation for partition_id {partition_id} completed.")
+            logger.debug(f"[{self.client_id}]: Clear operation for partition_id {partition_id} completed.")
         except Exception as e:
             raise RuntimeError(f"Error in clear operation: {str(e)}") from e
 
-    @dynamic_socket(socket_name="request_handle_socket")
-    async def _get_clear_meta(self, partition_id: str, socket=None) -> BatchMeta:
-        """Get metadata required for clear operation from controller.
+    async def async_clear_samples(self, metadata: BatchMeta):
+        """Asynchronously clear specific samples from all storage units and the controller.
 
         Args:
-            partition_id: Partition id to get clear metadata for
+            metadata: The BatchMeta of the corresponding data to be cleared
+
+        Raises:
+            RuntimeError: If clear operation fails
+        """
+        try:
+            if not hasattr(self, "storage_manager") or self.storage_manager is None:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Storage manager not initialized. "
+                    "Call initialize_storage_manager() before performing storage operations."
+                )
+
+            if metadata.size == 0:
+                logger.warning(f"[{self.client_id}]: Empty BatchMeta provided to clear_samples. No action taken.")
+                return
+
+            if not self._controller:
+                raise RuntimeError("No controller registered")
+
+            # Clear the controller metadata
+            await self._clear_meta_in_controller(metadata)
+
+            # Clear storage unit data
+            await self.storage_manager.clear_data(metadata)
+
+            logger.debug(f"[{self.client_id}]: Clear operation for batch {metadata} completed.")
+        except Exception as e:
+            raise RuntimeError(f"Error in clear_samples operation: {str(e)}") from e
+
+    @dynamic_socket(socket_name="request_handle_socket")
+    async def _clear_meta_in_controller(self, metadata: BatchMeta, socket=None):
+        """Clear metadata in the controller.
+
+        Args:
+            metadata: The BatchMeta of the corresponding data to be cleared
+            socket: ZMQ socket (injected by decorator)
+
+        Raises:
+            RuntimeError: If clear operation fails
+        """
+
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CLEAR_META,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={"global_indexes": metadata.global_indexes, "partition_ids": metadata.partition_ids},
+        )
+
+        await socket.send_multipart(request_msg.serialize())
+        response_serialized = await socket.recv_multipart()
+        response_msg = ZMQMessage.deserialize(response_serialized)
+
+        if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
+            raise RuntimeError("Failed to clear samples metadata in controller.")
+
+    @dynamic_socket(socket_name="request_handle_socket")
+    async def _get_partition_meta(self, partition_id: str, socket=None) -> BatchMeta:
+        """Get metadata required for the whole partition from controller.
+
+        Args:
+            partition_id: Partition id to get partition metadata for
             socket: ZMQ socket (injected by decorator)
 
         Returns:
@@ -418,7 +494,7 @@ class AsyncTransferQueueClient:
             RuntimeError: If controller returns error response
         """
         request_msg = ZMQMessage.create(
-            request_type=ZMQRequestType.GET_CLEAR_META,
+            request_type=ZMQRequestType.GET_PARTITION_META,
             sender_id=self.client_id,
             receiver_id=self._controller.id,
             body={"partition_id": partition_id},
@@ -428,16 +504,14 @@ class AsyncTransferQueueClient:
         response_serialized = await socket.recv_multipart()
         response_msg = ZMQMessage.deserialize(response_serialized)
 
-        if response_msg.request_type != ZMQRequestType.GET_CLEAR_META_RESPONSE:
-            raise RuntimeError(
-                f"Failed to get metadata for clear operation: {response_msg.body.get('message', 'Unknown error')}"
-            )
+        if response_msg.request_type != ZMQRequestType.GET_PARTITION_META_RESPONSE:
+            raise RuntimeError("Failed to get metadata for clear operation.")
 
         return response_msg.body["metadata"]
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def _clear_controller(self, partition_id, socket=None):
-        """Clear metadata from controller.
+    async def _clear_partition_in_controller(self, partition_id, socket=None):
+        """Clear the whole partition in the controller.
 
         Args:
             partition_id: Partition id to clear metadata for
@@ -446,53 +520,178 @@ class AsyncTransferQueueClient:
         Raises:
             RuntimeError: If clear operation fails
         """
-        try:
-            request_msg = ZMQMessage.create(
-                request_type=ZMQRequestType.CLEAR_META,
-                sender_id=self.client_id,
-                receiver_id=self._controller.id,
-                body={"partition_id": partition_id},
-            )
 
-            await socket.send_multipart(request_msg.serialize())
-            response_serialized = await socket.recv_multipart()
-            response_msg = ZMQMessage.deserialize(response_serialized)
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CLEAR_PARTITION,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={"partition_id": partition_id},
+        )
 
-            if response_msg.request_type != ZMQRequestType.CLEAR_META_RESPONSE:
-                raise RuntimeError(
-                    f"Failed to clear controller {self._controller.id}: "
-                    f"{response_msg.body.get('message', 'Unknown error')}"
-                )
+        await socket.send_multipart(request_msg.serialize())
+        response_serialized = await socket.recv_multipart()
+        response_msg = ZMQMessage.deserialize(response_serialized)
 
-            logger.info(
-                f"[{self.client_id}]: Successfully clear controller {self._controller.id} for partition_id "
-                f"{partition_id}"
-            )
-        except Exception as e:
-            logger.error(f"[{self.client_id}]: Error clearing controller {self._controller.id}: {str(e)}")
-            raise
+        if response_msg.request_type != ZMQRequestType.CLEAR_PARTITION_RESPONSE:
+            raise RuntimeError(f"Failed to clear partition {partition_id} in controller.")
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_data_consumption_status(self, task_name: str, partition_id: str):
-        """Check if all samples for current step have been consumed.
+    async def async_check_consumption_status(
+        self,
+        task_name: str,
+        partition_id: str,
+        socket: Optional[zmq.asyncio.Socket] = None,
+    ) -> bool:
+        """Check if all samples for current partition have been consumed by a specific task.
 
         Args:
             task_name: Name of the task to check consumption for
             partition_id: Partition id to check consumption status for
+            socket: ZMQ async socket for message transmission (injected by decorator)
+
+        Returns:
+            bool: True if all samples have been consumed by the task, False otherwise
+
+        Raises:
+            RuntimeError: If communication fails or controller returns error response
+
+        Example:
+            >>> # Check if all samples have been consumed
+            >>> is_consumed = asyncio.run(client.async_check_consumption_status(
+            ...     task_name="generate_sequences",
+            ...     partition_id="train_0"
+            ... ))
+            >>> print(f"All samples consumed: {is_consumed}")
         """
-        # TODO: Implement this method to check if all samples for the current step has been consumed
-        pass
+        assert socket is not None
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CHECK_CONSUMPTION,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={
+                "partition_id": partition_id,
+                "task_name": task_name,
+            },
+        )
+
+        try:
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
+            logger.debug(
+                f"[{self.client_id}]: Client check consumption response: {response_msg} "
+                f"from controller {self._controller.id}"
+            )
+
+            if response_msg.request_type == ZMQRequestType.CONSUMPTION_RESPONSE:
+                consumed = response_msg.body.get("consumed", False)
+                return consumed
+            else:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Failed to check consumption status from controller {self._controller.id}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
+                )
+        except Exception as e:
+            raise RuntimeError(f"[{self.client_id}]: Error in check_data_consumption_status: {str(e)}") from e
 
     @dynamic_socket(socket_name="request_handle_socket")
-    async def check_data_production_status(self, data_fields: list[str], partition_id: str):
-        """Check if all samples for current partition are ready for consumption.
+    async def async_check_production_status(
+        self,
+        data_fields: list[str],
+        partition_id: str,
+        socket: Optional[zmq.asyncio.Socket] = None,
+    ) -> bool:
+        """Check if all samples for current partition are ready (produced) for consumption.
 
         Args:
             data_fields: Data fields to check production status for
             partition_id: Partition id to check production status for
+            socket: ZMQ async socket for message transmission (injected by decorator)
+
+        Returns:
+            bool: True if all samples have been produced and ready, False otherwise
+
+        Raises:
+            RuntimeError: If communication fails or controller returns error response
+
+        Example:
+            >>> # Check if all samples are ready for consumption
+            >>> is_ready = asyncio.run(client.async_check_production_status(
+            ...     data_fields=["input_ids", "attention_mask"],
+            ...     partition_id="train_0"
+            ... ))
+            >>> print(f"All samples ready: {is_ready}")
         """
-        # TODO: Implement this method to check if all samples for the current step is ready for consumption
-        pass
+        assert socket is not None
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.CHECK_PRODUCTION,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={
+                "partition_id": partition_id,
+                "data_fields": data_fields,
+            },
+        )
+
+        try:
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
+            logger.debug(
+                f"[{self.client_id}]: Client check production response: {response_msg} "
+                f"from controller {self._controller.id}"
+            )
+
+            if response_msg.request_type == ZMQRequestType.PRODUCTION_RESPONSE:
+                produced = response_msg.body.get("produced", False)
+                return produced
+            else:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Failed to check production status from controller {self._controller.id}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
+                )
+        except Exception as e:
+            raise RuntimeError(f"[{self.client_id}]: Error in check_data_production_status: {str(e)}") from e
+
+    @dynamic_socket(socket_name="request_handle_socket")
+    async def async_get_partition_list(
+        self,
+        socket: Optional[zmq.asyncio.Socket] = None,
+    ) -> list[str]:
+        """Asynchronously fetch the list of partition ids from the controller.
+
+        Args:
+            socket: ZMQ socket (injected by decorator)
+
+        Returns:
+            list[str]: List of partition ids managed by the controller
+        """
+        request_msg = ZMQMessage.create(
+            request_type=ZMQRequestType.GET_LIST_PARTITIONS,
+            sender_id=self.client_id,
+            receiver_id=self._controller.id,
+            body={},
+        )
+
+        try:
+            await socket.send_multipart(request_msg.serialize())
+            response_serialized = await socket.recv_multipart()
+            response_msg = ZMQMessage.deserialize(response_serialized)
+            logger.debug(
+                f"[{self.client_id}]: Client get partition list response: {response_msg} "
+                f"from controller {self._controller.id}"
+            )
+
+            if response_msg.request_type == ZMQRequestType.LIST_PARTITIONS_RESPONSE:
+                partition_ids = response_msg.body.get("partition_ids", [])
+                return partition_ids
+            else:
+                raise RuntimeError(
+                    f"[{self.client_id}]: Failed to get partition list from controller {self._controller.id}: "
+                    f"{response_msg.body.get('message', 'Unknown error')}"
+                )
+        except Exception as e:
+            raise RuntimeError(f"[{self.client_id}]: Error in get_partition_list: {str(e)}") from e
 
     def close(self) -> None:
         """Close the client and cleanup resources including storage manager."""
@@ -584,13 +783,55 @@ class TransferQueueClient(AsyncTransferQueueClient):
         """
         return asyncio.run(self.async_get_data(metadata))
 
-    def clear(self, partition_id: str):
-        """Synchronously clear data from storage units and controller metadata.
+    def clear_partition(self, partition_id: str):
+        """Synchronously clear the whole partition from storage units and controller.
 
         Args:
             partition_id: The partition id to clear data for
         """
-        return asyncio.run(self.async_clear(partition_id))
+        return asyncio.run(self.async_clear_partition(partition_id))
+
+    def clear_samples(self, metadata: BatchMeta):
+        """Synchronously clear specific samples from storage units and controller metadata.
+
+        Args:
+            metadata: The BatchMeta of the corresponding data to be cleared
+        """
+        return asyncio.run(self.async_clear_samples(metadata))
+
+    def check_consumption_status(self, task_name: str, partition_id: str) -> bool:
+        """Synchronously check if all samples for a partition have been consumed by a specific task.
+
+        Args:
+            task_name: Name of the task to check consumption for
+            partition_id: Partition id to check consumption status for
+
+        Returns:
+            bool: True if all samples have been consumed by the task, False otherwise
+        """
+        return asyncio.run(self.async_check_consumption_status(task_name, partition_id))
+
+    def check_production_status(self, data_fields: list[str], partition_id: str) -> bool:
+        """Synchronously check if all samples for a partition are ready (produced) for consumption.
+
+        Args:
+            data_fields: Data fields to check production status for
+            partition_id: Partition id to check production status for
+
+        Returns:
+            bool: True if all samples have been produced and ready, False otherwise
+        """
+        return asyncio.run(self.async_check_production_status(data_fields, partition_id))
+
+    def get_partition_list(
+        self,
+    ):
+        """Synchronously fetch the list of partition ids from the controller.
+
+        Returns:
+            list[str]: List of partition ids managed by the controller
+        """
+        return asyncio.run(self.async_get_partition_list())
 
 
 def process_zmq_server_info(

@@ -1,3 +1,4 @@
+# Copyright 2025 Huawei Technologies Co., Ltd. All Rights Reserved.
 # Copyright 2025 The TransferQueue Team
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,24 +19,29 @@ import os
 from dataclasses import dataclass
 from operator import itemgetter
 from threading import Thread
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 import ray
-import torch
 import zmq
 from ray.util import get_node_ip_address
-from tensordict import NonTensorStack, TensorDict
 
 from transfer_queue.metadata import SampleMeta
-from transfer_queue.utils.utils import TransferQueueRole
+from transfer_queue.utils.perf_utils import IntervalPerfMonitor
+from transfer_queue.utils.utils import TransferQueueRole, limit_pytorch_auto_parallel_threads
 from transfer_queue.utils.zmq_utils import ZMQMessage, ZMQRequestType, ZMQServerInfo, create_zmq_socket, get_free_port
 
 logger = logging.getLogger(__name__)
 logger.setLevel(os.getenv("TQ_LOGGING_LEVEL", logging.WARNING))
 
-# ZMQ timeouts (in seconds) and retry configurations
-TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))
+# Ensure logger has a handler (for Ray Actor subprocess)
+if not logger.hasHandlers():
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s"))
+    logger.addHandler(handler)
+
+TQ_STORAGE_POLLER_TIMEOUT = int(os.environ.get("TQ_STORAGE_POLLER_TIMEOUT", 5))  # in seconds
+TQ_NUM_THREADS = int(os.environ.get("TQ_NUM_THREADS", 8))
 
 
 class StorageUnitData:
@@ -63,7 +69,7 @@ class StorageUnitData:
         # Maximum number of elements stored in storage unit
         self.storage_size = storage_size
 
-    def get_data(self, fields: list[str], local_indexes: list[int]) -> TensorDict[str, list]:
+    def get_data(self, fields: list[str], local_indexes: list[int]) -> dict[str, list]:
         """
         Get data from storage unit according to given fields and local_indexes.
 
@@ -72,7 +78,7 @@ class StorageUnitData:
             local_indexes: Local indexes used for getting data.
 
         Returns:
-            TensorDict with field names as keys, corresponding data list as values.
+            dict with field names as keys, corresponding data list as values.
         """
         result: dict[str, list] = {}
 
@@ -84,27 +90,17 @@ class StorageUnitData:
                 )
 
             if len(local_indexes) == 1:
-                # The unsqueeze op make the shape from n to (1, n)
                 gathered_item = self.field_data[field][local_indexes[0]]
-                if not isinstance(gathered_item, torch.Tensor):
-                    result[field] = NonTensorStack(gathered_item)
-                else:
-                    result[field] = gathered_item.unsqueeze(0)
+                result[field] = [gathered_item]
+
             else:
                 gathered_items = list(itemgetter(*local_indexes)(self.field_data[field]))
 
-                if gathered_items:
-                    all_tensors = all(isinstance(x, torch.Tensor) for x in gathered_items)
-                    if all_tensors:
-                        result[field] = torch.nested.as_nested_tensor(gathered_items, layout=torch.jagged)
-                    else:
-                        result[field] = NonTensorStack(*gathered_items)
+                result[field] = gathered_items
 
-        # Explicit batch size for stability
-        batch_size = 0 if not fields or not local_indexes else len(local_indexes)
-        return TensorDict(result, batch_size=batch_size)
+        return result
 
-    def put_data(self, field_data: TensorDict[str, Any], local_indexes: list[int]) -> None:
+    def put_data(self, field_data: dict[str, Any], local_indexes: list[int]) -> None:
         """
         Put or update data into storage unit according to given field_data and local_indexes.
 
@@ -112,9 +108,8 @@ class StorageUnitData:
             field_data: Dict with field names as keys, corresponding data in the field as values.
             local_indexes: Local indexes used for putting data.
         """
-        extracted_data = field_data.to_dict()
 
-        for f, values in extracted_data.items():
+        for f, values in field_data.items():
             if f not in self.field_data:
                 self.field_data[f] = [None] * self.storage_size
 
@@ -200,7 +195,7 @@ class SimpleStorageUnit:
     def _start_process_put_get(self) -> None:
         """Create a daemon thread and start put/get process."""
         self.process_put_get_thread = Thread(
-            target=self._process_put_get, name=f"StorageUnitProcessPutGetThread-{self.zmq_server_info.id}", daemon=True
+            target=self._process_put_get, name=f"StorageUnitProcessPutGetThread-{self.storage_unit_id}", daemon=True
         )
         self.process_put_get_thread.start()
 
@@ -209,6 +204,10 @@ class SimpleStorageUnit:
         poller = zmq.Poller()
         poller.register(self.put_get_socket, zmq.POLLIN)
 
+        logger.info(f"[{self.storage_unit_id}]: start processing put/get requests...")
+
+        perf_monitor = IntervalPerfMonitor(caller_name=self.storage_unit_id)
+
         while True:
             socks = dict(poller.poll(TQ_STORAGE_POLLER_TIMEOUT * 1000))
 
@@ -216,39 +215,41 @@ class SimpleStorageUnit:
                 messages = self.put_get_socket.recv_multipart()
                 identity = messages.pop(0)
                 serialized_msg = messages
-
+                request_msg = ZMQMessage.deserialize(serialized_msg)
+                operation = request_msg.request_type
                 try:
-                    request_msg = ZMQMessage.deserialize(serialized_msg)
-                    operation = request_msg.request_type
-                    logger.debug(f"[{self.zmq_server_info.id}]: receive operation: {operation}, message: {request_msg}")
+                    logger.debug(f"[{self.storage_unit_id}]: receive operation: {operation}, message: {request_msg}")
 
                     if operation == ZMQRequestType.PUT_DATA:
-                        response_msg = self._handle_put(request_msg)
+                        with perf_monitor.measure(op_type="PUT_DATA"):
+                            response_msg = self._handle_put(request_msg)
                     elif operation == ZMQRequestType.GET_DATA:
-                        response_msg = self._handle_get(request_msg)
+                        with perf_monitor.measure(op_type="GET_DATA"):
+                            response_msg = self._handle_get(request_msg)
                     elif operation == ZMQRequestType.CLEAR_DATA:
-                        response_msg = self._handle_clear(request_msg)
+                        with perf_monitor.measure(op_type="CLEAR_DATA"):
+                            response_msg = self._handle_clear(request_msg)
                     else:
                         response_msg = ZMQMessage.create(
                             request_type=ZMQRequestType.PUT_GET_OPERATION_ERROR,
-                            sender_id=self.zmq_server_info.id,
+                            sender_id=self.storage_unit_id,
                             body={
-                                "message": f"Storage unit id #{self.zmq_server_info.id} "
+                                "message": f"Storage unit id #{self.storage_unit_id} "
                                 f"receive invalid operation: {operation}."
                             },
                         )
                 except Exception as e:
                     response_msg = ZMQMessage.create(
                         request_type=ZMQRequestType.PUT_GET_ERROR,
-                        sender_id=self.zmq_server_info.id,
+                        sender_id=self.storage_unit_id,
                         body={
-                            "message": f"Storage unit id #{self.zmq_server_info.id} occur error in processing "
+                            "message": f"Storage unit id #{self.storage_unit_id} occur error in processing "
                             f"put/get/clear request, detail error message: {str(e)}."
                         },
                     )
 
                 self.put_get_socket.send_multipart(
-                    [identity, *response_msg.serialize()], copy=(operation == ZMQRequestType.GET_DATA)
+                    [identity, *response_msg.serialize()], copy=(operation != ZMQRequestType.GET_DATA)
                 )
 
     def _handle_put(self, data_parts: ZMQMessage) -> ZMQMessage:
@@ -264,22 +265,24 @@ class SimpleStorageUnit:
         try:
             local_indexes = data_parts.body["local_indexes"]
             field_data = data_parts.body["data"]  # field_data should be a TensorDict.
-
-            self.storage_data.put_data(field_data, local_indexes)
+            with limit_pytorch_auto_parallel_threads(
+                target_num_threads=TQ_NUM_THREADS, info=f"[{self.storage_unit_id}] _handle_put"
+            ):
+                self.storage_data.put_data(field_data, local_indexes)
 
             # After put operation finish, send a message to the client
             response_msg = ZMQMessage.create(
-                request_type=ZMQRequestType.PUT_DATA_RESPONSE, sender_id=self.zmq_server_info.id, body={}
+                request_type=ZMQRequestType.PUT_DATA_RESPONSE, sender_id=self.storage_unit_id, body={}
             )
 
             return response_msg
         except Exception as e:
             return ZMQMessage.create(
                 request_type=ZMQRequestType.PUT_ERROR,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
                     "message": f"Failed to put data into storage unit id "
-                    f"#{self.zmq_server_info.id}, detail error message: {str(e)}"
+                    f"#{self.storage_unit_id}, detail error message: {str(e)}"
                 },
             )
 
@@ -297,11 +300,14 @@ class SimpleStorageUnit:
             fields = data_parts.body["fields"]
             local_indexes = data_parts.body["local_indexes"]
 
-            result_data = self.storage_data.get_data(fields, local_indexes)
+            with limit_pytorch_auto_parallel_threads(
+                target_num_threads=TQ_NUM_THREADS, info=f"[{self.storage_unit_id}] _handle_get"
+            ):
+                result_data = self.storage_data.get_data(fields, local_indexes)
 
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.GET_DATA_RESPONSE,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
                     "data": result_data,
                 },
@@ -309,9 +315,9 @@ class SimpleStorageUnit:
         except Exception as e:
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.GET_ERROR,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
-                    "message": f"Failed to get data from storage unit id #{self.zmq_server_info.id}, "
+                    "message": f"Failed to get data from storage unit id #{self.storage_unit_id}, "
                     f"detail error message: {str(e)}"
                 },
             )
@@ -330,19 +336,22 @@ class SimpleStorageUnit:
         try:
             local_indexes = data_parts.body["local_indexes"]
 
-            self.storage_data.clear(local_indexes)
+            with limit_pytorch_auto_parallel_threads(
+                target_num_threads=TQ_NUM_THREADS, info=f"[{self.storage_unit_id}] _handle_clear"
+            ):
+                self.storage_data.clear(local_indexes)
 
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.CLEAR_DATA_RESPONSE,
-                sender_id=self.zmq_server_info.id,
-                body={"message": f"Clear data in storage unit id #{self.zmq_server_info.id} successfully."},
+                sender_id=self.storage_unit_id,
+                body={"message": f"Clear data in storage unit id #{self.storage_unit_id} successfully."},
             )
         except Exception as e:
             response_msg = ZMQMessage.create(
                 request_type=ZMQRequestType.CLEAR_DATA_ERROR,
-                sender_id=self.zmq_server_info.id,
+                sender_id=self.storage_unit_id,
                 body={
-                    "message": f"Failed to clear data in storage unit id #{self.zmq_server_info.id}, "
+                    "message": f"Failed to clear data in storage unit id #{self.storage_unit_id}, "
                     f"detail error message: {str(e)}"
                 },
             )
@@ -391,47 +400,6 @@ class StorageMetaGroup:
         for meta in self.sample_metas:
             all_fields.update(meta.fields.keys())
         return list(all_fields)
-
-    def get_transfer_data(self, field_names: Optional[list[str]] = None) -> dict[str, list | dict]:
-        """Convert metadata to transfer dictionary format.
-
-        Creates a transfer_dict structure containing indexing and field information
-        but without the actual field data. The field_data placeholder will be
-        populated by the _add_field_data() function.
-
-        Args:
-            field_names: Optional list of field names to include. If None, includes all fields.
-
-        Returns:
-            Transfer dictionary with metadata structure:
-                {
-                    "batch_indexes": [batch_idx1, batch_idx2, ...],
-                    "global_indexes": [global_idx1, global_idx2, ...],
-                    "local_indexes": [local_idx1, local_idx2, ...],
-                    "fields": ["field1", "field2", ...],
-                    "field_data": {}  # Placeholder - actual data added by _add_field_data()
-                }
-
-        Example:
-            >>> group = StorageMetaGroup("storage1")
-            >>> # Add multiple samples with different batch/global indexes and storage locations
-            >>> group.add_sample_meta(SampleMeta(batch_index=0, global_index=10, fields={"img": ...}), 4)
-            >>> group.add_sample_meta(SampleMeta(batch_index=1, global_index=11, fields={"img": ...}), 5)
-            >>> group.add_sample_meta(SampleMeta(batch_index=2, global_index=12, fields={"img": ...}), 6)
-            >>> transfer_dict = group.get_transfer_data(["img"])
-            >>> transfer_dict["local_indexes"]   # [4, 5, 6] - storage locations
-            >>> transfer_dict["batch_indexes"]   # [0, 1, 2] - original data locations
-            >>> transfer_dict["global_indexes"]  # [10, 11, 12] - global identifiers
-        """
-        if field_names is None:
-            field_names = self.get_field_names()
-        return {
-            "batch_indexes": self.get_batch_indexes(),
-            "global_indexes": self.get_global_indexes(),
-            "local_indexes": self.get_local_indexes(),
-            "fields": field_names,
-            "field_data": {},  # Placeholder for field data to be filled later
-        }
 
     @property
     def size(self) -> int:
