@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import asyncio
 import itertools
 import logging
 import os
@@ -432,9 +432,16 @@ class KVStorageManager(TransferQueueStorageManager):
         if not metadata.field_names:
             logger.warning("Attempted to put data, but metadata contains no fields.")
             return
+
+        # For each field, extract dtype and shape for each sample
+        num_samples = len(metadata.global_indexes)
+        if num_samples == 0:
+            return
+
         keys = self._generate_keys(data.keys(), metadata.global_indexes)
         values = self._generate_values(data)
-        self.storage_client.put(keys=keys, values=values)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.storage_client.put, keys, values)
 
         per_field_dtypes = {}
         per_field_shapes = {}
@@ -444,9 +451,9 @@ class KVStorageManager(TransferQueueStorageManager):
             per_field_dtypes[global_idx] = {}
             per_field_shapes[global_idx] = {}
 
-        # For each field, extract dtype and shape for each sample
         for field_name, field_data in data.items():
-            for i, data_item in enumerate(field_data):
+            for i in range(num_samples):
+                data_item = field_data[i]
                 global_idx = metadata.global_indexes[i]
                 per_field_dtypes[global_idx][field_name] = (
                     getattr(data_item, "dtype", None) if isinstance(data_item, Tensor) else None
@@ -484,5 +491,5 @@ class KVStorageManager(TransferQueueStorageManager):
         if not metadata.field_names:
             logger.warning("Attempted to clear data, but metadata contains no fields.")
             return
-        keys = self._generate_keys(metadata)
+        keys = self._generate_keys(metadata.field_names, metadata.global_indexes)
         self.storage_client.clear(keys=keys)
