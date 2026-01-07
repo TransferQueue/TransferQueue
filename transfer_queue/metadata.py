@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import dataclasses
 import itertools
 import logging
@@ -176,6 +177,9 @@ class BatchMeta:
 
     def __post_init__(self):
         """Initialize all computed properties during initialization"""
+        self.samples = copy.deepcopy(self.samples)
+        self.extra_info = copy.deepcopy(self.extra_info)
+
         # Basic properties
         object.__setattr__(self, "_size", len(self.samples))
         object.__setattr__(self, "_is_ready", all(sample.is_ready for sample in self.samples))
@@ -253,7 +257,7 @@ class BatchMeta:
 
     def get_all_extra_info(self) -> dict[str, Any]:
         """Get all extra info as a dictionary"""
-        return self.extra_info.copy()
+        return copy.deepcopy(self.extra_info)
 
     def add_fields(self, tensor_dict: TensorDict, set_all_ready: bool = True) -> "BatchMeta":
         """
@@ -296,7 +300,7 @@ class BatchMeta:
         selected_samples = [self.samples[i] for i in sample_indices]
 
         # construct new BatchMeta instance
-        selected_batch_meta = BatchMeta(samples=selected_samples, extra_info=self.extra_info.copy())
+        selected_batch_meta = BatchMeta(samples=selected_samples, extra_info=self.extra_info)
 
         return selected_batch_meta
 
@@ -315,7 +319,7 @@ class BatchMeta:
         new_samples = [sample.select_fields(field_names=field_names) for sample in self.samples]
 
         # construct new BatchMeta instance
-        new_batch_meta = BatchMeta(samples=new_samples, extra_info=self.extra_info.copy())
+        new_batch_meta = BatchMeta(samples=new_samples, extra_info=self.extra_info)
 
         return new_batch_meta
 
@@ -326,7 +330,7 @@ class BatchMeta:
     def __getitem__(self, item):
         if isinstance(item, int | np.integer):
             sample_meta = self.samples[item] if self.samples else []
-            return BatchMeta(samples=[sample_meta], extra_info=self.extra_info.copy())
+            return BatchMeta(samples=[sample_meta], extra_info=self.extra_info)
         else:
             raise TypeError(f"Indexing with {type(item)} is not supported now!")
 
@@ -359,7 +363,7 @@ class BatchMeta:
             current_chunk_size = base_size + 1 if i < remainder else base_size
             end = start + current_chunk_size
             chunk_samples = self.samples[start:end]
-            chunk = BatchMeta(samples=chunk_samples, extra_info=self.extra_info.copy())
+            chunk = BatchMeta(samples=chunk_samples, extra_info=self.extra_info)
             chunk_list.append(chunk)
             start = end
         return chunk_list
