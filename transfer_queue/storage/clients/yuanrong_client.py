@@ -248,6 +248,17 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
                     results[idx] = pickle.loads(raw_val)
 
             return results
+        else:
+            # npu is not available, goes through cpu_ds_client
+            results = [None] * len(keys)
+            idx = 0
+            for i in range(0, len(keys), CPU_DS_CLIENT_KEYS_LIMIT):
+                batch_keys = keys[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
+                raw_values = self._cpu_ds_client.get(batch_keys)
+                for raw_val in raw_values:
+                    results[idx] = pickle.loads(raw_val)
+                    idx += 1
+            return results
 
     def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Any]:
         """Retrieves multiple values from remote storage with expected metadata.
