@@ -32,7 +32,7 @@ CPU_DS_CLIENT_KEYS_LIMIT: int = 1999
 YUANRONG_DATASYSTEM_IMPORTED: bool = True
 TORCH_NPU_IMPORTED: bool = True
 try:
-    import datasystem
+    from yr import datasystem
 except ImportError:
     YUANRONG_DATASYSTEM_IMPORTED = False
 
