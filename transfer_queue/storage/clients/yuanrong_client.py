@@ -123,7 +123,7 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
             cpu_values = []
 
             for key, value in zip(keys, values, strict=True):
-                if isinstance(value, torch.Tensor) and value.device.type == "npu":
+                if isinstance(value, Tensor) and value.device.type == "npu":
                     if not value.is_contiguous():
                         raise ValueError(f"NPU Tensor is not contiguous: {value}")
                     npu_keys.append(key)
@@ -131,7 +131,9 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
 
                 else:
                     cpu_keys.append(key)
-                    cpu_values.append(pickle.dumps(value))
+                    # TODO: Optimize serialization of tensors
+                    # Serializing slice of tensors results in entire tensors being serialized
+                    cpu_values.append(pickle.dumps(value.contiguous().clone() if isinstance(value, Tensor) else value))
 
             # put NPU data
             for i in range(0, len(npu_keys), NPU_DS_CLIENT_KEYS_LIMIT):
@@ -153,7 +155,7 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
 
         else:
             #  All data goes through CPU path
-            pickled_values = [pickle.dumps(v) for v in values]
+            pickled_values = [pickle.dumps(v.contiguous().clone() if isinstance(v, Tensor) else v) for v in values]
             for i in range(0, len(keys), CPU_DS_CLIENT_KEYS_LIMIT):
                 batch_keys = keys[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
                 batch_vals = pickled_values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
