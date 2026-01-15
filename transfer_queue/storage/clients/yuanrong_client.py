@@ -23,6 +23,7 @@ from typing import Any
 import torch
 from torch import Tensor
 from concurrent.futures import ThreadPoolExecutor
+import numpy as np
 
 from transfer_queue.storage.clients.base import TransferQueueStorageKVClient
 from transfer_queue.storage.clients.factory import StorageClientFactory
@@ -218,7 +219,7 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
             #  All data goes through CPU path
             for i in range(0, len(keys), CPU_DS_CLIENT_KEYS_LIMIT):
                 batch_keys = keys[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
-                batch_vals = pickled_values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
+                batch_vals = values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
                 self.mset_zcopy(batch_keys, batch_vals)
 
     def put(self, keys: list[str], values: list[Any]):
