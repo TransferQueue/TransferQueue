@@ -35,7 +35,7 @@ class WriterActor:
 
     def generate_data(
         self, partition_id, batch_size: int = 10000, seq_len: int = 10000
-    ) 
+    ): 
         data = TensorDict(
             {
                 "input_ids": torch.randn(batch_size, seq_len, dtype=torch.float32),
@@ -47,7 +47,7 @@ class WriterActor:
         print(f"Generated data of size {size:.2f} MB")
         self.data = data
 
-    def put_once(self, partition_id)
+    def put_once(self, partition_id):
         t0 = time.perf_counter()
         batch_meta = self.client.put(data=self.data, partition_id=partition_id)
         return time.perf_counter() - t0, batch_meta
