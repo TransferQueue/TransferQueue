@@ -16,7 +16,7 @@ from transfer_queue.storage.managers.yuanrong_manager import YuanrongStorageMana
 from transfer_queue.storage.clients.yuanrong_client import YuanrongStorageClient  # noqa: E402
 from transfer_queue.storage.managers.factory import TransferQueueStorageManagerFactory  # noqa: E402
 from transfer_queue.utils.zmq_utils import ZMQServerInfo  # noqa: E402
-from transfer_queue import (
+from transfer_queue import ( #noqa: E402
     TransferQueueController,
     process_zmq_server_info,    
 )
@@ -40,7 +40,7 @@ class WriterActor:
             {
                 "input_ids": torch.randn(batch_size, seq_len, dtype=torch.float32),
             },
-            batch_size=batch_size,
+            batch_size=batch_size
         )
 
         size = tensordict_memory_mb(data)
@@ -76,14 +76,14 @@ def main():
         "client_name": "YuanrongStorageClient",
         "controller_info": controller_info,
         "host": "10.90.41.116",
-        "port": 36666,
+        "port": 36666
     }
 
     config_reader = {
         "client_name": "YuanrongStorageClient",
         "controller_info": controller_info,
         "host": "10.90.41.117",
-        "port": 36666,
+        "port": 36666
     }
 
     nodes = ray.nodes()
@@ -94,8 +94,8 @@ def main():
         if addr and node_id:
             ip_to_nodeid[addr] = node_id
 
-    ip_A = "10.90.41.117"  # Writer
-    ip_B = "10.90.41.116"  # Reader
+    ip_A = "10.90.41.116"  # Writer
+    ip_B = "10.90.41.117"  # Reader
     node_id_A = ip_to_nodeid.get(ip_A)
     node_id_B = ip_to_nodeid.get(ip_B)
     assert node_id_A and node_id_B, f"cannot find node ids for {ip_A}, {ip_B}: {ip_to_nodeid}"

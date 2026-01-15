@@ -64,7 +64,7 @@ def unpack_from(source):
     item_count = struct.unpack_from(HEADER_FMT, mv, 0)[0]
     offsets = []
     for i in range(item_count):
-        offset, length - struct.unpack_from(ENTRY_FMT, mv, HEADER_SIZE + i * ENTRY_SIZE)
+        offset, length = struct.unpack_from(ENTRY_FMT, mv, HEADER_SIZE + i * ENTRY_SIZE)
         offsets.append((offset, length))
     return [mv[offset: offset + length] for offset, length in offsets]
 
@@ -336,7 +336,7 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
                     raise ValueError(f"Size mismatch for key {key[i]}: got {len(raw_val)}, expected {expected_size}")
                 
                 arr = np.frombuffer(raw_val, dtype=numpy_dtype).reshape(shape)
-                result[i] = torch.from_numpy(arr)
+                results[i] = torch.from_numpy(arr)
 
         return results
 
