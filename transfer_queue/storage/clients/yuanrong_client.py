@@ -16,10 +16,14 @@
 import logging
 import os
 import pickle
+import struct
+import ctypes
 from typing import Any
 
 import torch
 from torch import Tensor
+from concurrent.futures import ThreadPoolExecutor
+import numpy as np
 
 from transfer_queue.storage.clients.base import TransferQueueStorageKVClient
 from transfer_queue.storage.clients.factory import StorageClientFactory
@@ -36,6 +40,55 @@ try:
 except ImportError:
     YUANRONG_DATASYSTEM_IMPORTED = False
 
+HEADER_FMT = "<I"
+HEADER_SIZE = struct.calcsize(HEADER_FMT)
+ENTRY_FMT = "<II"
+ENTRY_SIZE = struct.calcsize(ENTRY_FMT)
+
+def calc_packed_size(items):
+    return HEADER_SIZE + len(items) * ENTRY_SIZE + sum(item.nbytes for item in items)
+
+def pack_into(target, items):
+    struct.pack_into(HEADER_FMT, target, 0, len(items))
+
+    entry_offset = HEADER_SIZE
+    payload_offset = HEADER_SIZE + len(items) * ENTRY_SIZE
+
+    target_tensor = torch.frombuffer(target, dtype=torch.uint8)
+
+    for item in items:
+        struct.pack_into(ENTRY_FMT, target, entry_offset, payload_offset, item.nbytes)
+        src_tensor = torch.frombuffer(item, dtype=torch.uint8)
+        target_tensor[payload_offset: payload_offset + item.nbytes].copy_(src_tensor)
+        entry_offset += ENTRY_SIZE
+        payload_offset += item.nbytes
+
+def unpack_from(source):
+    mv = memoryview(source)
+    item_count = struct.unpack_from(HEADER_FMT, mv, 0)[0]
+    offsets = []
+    for i in range(item_count):
+        offset, length = struct.unpack_from(ENTRY_FMT, mv, HEADER_SIZE + i * ENTRY_SIZE)
+        offsets.append((offset, length))
+    return [mv[offset: offset + length] for offset, length in offsets]
+
+def try_zero_copy_serialize(obj: Any) -> memoryview | bytes | bytearray:
+    """
+    Attempts to serialize an object using zero-copy if possible.
+    If the object supports the buffer protocol (like numpy arrays or contiguous tensors),
+    it returns a memoryview for zero-copy serialization. Otherwise, it falls back to
+    standard pickle serialization.
+    Args:
+        obj (Any): The object to serialize.
+    Returns:
+        Union[memoryview, bytes, bytearray]: The serialized object.
+    """
+    if isinstance(obj, torch.Tensor) and obj.is_contiguous():
+        return memoryview(obj.numpy())
+    try:
+        return memoryview(obj)
+    except TypeError:
+        return pickle.dumps(obj)
 
 @StorageClientFactory.register("YuanrongStorageClient")
 class YuanrongStorageClient(TransferQueueStorageKVClient):
@@ -104,6 +157,17 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
             tensors.append(tensor)
         return tensors
 
+    def mset_zcopy(self, keys: list[str], objs: list[Any]):
+        serialized = [try_zero_copy_serialize(obj) for obj in objs]
+        items_list = [[item] for item in serialized]
+        packed_sizes = [calc_packed_size(items) for items in items_list]
+        status, buffers = self._cpu_ds_client.mcreate(keys, packed_sizes)
+        max_workers = min(32, (os.cpu_count() or 1) * 2)
+        tasks = [(target.mutable_data(), item) for target, item in zip(buffers, items_list)]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            list(executor.map(lambda p: pack_into(*p), tasks))
+        self._cpu_ds_client.mset_zero_copy(buffers)
+
     def _batch_put(self, keys: list[str], values: list[Any]):
         """Stores a batch of key-value pairs to remote storage, splitting by device type.
 
@@ -153,11 +217,10 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
 
         else:
             #  All data goes through CPU path
-            pickled_values = [pickle.dumps(v) for v in values]
             for i in range(0, len(keys), CPU_DS_CLIENT_KEYS_LIMIT):
                 batch_keys = keys[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
-                batch_vals = pickled_values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
-                self._cpu_ds_client.mset(batch_keys, batch_vals)
+                batch_vals = values[i : i + CPU_DS_CLIENT_KEYS_LIMIT]
+                self.mset_zcopy(batch_keys, batch_vals)
 
     def put(self, keys: list[str], values: list[Any]):
         """Stores multiple key-value pairs to remote storage.
@@ -248,6 +311,38 @@ class YuanrongStorageClient(TransferQueueStorageKVClient):
                     results[idx] = pickle.loads(raw_val)
 
             return results
+
+        else:
+            results = [None] * len(keys)
+            status, buffers = self._cpu_ds_client.mget(keys, timeout_ms=500)
+            for i, (buffer, shape, dtype) in enumerate(zip(buffers, shapes, dtypes)):
+                if buffer is None:
+                    continue
+                try:
+                    # it is assumed that each key corresponds to only one tensor
+                    # so after unpacking, take `unpacked_buffers[0]`
+                    unpacked_buffers = unpack_from(buffer) # list of memoryview
+                except Exception as e:
+                    logger.warning(f"Failed to unpack buffer for key {keys[i]}: {e}")
+                    continue
+                
+                if len(unpacked_buffers) != 1:
+                    # if each key corresponds to multiple tensors, more complex logic is required here
+                    raise ValueError(f"Expected 1 tensor per key, got {len(unpacked_buffers)} for key {keys[i]}")
+                
+                raw_val = unpacked_buffers[0]
+
+                numpy_dtype = torch.empty((), dtype=dtype).numpy().dtype
+                total_elements = int(np.prod(shape))
+                expected_size = total_elements * np.dtype(numpy_dtype).itemsize
+
+                if len(raw_val) != expected_size:
+                    raise ValueError(f"Size mismatch for key {key[i]}: got {len(raw_val)}, expected {expected_size}")
+                
+                arr = np.frombuffer(raw_val, dtype=numpy_dtype).reshape(shape)
+                results[i] = torch.from_numpy(arr)
+
+        return results
 
     def get(self, keys: list[str], shapes=None, dtypes=None) -> list[Any]:
         """Retrieves multiple values from remote storage with expected metadata.
